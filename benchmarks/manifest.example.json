@@ -1,0 +1,36 @@
+{
+  "defaults": {
+    "analysis_mode": "auto",
+    "selected_trades": []
+  },
+  "cases": [
+    {
+      "case_id": "single-bathroom-renovation",
+      "pdf_paths": [
+        "../test-drawings/R001092044 - Final Drawings.pdf"
+      ],
+      "expected": {
+        "sheet_ids": [
+          "A101",
+          "A102",
+          "E121"
+        ],
+        "scales_by_sheet": {
+          "A101": "1/8\" = 1'-0\""
+        },
+        "analyzed_trades": [
+          "architectural",
+          "electrical",
+          "plumbing"
+        ],
+        "quantity_sanity": {
+          "require_nonempty_counts": true,
+          "min_total_count": 1,
+          "min_counts_by_type": {
+            "door": 1
+          }
+        }
+      }
+    }
+  ]
+}
