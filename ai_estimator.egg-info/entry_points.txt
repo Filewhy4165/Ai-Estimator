@@ -1,0 +1,4 @@
+[console_scripts]
+ai-estimator = ai_estimator.main:main
+ai-estimator-api = service.run_api:main
+ai-estimator-desktop = desktop.app:main

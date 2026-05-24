@@ -1,0 +1,84 @@
+{
+  "sheets_detected": [],
+  "trade_scope": {
+    "requested_mode": "auto",
+    "requested_trades": [],
+    "detected_trades": [],
+    "analyzed_trades": [],
+    "skipped_trades": [],
+    "sheet_trade_map": []
+  },
+  "scale_analysis": {
+    "by_sheet": []
+  },
+  "legend_and_symbols": {
+    "legends_by_sheet": [],
+    "unknown_symbols": []
+  },
+  "geometry": {
+    "walls": [],
+    "doors": [],
+    "windows": [],
+    "slabs": [],
+    "roofs": [],
+    "fixtures": [],
+    "equipment": [],
+    "annotations": {
+      "rooms": [],
+      "dimensions": [],
+      "callouts": []
+    }
+  },
+  "semantic_graph": {
+    "elements": [],
+    "relationships": []
+  },
+  "3d_model": {
+    "format": "JSON-geometry",
+    "elements": []
+  },
+  "quantity_takeoff": {
+    "by_trade": {},
+    "linear": {},
+    "area": {},
+    "volume": {},
+    "counts": {}
+  },
+  "cost_mapping": {
+    "assemblies": {},
+    "cost_codes": {
+      "csi_masterformat": {},
+      "contractor_custom": {}
+    }
+  },
+  "issues_or_ambiguities": [
+    {
+      "message": "PDF not found: missing.pdf",
+      "severity": "warning"
+    },
+    {
+      "message": "No legend or symbol tables were confidently extracted from page text.",
+      "severity": "warning"
+    },
+    {
+      "message": "No reliable measurable geometry was extracted from text alone. Vector path parsing and/or OCR + symbol detection modules are needed for full takeoff.",
+      "severity": "warning"
+    },
+    {
+      "message": "No quantity counts could be computed because measurable elements were not extracted.",
+      "severity": "warning"
+    },
+    {
+      "message": "Linear quantities are empty; no reliable lengths were extracted.",
+      "severity": "warning"
+    },
+    {
+      "message": "Area quantities are empty; no reliable surface boundaries were extracted.",
+      "severity": "warning"
+    },
+    {
+      "message": "Volume quantities are empty; no reliable volumetric geometry was extracted.",
+      "severity": "warning"
+    }
+  ]
+}

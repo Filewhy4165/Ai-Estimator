@@ -1,0 +1,501 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/construction-estimator-output.schema.json",
+  "title": "Construction Estimator Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sheets_detected",
+    "trade_scope",
+    "scale_analysis",
+    "legend_and_symbols",
+    "geometry",
+    "semantic_graph",
+    "3d_model",
+    "quantity_takeoff",
+    "cost_mapping",
+    "issues_or_ambiguities"
+  ],
+  "properties": {
+    "sheets_detected": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sheet"
+      }
+    },
+    "trade_scope": {
+      "$ref": "#/$defs/tradeScope"
+    },
+    "scale_analysis": {
+      "type": "object"
+    },
+    "legend_and_symbols": {
+      "type": "object"
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "walls",
+        "doors",
+        "windows",
+        "slabs",
+        "roofs",
+        "fixtures",
+        "equipment",
+        "annotations"
+      ],
+      "properties": {
+        "walls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "doors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "windows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "slabs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "roofs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "fixtures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "equipment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          }
+        },
+        "annotations": {
+          "type": "object"
+        }
+      }
+    },
+    "semantic_graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "elements",
+        "relationships"
+      ],
+      "properties": {
+        "elements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/semanticElement"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relationship"
+          }
+        }
+      }
+    },
+    "3d_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "elements"
+      ],
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "IFC",
+            "glTF",
+            "JSON-geometry"
+          ]
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modelElement"
+          }
+        }
+      }
+    },
+    "quantity_takeoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by_trade",
+        "linear",
+        "area",
+        "volume",
+        "counts"
+      ],
+      "properties": {
+        "by_trade": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/quantityTradeBucket"
+          }
+        },
+        "linear": {
+          "type": "object"
+        },
+        "area": {
+          "type": "object"
+        },
+        "volume": {
+          "type": "object"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "cost_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assemblies",
+        "cost_codes"
+      ],
+      "properties": {
+        "assemblies": {
+          "type": "object"
+        },
+        "cost_codes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "csi_masterformat",
+            "contractor_custom"
+          ],
+          "properties": {
+            "csi_masterformat": {
+              "type": "object"
+            },
+            "contractor_custom": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "issues_or_ambiguities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    }
+  },
+  "$defs": {
+    "tradeName": {
+      "type": "string",
+      "enum": [
+        "general",
+        "architectural",
+        "structural",
+        "civil_site",
+        "landscape",
+        "interiors_finishes",
+        "fire_protection",
+        "plumbing",
+        "mechanical_hvac",
+        "electrical",
+        "low_voltage_communications_it",
+        "security_access_alarm",
+        "conveying",
+        "equipment_specialties",
+        "other"
+      ]
+    },
+    "sheet": {
+      "type": "object",
+      "required": [
+        "sheet_id",
+        "title",
+        "sheet_type",
+        "discipline",
+        "confidence"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "sheet_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "sheet_type": {
+          "type": "string"
+        },
+        "discipline": {
+          "$ref": "#/$defs/tradeName"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "tradeScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_mode",
+        "requested_trades",
+        "detected_trades",
+        "analyzed_trades",
+        "skipped_trades",
+        "sheet_trade_map"
+      ],
+      "properties": {
+        "requested_mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "selected",
+            "all"
+          ]
+        },
+        "requested_trades": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        },
+        "detected_trades": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        },
+        "analyzed_trades": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        },
+        "skipped_trades": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "trade",
+              "reason"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "trade": {
+                "$ref": "#/$defs/tradeName"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "sheet_trade_map": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sheet",
+              "trade",
+              "confidence"
+            ],
+            "properties": {
+              "sheet": {
+                "type": "string"
+              },
+              "trade": {
+                "$ref": "#/$defs/tradeName"
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "element": {
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "trade": {
+          "$ref": "#/$defs/tradeName"
+        }
+      }
+    },
+    "semanticElement": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "type",
+        "properties",
+        "geometry",
+        "relationships"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "trade": {
+          "$ref": "#/$defs/tradeName"
+        },
+        "properties": {
+          "type": "object"
+        },
+        "geometry": {
+          "type": "object"
+        },
+        "relationships": {
+          "type": "array"
+        }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "from",
+        "to",
+        "type"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    },
+    "modelElement": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "source_element_id": {
+          "type": "string"
+        },
+        "geometry": {
+          "type": "object"
+        }
+      }
+    },
+    "quantityTradeBucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "linear",
+        "area",
+        "volume",
+        "counts"
+      ],
+      "properties": {
+        "linear": {
+          "type": "object"
+        },
+        "area": {
+          "type": "object"
+        },
+        "volume": {
+          "type": "object"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "message",
+        "severity"
+      ],
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "source_sheets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_information": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
+

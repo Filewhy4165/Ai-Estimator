@@ -1,0 +1,5 @@
+# Pinned developer dependencies
+# Regenerate with: python -m pip install pip-tools && pip-compile requirements/dev.in -o requirements/dev.lock.txt
+-r runtime.lock.txt
+pytest==8.4.2
+

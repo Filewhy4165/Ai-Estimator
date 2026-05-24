@@ -1,0 +1,13 @@
+[global]
+# Replace with your private package index/mirror URL.
+index-url = https://packages.example.com/pypi/simple
+
+# Use trusted-host only if your internal certificate setup requires it.
+# trusted-host = packages.example.com
+
+# Keep timeout explicit for reliability.
+timeout = 60
+
+# Optional: disable version check noise in CI
+disable-pip-version-check = true
+

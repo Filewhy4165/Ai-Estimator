@@ -1,0 +1,7 @@
+[global]
+# Linux/macOS equivalent example
+index-url = https://packages.example.com/pypi/simple
+# trusted-host = packages.example.com
+timeout = 60
+disable-pip-version-check = true
+
