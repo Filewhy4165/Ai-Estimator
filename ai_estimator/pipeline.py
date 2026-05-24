@@ -21,7 +21,7 @@ def run_pipeline(
     pdf_paths: list[str],
     analysis_mode: str = "auto",
     selected_trades: list[str] | None = None,
-    sheet_overrides: list[dict[str, str]] | None = None,
+    sheet_overrides: list[dict[str, object]] | None = None,
     notes: str | None = None,
     validate_schema: bool = True,
     schema_path: str | None = None,
@@ -36,6 +36,7 @@ def run_pipeline(
         issues.extend(load_issues)
 
     sheets = classify_sheets(pages=pages, sheet_overrides=sheet_overrides)
+    sheets_for_output = _collapse_sheets_for_output(sheets)
     trade_scope = resolve_trade_scope(
         sheets=sheets, requested_mode=analysis_mode, requested_trades=selected_trades
     )
@@ -72,8 +73,9 @@ def run_pipeline(
                 "sheet_type": sheet.sheet_type,
                 "discipline": sheet.trade,
                 "confidence": sheet.confidence,
+                "source_page_index": sheet.source_page_index + 1,
             }
-            for sheet in sheets
+            for sheet in sheets_for_output
         ],
         "trade_scope": {
             "requested_mode": trade_scope.requested_mode,
@@ -110,7 +112,7 @@ def run_pipeline(
     return payload
 
 
-def load_sheet_overrides(path: str | None) -> list[dict[str, str]] | None:
+def load_sheet_overrides(path: str | None) -> list[dict[str, object]] | None:
     if not path:
         return None
     p = Path(path)
@@ -120,15 +122,29 @@ def load_sheet_overrides(path: str | None) -> list[dict[str, str]] | None:
         loaded = json.load(f)
     if not isinstance(loaded, list):
         return None
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, object]] = []
     for item in loaded:
         if not isinstance(item, dict):
             continue
+        source_page_index = item.get("source_page_index")
+        parsed_page_index: int | None = None
+        if isinstance(source_page_index, int) and source_page_index >= 1:
+            parsed_page_index = source_page_index
+        elif isinstance(source_page_index, str):
+            text = source_page_index.strip()
+            if text.isdigit():
+                value = int(text)
+                if value >= 1:
+                    parsed_page_index = value
+
+        row: dict[str, object] = {
+            "sheet_id": str(item.get("sheet_id", "")),
+            "title": str(item.get("title", "")),
+        }
+        if parsed_page_index is not None:
+            row["source_page_index"] = parsed_page_index
         normalized.append(
-            {
-                "sheet_id": str(item.get("sheet_id", "")),
-                "title": str(item.get("title", "")),
-            }
+            row
         )
     return normalized
 
@@ -213,3 +229,16 @@ def sanitize_selected_trades(selected_trades_csv: str | None) -> list[str]:
     candidates = [item.strip() for item in selected_trades_csv.split(",") if item.strip()]
     return [trade for trade in candidates if trade in TRADE_NAMES]
 
+
+def _collapse_sheets_for_output(
+    sheets: list,
+) -> list:
+    by_id: dict[str, object] = {}
+    for sheet in sheets:
+        existing = by_id.get(sheet.sheet_id)
+        if existing is None or sheet.confidence > existing.confidence:
+            by_id[sheet.sheet_id] = sheet
+    return sorted(
+        list(by_id.values()),
+        key=lambda s: (str(s.sheet_id), int(s.source_page_index)),
+    )

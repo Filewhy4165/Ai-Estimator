@@ -28,4 +28,4 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["ai_estimator*"]
+include = ["ai_estimator*", "service*", "desktop*"]

@@ -20,7 +20,7 @@
 2. Service layer (`service`)
 - HTTP endpoints for analysis and asynchronous jobs
 - File upload handling
-- Job orchestration (currently in-memory)
+- Job orchestration backed by SQLite persistence
 
 3. Clients
 - Desktop app (`desktop`) uses API endpoints
@@ -47,8 +47,8 @@
 
 3. Durable storage
 - Object storage for uploaded PDFs and outputs.
-- Postgres for job metadata and audit trails.
-- Redis for queue/cache.
+- Postgres for job metadata and audit trails (future upgrade from SQLite).
+- Redis for queue/cache (future).
 
 4. Security and tenancy
 - OAuth2/JWT authentication.
@@ -68,4 +68,3 @@ Keep responses stable and versioned (`/v1/...`) so React Native, Flutter, or nat
 - Submit analysis job
 - Poll status
 - Retrieve structured JSON output
-
