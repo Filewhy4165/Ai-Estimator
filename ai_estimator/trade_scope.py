@@ -14,8 +14,9 @@ def resolve_trade_scope(
 ) -> TradeScope:
     requested_trades = requested_trades or []
     requested_mode = requested_mode or "auto"
+    collapsed_sheets = _collapse_sheets_for_scope(sheets)
 
-    detected_trades = sorted({sheet.trade for sheet in sheets if sheet.trade})
+    detected_trades = sorted({sheet.trade for sheet in collapsed_sheets if sheet.trade})
     if requested_mode not in {"auto", "selected", "all"}:
         requested_mode = "auto"
 
@@ -33,7 +34,7 @@ def resolve_trade_scope(
     else:
         # Auto: include confident sheet-trade detections.
         trade_conf_map: dict[str, float] = {}
-        for sheet in sheets:
+        for sheet in collapsed_sheets:
             current = trade_conf_map.get(sheet.trade, 0.0)
             trade_conf_map[sheet.trade] = max(current, sheet.confidence)
 
@@ -48,7 +49,7 @@ def resolve_trade_scope(
 
     sheet_trade_map = [
         {"sheet": sheet.sheet_id, "trade": sheet.trade, "confidence": round(sheet.confidence, 3)}
-        for sheet in sheets
+        for sheet in collapsed_sheets
     ]
 
     return TradeScope(
@@ -60,3 +61,11 @@ def resolve_trade_scope(
         sheet_trade_map=sheet_trade_map,
     )
 
+
+def _collapse_sheets_for_scope(sheets: list[ClassifiedSheet]) -> list[ClassifiedSheet]:
+    by_sheet_id: dict[str, ClassifiedSheet] = {}
+    for sheet in sheets:
+        existing = by_sheet_id.get(sheet.sheet_id)
+        if existing is None or sheet.confidence > existing.confidence:
+            by_sheet_id[sheet.sheet_id] = sheet
+    return list(by_sheet_id.values())

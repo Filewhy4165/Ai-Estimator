@@ -8,7 +8,14 @@ from ai_estimator.constants import DISCIPLINE_PREFIX_TO_TRADE, SHEET_TYPE_MAP, T
 from ai_estimator.extractors.pdf_loader import LoadedPage
 
 
-SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})[-\s]?(\d{2,4}[A-Z]?)\b")
+SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})[-\s]?(\d{2,4}(?:\.\d{1,2})?[A-Z]?)\b")
+SHEET_ID_LINE_HINTS_RE = re.compile(
+    r"\b(sheet|drawing|title|plan|elevation|section|detail|schedule)\b", re.IGNORECASE
+)
+STRONG_TITLE_HINTS_RE = re.compile(
+    r"\b(plan|elevation|section|detail|schedule|legend|diagram)\b", re.IGNORECASE
+)
+ALLOWED_PREFIXES = set(DISCIPLINE_PREFIX_TO_TRADE.keys())
 
 
 @dataclass
@@ -23,10 +30,39 @@ class ClassifiedSheet:
 
 
 def _extract_sheet_id(text: str) -> str:
-    match = SHEET_ID_RE.search(text.upper())
-    if not match:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
         return ""
-    return f"{match.group(1)}{match.group(2)}"
+
+    # Title blocks are commonly near top/bottom, so prioritize those zones.
+    candidate_lines = lines[:40] + lines[-40:]
+    best_sheet_id = ""
+    best_score = -1
+    for line in candidate_lines:
+        for match in SHEET_ID_RE.finditer(line.upper()):
+            prefix = match.group(1)
+            sequence = match.group(2)
+            if prefix not in ALLOWED_PREFIXES:
+                continue
+            if not _is_valid_sheet_sequence(sequence):
+                continue
+            score = _sheet_id_score(prefix, sequence, line)
+            if score > best_score:
+                best_score = score
+                best_sheet_id = f"{prefix}{sequence}"
+
+    if best_sheet_id:
+        return best_sheet_id
+
+    # Conservative fallback across the full extracted page text.
+    for match in SHEET_ID_RE.finditer(text.upper()):
+        prefix = match.group(1)
+        sequence = match.group(2)
+        if prefix not in ALLOWED_PREFIXES:
+            continue
+        if _is_valid_sheet_sequence(sequence):
+            return f"{prefix}{sequence}"
+    return ""
 
 
 def _score_trade_from_keywords(text: str) -> tuple[str, float]:
@@ -51,11 +87,9 @@ def _score_trade_from_keywords(text: str) -> tuple[str, float]:
 
 def classify_sheets(
     pages: list[LoadedPage],
-    sheet_overrides: list[dict[str, str]] | None = None,
+    sheet_overrides: list[dict[str, object]] | None = None,
 ) -> list[ClassifiedSheet]:
-    overrides_by_index: dict[int, dict[str, str]] = {}
-    for index, override in enumerate(sheet_overrides or []):
-        overrides_by_index[index] = override
+    overrides_by_index = _build_overrides_by_index(pages, sheet_overrides or [])
 
     sheets: list[ClassifiedSheet] = []
     for page in pages:
@@ -72,9 +106,8 @@ def classify_sheets(
             discipline, sequence = _split_sheet_id(sheet_id)
             trade_from_prefix = DISCIPLINE_PREFIX_TO_TRADE.get(discipline, "other")
             prefix_conf = 0.88 if trade_from_prefix != "other" else 0.2
-            if sequence:
-                type_digit = sequence[0]
-                sheet_type = SHEET_TYPE_MAP.get(type_digit, "other")
+            if sequence and sequence[0].isdigit():
+                sheet_type = SHEET_TYPE_MAP.get(sequence[0], "other")
 
         trade_from_keywords, keyword_conf = _score_trade_from_keywords(candidate_text)
         if prefix_conf >= keyword_conf:
@@ -117,7 +150,146 @@ def _best_effort_title(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return "Untitled Sheet"
-    for line in lines[:15]:
-        if len(line) > 6 and any(ch.isalpha() for ch in line):
+
+    for line in lines[:60]:
+        if len(line) <= 6 or not any(ch.isalpha() for ch in line):
+            continue
+        if _looks_like_grid_label(line):
+            continue
+        if _is_metadata_label(line):
+            continue
+        if _is_boilerplate_notice(line):
+            continue
+        if STRONG_TITLE_HINTS_RE.search(line):
             return line[:120]
-    return lines[0][:120]
+        if SHEET_ID_LINE_HINTS_RE.search(line):
+            return line[:120]
+
+    for line in lines[:60]:
+        if (
+            len(line) > 6
+            and any(ch.isalpha() for ch in line)
+            and not _looks_like_grid_label(line)
+            and not _is_metadata_label(line)
+            and not _is_boilerplate_notice(line)
+        ):
+            return line[:120]
+    return "Untitled Sheet"
+
+
+def _is_valid_sheet_sequence(sequence: str) -> bool:
+    token = sequence.upper()
+    digit_count = sum(1 for ch in token if ch.isdigit())
+    if "." in token:
+        return digit_count >= 3
+    return digit_count >= 3
+
+
+def _sheet_id_score(prefix: str, sequence: str, line: str) -> int:
+    score = 0
+    if prefix in DISCIPLINE_PREFIX_TO_TRADE and DISCIPLINE_PREFIX_TO_TRADE[prefix] != "other":
+        score += 4
+    elif prefix in DISCIPLINE_PREFIX_TO_TRADE:
+        score += 1
+
+    if "." in sequence:
+        score += 3
+    else:
+        score += min(sum(1 for ch in sequence if ch.isdigit()), 4)
+
+    if SHEET_ID_LINE_HINTS_RE.search(line):
+        score += 3
+    if line.strip().startswith(prefix):
+        score += 1
+    return score
+
+
+def _looks_like_grid_label(line: str) -> bool:
+    compact = "".join(ch for ch in line if ch.isalnum() or ch.isspace()).strip()
+    parts = [p for p in compact.split() if p]
+    if 2 <= len(parts) <= 8 and all(len(p) <= 2 for p in parts):
+        if all(p.isalpha() for p in parts) or all(p.isdigit() for p in parts):
+            return True
+    return False
+
+
+def _is_metadata_label(line: str) -> bool:
+    normalized = " ".join(line.upper().split())
+    metadata_terms = {
+        "DRAWING NO",
+        "DRAWING NO.",
+        "SHEET NO",
+        "SCALE",
+        "DATE",
+        "TITLE BLOCK",
+        "PROJECT NO",
+        "SUBMITTED",
+        "SUBMITTED:",
+    }
+    if normalized in metadata_terms:
+        return True
+    metadata_fragments = (
+        "SHEET SIZE",
+        "PROJECT NO",
+        "MSFC-FORM",
+        "REV.",
+        "DRAWN BY",
+        "CHECKED BY",
+        "NASA",
+    )
+    return any(fragment in normalized for fragment in metadata_fragments)
+
+
+def _is_boilerplate_notice(line: str) -> bool:
+    normalized = " ".join(line.upper().split())
+    blocked_phrases = (
+        "CHANGES TO THIS DRAWING SHALL BE MADE",
+        "DO NOT SCALE DRAWING",
+        "ALL RIGHTS RESERVED",
+        "DRAWING IS INCOMPLETE",
+        "THIS DRAWING WAS DESIGNED TO BE PRINTED AT",
+    )
+    return any(phrase in normalized for phrase in blocked_phrases)
+
+
+def _build_overrides_by_index(
+    pages: list[LoadedPage], sheet_overrides: list[dict[str, object]]
+) -> dict[int, dict[str, object]]:
+    by_page_index: dict[int, dict[str, object]] = {}
+    fallback: list[dict[str, object]] = []
+
+    for override in sheet_overrides:
+        raw_page = override.get("source_page_index")
+        page_index = _parse_source_page_index(raw_page)
+        if page_index is None:
+            fallback.append(override)
+            continue
+        by_page_index[page_index] = override
+
+    if fallback:
+        available_pages = [page.page_index for page in pages if page.page_index not in by_page_index]
+        for override, page_index in zip(fallback, available_pages):
+            by_page_index[page_index] = override
+    return by_page_index
+
+
+def _parse_source_page_index(raw: object) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    value: int | None = None
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            return None
+
+    if value is None:
+        return None
+    if value < 1:
+        return None
+    return value - 1

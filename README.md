@@ -53,7 +53,18 @@ Default URL: `http://127.0.0.1:8000`
 ai-estimator-desktop
 ```
 
-The desktop app uploads PDFs to the API and shows normalized JSON output.
+The desktop app supports both synchronous analysis and async job workflows.
+It also remembers your last API URL, selected PDFs, overrides file, and current job ID between launches.
+
+Desktop async workflow:
+
+1. Click `Choose PDFs`
+2. Click `Submit Async Job`
+3. Click `Refresh Job` until status is `completed` (or enable `Auto Poll Job` to refresh automatically)
+4. Click `Get Review Queue` to see flagged sheets
+5. Click `Export Overrides Template` to save a prefilled JSON template for sheet corrections
+6. Edit the template file, then load it in `Sheet Overrides JSON` and submit a new job
+7. Use `Notes` for project-specific constraints before running
 
 ## Run CLI directly
 
@@ -78,7 +89,62 @@ Optional flags:
 - `GET /health`
 - `POST /v1/analyze` synchronous analysis
 - `POST /v1/jobs` async job submission
+- `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status`)
 - `GET /v1/jobs/{job_id}` job status/result
+- `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
+- `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
+
+Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
+
+- `sheet_overrides_json` JSON array string such as:
+  `[{"source_page_index":12,"sheet_id":"A101","title":"First Floor Plan"}]`
+- `notes` free-text notes/constraints (trimmed to 2000 chars)
+
+Notes on overrides:
+
+- `source_page_index` is 1-based (page 1 is the first PDF page).
+- If omitted, overrides are applied in list order as a fallback.
+
+Review queue endpoint query params:
+
+- `low_confidence_threshold` (default `0.75`, range `0..1`)
+- `include_only_flagged` (default `true`)
+
+Sheet overrides template endpoint query params:
+
+- `include_all` (default `false`) include all sheets instead of only sheets needing manual correction
+
+Example:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/sheet-overrides-template"
+```
+
+The response `items` can be edited and sent back as `sheet_overrides_json` in a new `POST /v1/jobs` request.
+
+## Persistent jobs and upload storage
+
+Asynchronous jobs are persisted in SQLite and survive service restarts.
+
+Default storage paths:
+
+- DB: `.ai_estimator/jobs.db`
+- Uploads: `.ai_estimator/uploads/`
+
+Environment variables:
+
+- `AI_ESTIMATOR_DB_PATH` override SQLite path
+- `AI_ESTIMATOR_UPLOAD_DIR` override uploads directory
+- `AI_ESTIMATOR_CLEANUP_UPLOADS` set `true|false` (default `true`)
+
+Example (PowerShell):
+
+```powershell
+$env:AI_ESTIMATOR_DB_PATH = "C:\data\ai-estimator\jobs.db"
+$env:AI_ESTIMATOR_UPLOAD_DIR = "C:\data\ai-estimator\uploads"
+$env:AI_ESTIMATOR_CLEANUP_UPLOADS = "false"
+ai-estimator-api
+```
 
 ## Mobile readiness (planned)
 
@@ -93,7 +159,7 @@ iOS/Android apps should call the same `/v1/jobs` and `/v1/jobs/{job_id}` endpoin
 ## Current limitations
 
 - Geometry extraction is text-driven in this MVP and requires CV/OCR modules for full plan accuracy.
-- In-memory job storage resets on restart.
+- Job execution currently runs in-process in the API server; production scale should move execution to a worker queue.
 - No authentication yet.
 
 ## Dependency and mirror setup

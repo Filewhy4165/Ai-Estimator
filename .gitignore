@@ -4,4 +4,9 @@ __pycache__/
 .venv/
 dist/
 build/
-
+.ai_estimator/
+*.egg-info/
+sample_output*.json
+tmp_uvicorn_*.log
+baseline_*.json
+test-drawings/*.pdf

@@ -64,8 +64,8 @@ def extract_geometry(
                 }
             )
 
-        for room in ROOM_RE.findall(text):
-            annotations["rooms"].append({"sheet_id": sheet_id, "name": " ".join(room.split())})
+        for room in _extract_room_tokens(text):
+            annotations["rooms"].append({"sheet_id": sheet_id, "name": room})
 
         for dim in DIMENSION_RE.findall(text):
             annotations["dimensions"].append({"sheet_id": sheet_id, "value": dim})
@@ -101,3 +101,43 @@ def _dedupe_by_id(items: list[dict[str, object]]) -> list[dict[str, object]]:
             deduped.append(item)
     return deduped
 
+
+def _extract_room_tokens(text: str) -> list[str]:
+    rooms: list[str] = []
+    for raw_line in text.splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+        # Examples:
+        # ROOM 102
+        # ROOM NAME: MEN
+        # MEN ROOM 115
+        upper = line.upper()
+        if "ROOM" not in upper:
+            continue
+
+        match = ROOM_RE.search(line)
+        if not match:
+            continue
+        tail = match.group(1)
+        # Stop at long narrative clauses.
+        tail = tail.split("  ")[0].split(".")[0].split(";")[0]
+        cleaned = " ".join(tail.split())[:60]
+        if len(cleaned) < 2:
+            continue
+        rooms.append(cleaned)
+    return _dedupe_strings(rooms, limit=200)
+
+
+def _dedupe_strings(values: list[str], limit: int) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        key = value.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+        if len(out) >= limit:
+            break
+    return out

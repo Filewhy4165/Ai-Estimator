@@ -1,0 +1,109 @@
+from service.review_queue import build_review_queue, build_sheet_overrides_template
+
+
+def test_review_queue_flags_unmapped_low_confidence_and_missing_scale():
+    result = {
+        "sheets_detected": [
+            {
+                "sheet_id": "UNMAPPED_doc_3",
+                "title": "Untitled Sheet",
+                "confidence": 0.42,
+                "source_page_index": 3,
+                "discipline": "other",
+            },
+            {
+                "sheet_id": "A101",
+                "title": "Floor Plan",
+                "confidence": 0.91,
+                "source_page_index": 1,
+                "discipline": "architectural",
+            },
+        ],
+        "scale_analysis": {
+            "by_sheet": [
+                {"sheet_id": "UNMAPPED_doc_3", "detected_scale": None},
+                {"sheet_id": "A101", "detected_scale": "1/8\" = 1'-0\""},
+            ]
+        },
+        "legend_and_symbols": {
+            "unknown_symbols": [
+                {"sheet_id": "UNMAPPED_doc_3", "symbol": "P-1"},
+                {"sheet_id": "UNMAPPED_doc_3", "symbol": "P-2"},
+            ]
+        },
+    }
+    queue = build_review_queue(
+        job_id="job-1", result=result, low_confidence_threshold=0.75, include_only_flagged=True
+    )
+
+    assert queue["summary"]["total_sheets"] == 2
+    assert queue["summary"]["flagged_sheets"] == 1
+    assert len(queue["items"]) == 1
+    item = queue["items"][0]
+    codes = {flag["code"] for flag in item["flags"]}
+    assert "unmapped_sheet_id" in codes
+    assert "low_confidence_classification" in codes
+    assert "missing_scale" in codes
+    assert item["unknown_symbol_count"] == 2
+
+
+def test_review_queue_include_all_sheets():
+    result = {
+        "sheets_detected": [
+            {"sheet_id": "A101", "title": "Floor Plan", "confidence": 0.91, "source_page_index": 1}
+        ],
+        "scale_analysis": {"by_sheet": [{"sheet_id": "A101", "detected_scale": "1/8\" = 1'-0\""}]},
+        "legend_and_symbols": {"unknown_symbols": []},
+    }
+    queue = build_review_queue(
+        job_id="job-2", result=result, low_confidence_threshold=0.75, include_only_flagged=False
+    )
+    assert queue["summary"]["total_sheets"] == 1
+    assert len(queue["items"]) == 1
+    assert queue["items"][0]["sheet_id"] == "A101"
+    assert queue["items"][0]["flags"] == []
+
+
+def test_sheet_overrides_template_returns_only_problem_rows_by_default():
+    result = {
+        "sheets_detected": [
+            {
+                "sheet_id": "UNMAPPED_doc_3",
+                "title": "Untitled Sheet",
+                "source_page_index": 3,
+            },
+            {
+                "sheet_id": "A101",
+                "title": "Floor Plan",
+                "source_page_index": 1,
+            },
+            {
+                "sheet_id": "FLOOR PLANS, SCHEDULE AND NOTES",
+                "title": "",
+                "source_page_index": 2,
+            },
+        ]
+    }
+    payload = build_sheet_overrides_template(job_id="job-3", result=result, include_all=False)
+
+    assert payload["summary"]["total_sheets"] == 3
+    assert payload["summary"]["rows_returned"] == 2
+    assert payload["summary"]["unmapped_count"] == 1
+    assert [row["source_page_index"] for row in payload["items"]] == [2, 3]
+    assert payload["items"][0]["reason"] == "invalid_sheet_id_format"
+    assert payload["items"][0]["sheet_id"] == ""
+    assert payload["items"][1]["reason"] == "unmapped_sheet_id"
+    assert payload["items"][1]["title"] == ""
+
+
+def test_sheet_overrides_template_include_all():
+    result = {
+        "sheets_detected": [
+            {"sheet_id": "A101", "title": "Floor Plan", "source_page_index": 1},
+            {"sheet_id": "A102", "title": "Reflected Ceiling Plan", "source_page_index": 2},
+        ]
+    }
+    payload = build_sheet_overrides_template(job_id="job-4", result=result, include_all=True)
+    assert payload["summary"]["rows_returned"] == 2
+    assert payload["items"][0]["sheet_id"] == "A101"
+    assert payload["items"][1]["sheet_id"] == "A102"
