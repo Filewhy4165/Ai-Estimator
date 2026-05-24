@@ -197,6 +197,134 @@ def build_sheet_overrides_template(
     }
 
 
+def build_benchmark_manifest_template(
+    *,
+    job_id: str,
+    result: dict[str, Any] | None,
+    job_input: dict[str, Any] | None,
+    include_unmapped: bool = False,
+    case_id: str | None = None,
+) -> dict[str, Any]:
+    result = result or {}
+    job_input = job_input or {}
+
+    sheets = result.get("sheets_detected", [])
+    if not isinstance(sheets, list):
+        sheets = []
+    sorted_sheets = sorted(
+        [row for row in sheets if isinstance(row, dict)],
+        key=lambda row: (_sort_page_index(row.get("source_page_index")), str(row.get("sheet_id", ""))),
+    )
+
+    candidate_sheet_ids: list[str] = []
+    seen_sheet_ids: set[str] = set()
+    excluded_unmapped_count = 0
+    for row in sorted_sheets:
+        sheet_id = str(row.get("sheet_id", "")).strip()
+        if not sheet_id or sheet_id in seen_sheet_ids:
+            continue
+        if sheet_id.startswith("UNMAPPED_"):
+            excluded_unmapped_count += 1
+            if not include_unmapped:
+                continue
+        seen_sheet_ids.add(sheet_id)
+        candidate_sheet_ids.append(sheet_id)
+
+    scale_map = _collect_scale_map(result.get("scale_analysis", {}))
+    scales_by_sheet = {
+        sheet_id: scale_map[sheet_id]
+        for sheet_id in candidate_sheet_ids
+        if sheet_id in scale_map and isinstance(scale_map[sheet_id], str) and scale_map[sheet_id].strip()
+    }
+
+    trade_scope = result.get("trade_scope", {})
+    analyzed_trades = []
+    if isinstance(trade_scope, dict):
+        raw_trades = trade_scope.get("analyzed_trades", [])
+        if isinstance(raw_trades, list):
+            analyzed_trades = [str(item).strip() for item in raw_trades if str(item).strip()]
+
+    input_analysis_mode = str(job_input.get("analysis_mode", "auto")).strip() or "auto"
+    if input_analysis_mode not in {"auto", "selected", "all"}:
+        input_analysis_mode = "auto"
+
+    input_selected_trades = job_input.get("selected_trades", [])
+    normalized_selected_trades = []
+    if isinstance(input_selected_trades, list):
+        normalized_selected_trades = [
+            str(item).strip() for item in input_selected_trades if str(item).strip()
+        ]
+
+    input_sheet_overrides = job_input.get("sheet_overrides", [])
+    normalized_sheet_overrides = []
+    if isinstance(input_sheet_overrides, list):
+        normalized_sheet_overrides = [item for item in input_sheet_overrides if isinstance(item, dict)]
+
+    input_notes = job_input.get("notes")
+    normalized_notes = str(input_notes).strip() if isinstance(input_notes, str) else ""
+
+    input_uploaded_files = job_input.get("uploaded_files", [])
+    pdf_paths: list[str] = []
+    if isinstance(input_uploaded_files, list):
+        seen_paths: set[str] = set()
+        for row in input_uploaded_files:
+            if not isinstance(row, dict):
+                continue
+            path = str(row.get("path", "")).strip()
+            if not path or path in seen_paths:
+                continue
+            seen_paths.add(path)
+            pdf_paths.append(path)
+
+    defaults: dict[str, Any] = {
+        "analysis_mode": input_analysis_mode,
+        "selected_trades": normalized_selected_trades,
+    }
+    if normalized_sheet_overrides:
+        defaults["sheet_overrides"] = normalized_sheet_overrides
+    if normalized_notes:
+        defaults["notes"] = normalized_notes
+
+    manifest = {
+        "defaults": defaults,
+        "cases": [
+            {
+                "case_id": case_id or f"job-{job_id[:8]}",
+                "pdf_paths": pdf_paths,
+                "expected": {
+                    "sheet_ids": candidate_sheet_ids,
+                    "scales_by_sheet": scales_by_sheet,
+                    "analyzed_trades": analyzed_trades,
+                    "quantity_sanity": {
+                        "require_nonempty_counts": True,
+                        "min_total_count": 1,
+                    },
+                },
+            }
+        ],
+    }
+
+    review_queue = build_review_queue(
+        job_id=job_id,
+        result=result,
+        low_confidence_threshold=0.75,
+        include_only_flagged=True,
+    )
+
+    return {
+        "job_id": job_id,
+        "summary": {
+            "total_sheets": len(sorted_sheets),
+            "candidate_sheet_ids": len(candidate_sheet_ids),
+            "excluded_unmapped_count": excluded_unmapped_count,
+            "sheets_with_detected_scale": len(scales_by_sheet),
+            "suggested_trades": len(analyzed_trades),
+            "flagged_sheet_count": review_queue.get("summary", {}).get("flagged_sheets", 0),
+        },
+        "manifest": manifest,
+    }
+
+
 def _count_unknown_symbols_by_sheet(unknown_symbols: object) -> dict[str, int]:
     counts: dict[str, int] = defaultdict(int)
     if not isinstance(unknown_symbols, list):
@@ -229,6 +357,33 @@ def _sheet_scale_status(scale_analysis: object) -> dict[str, dict[str, bool]]:
             if detected_scale.strip().upper() != "NTS":
                 status[sheet_id]["only_nts"] = False
     return status
+
+
+def _collect_scale_map(scale_analysis: object) -> dict[str, str]:
+    if not isinstance(scale_analysis, dict):
+        return {}
+    entries = scale_analysis.get("by_sheet", [])
+    if not isinstance(entries, list):
+        return {}
+
+    best_by_sheet: dict[str, dict[str, Any]] = {}
+    for row in entries:
+        if not isinstance(row, dict):
+            continue
+        sheet_id = str(row.get("sheet_id", "")).strip()
+        if not sheet_id:
+            continue
+        raw_scale = row.get("detected_scale")
+        if raw_scale is None:
+            continue
+        detected_scale = str(raw_scale).strip()
+        if not detected_scale:
+            continue
+        confidence = _to_float(row.get("confidence"), default=0.0)
+        current = best_by_sheet.get(sheet_id)
+        if current is None or confidence > _to_float(current.get("confidence"), default=0.0):
+            best_by_sheet[sheet_id] = {"scale": detected_scale, "confidence": confidence}
+    return {sheet_id: str(row.get("scale", "")) for sheet_id, row in best_by_sheet.items()}
 
 
 def _is_reasonable_sheet_id(sheet_id: str) -> bool:
@@ -271,3 +426,14 @@ def _sort_page_index(value: object) -> int:
     if parsed is None:
         return 10**9
     return parsed
+
+
+def _to_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return default
+    return default

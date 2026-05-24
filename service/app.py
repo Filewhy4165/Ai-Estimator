@@ -15,7 +15,11 @@ from pydantic import BaseModel
 from ai_estimator.pipeline import run_pipeline, sanitize_selected_trades
 from service.job_store import JobRecord, JobStore
 from service.request_parsing import normalize_notes, parse_sheet_overrides_json
-from service.review_queue import build_review_queue, build_sheet_overrides_template
+from service.review_queue import (
+    build_benchmark_manifest_template,
+    build_review_queue,
+    build_sheet_overrides_template,
+)
 
 
 class JobCreateResponse(BaseModel):
@@ -41,6 +45,12 @@ class SheetOverridesTemplateResponse(BaseModel):
     job_id: str
     summary: dict[str, Any]
     items: list[dict[str, Any]]
+
+
+class BenchmarkTemplateResponse(BaseModel):
+    job_id: str
+    summary: dict[str, Any]
+    manifest: dict[str, Any]
 
 
 app = FastAPI(title="AI Estimator Service", version="0.1.0")
@@ -296,6 +306,25 @@ def get_sheet_overrides_template(
         include_all=include_all,
     )
     return SheetOverridesTemplateResponse(**payload)
+
+
+@app.get("/v1/jobs/{job_id}/benchmark-template", response_model=BenchmarkTemplateResponse)
+def get_benchmark_template(
+    job_id: str,
+    include_unmapped: bool = False,
+    case_id: str | None = None,
+) -> BenchmarkTemplateResponse:
+    record = _get_job_store().get_job(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = build_benchmark_manifest_template(
+        job_id=job_id,
+        result=record.result,
+        job_input=record.input if isinstance(record.input, dict) else {},
+        include_unmapped=include_unmapped,
+        case_id=case_id,
+    )
+    return BenchmarkTemplateResponse(**payload)
 
 
 @app.get("/v1/jobs", response_model=JobListResponse)
