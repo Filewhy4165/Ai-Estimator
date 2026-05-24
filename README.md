@@ -65,6 +65,7 @@ Desktop async workflow:
 5. Click `Export Overrides Template` to save a prefilled JSON template for sheet corrections
 6. Edit the template file, then load it in `Sheet Overrides JSON` and submit a new job
 7. Use `Notes` for project-specific constraints before running
+8. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
 
 ## Run CLI directly
 
@@ -89,6 +90,7 @@ Optional flags:
 - `GET /health`
 - `POST /v1/analyze` synchronous analysis
 - `POST /v1/jobs` async job submission
+- `POST /v1/jobs/{job_id}/rerun` async rerun using files from an existing job
 - `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status`)
 - `GET /v1/jobs/{job_id}` job status/result
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
@@ -99,6 +101,13 @@ Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 - `sheet_overrides_json` JSON array string such as:
   `[{"source_page_index":12,"sheet_id":"A101","title":"First Floor Plan"}]`
 - `notes` free-text notes/constraints (trimmed to 2000 chars)
+
+Optional form fields for `POST /v1/jobs/{job_id}/rerun`:
+
+- `analysis_mode` (`auto`, `selected`, `all`) overrides source job mode
+- `selected_trades` CSV overrides source job trades
+- `sheet_overrides_json` overrides source job sheet overrides
+- `notes` overrides source job notes
 
 Notes on overrides:
 
@@ -121,6 +130,7 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/sheet-overrides-template"
 ```
 
 The response `items` can be edited and sent back as `sheet_overrides_json` in a new `POST /v1/jobs` request.
+The rerun endpoint reuses files from the source job and returns `409` if those files were cleaned up or moved.
 
 ## Persistent jobs and upload storage
 
@@ -135,14 +145,17 @@ Environment variables:
 
 - `AI_ESTIMATOR_DB_PATH` override SQLite path
 - `AI_ESTIMATOR_UPLOAD_DIR` override uploads directory
-- `AI_ESTIMATOR_CLEANUP_UPLOADS` set `true|false` (default `true`)
+- `AI_ESTIMATOR_CLEANUP_UPLOADS` set global cleanup `true|false` for both sync/async
+- `AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS` set cleanup for `/v1/analyze` uploads (default `true`)
+- `AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS` set cleanup for async job uploads (default `false`)
 
 Example (PowerShell):
 
 ```powershell
 $env:AI_ESTIMATOR_DB_PATH = "C:\data\ai-estimator\jobs.db"
 $env:AI_ESTIMATOR_UPLOAD_DIR = "C:\data\ai-estimator\uploads"
-$env:AI_ESTIMATOR_CLEANUP_UPLOADS = "false"
+$env:AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS = "true"
+$env:AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS = "false"
 ai-estimator-api
 ```
 

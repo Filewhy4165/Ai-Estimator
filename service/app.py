@@ -96,7 +96,7 @@ async def analyze(
         )
         return payload
     finally:
-        if _should_cleanup_uploads():
+        if _should_cleanup_uploads(mode="sync"):
             shutil.rmtree(request_dir, ignore_errors=True)
 
 
@@ -161,6 +161,97 @@ async def create_job(
     )
     thread.start()
     return JobCreateResponse(job_id=job_id, status="queued")
+
+
+@app.post("/v1/jobs/{job_id}/rerun", status_code=202, response_model=JobCreateResponse)
+async def rerun_job(
+    job_id: str,
+    analysis_mode: str | None = Form(None),
+    selected_trades: str | None = Form(None),
+    sheet_overrides_json: str | None = Form(None),
+    notes: str | None = Form(None),
+) -> JobCreateResponse:
+    source_record = _get_job_store().get_job(job_id)
+    if not source_record:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    source_input = source_record.input if isinstance(source_record.input, dict) else {}
+    try:
+        (
+            resolved_mode,
+            resolved_trades,
+            resolved_overrides,
+            resolved_notes,
+        ) = _resolve_rerun_inputs(
+            source_input=source_input,
+            analysis_mode=analysis_mode,
+            selected_trades=selected_trades,
+            sheet_overrides_json=sheet_overrides_json,
+            notes=notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    pdf_paths, missing_paths = _resolve_uploaded_pdf_paths(source_input)
+    if not pdf_paths:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No reusable uploaded files were found for this job. "
+                "Submit a new job with files, or disable async upload cleanup."
+            ),
+        )
+    if missing_paths:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Some uploaded files from the source job are missing. "
+                    "Disable async upload cleanup or submit a new job with files."
+                ),
+                "missing_paths": missing_paths[:20],
+            },
+        )
+
+    rerun_job_id = str(uuid.uuid4())
+    now = _utc_now()
+    record = JobRecord(
+        job_id=rerun_job_id,
+        status="queued",
+        created_at=now,
+        updated_at=now,
+        input={
+            "analysis_mode": resolved_mode,
+            "selected_trades": resolved_trades,
+            "sheet_overrides": resolved_overrides or [],
+            "notes": resolved_notes,
+            "uploaded_files": [
+                {
+                    "file_name": Path(path).name,
+                    "path": str(path),
+                }
+                for path in pdf_paths
+            ],
+            "rerun_of_job_id": job_id,
+        },
+    )
+    _get_job_store().create_job(record)
+
+    thread = Thread(
+        target=_run_job,
+        kwargs={
+            "job_id": rerun_job_id,
+            "pdf_paths": pdf_paths,
+            "analysis_mode": resolved_mode,
+            "selected_trades": resolved_trades,
+            "sheet_overrides": resolved_overrides,
+            "notes": resolved_notes,
+            "upload_dir": None,
+        },
+        daemon=True,
+    )
+    thread.start()
+    return JobCreateResponse(job_id=rerun_job_id, status="queued")
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -234,7 +325,7 @@ def _run_job(
     selected_trades: list[str],
     sheet_overrides: list[dict[str, object]] | None,
     notes: str | None,
-    upload_dir: str,
+    upload_dir: str | None,
 ) -> None:
     _get_job_store().update_job(job_id, status="running", updated_at=_utc_now())
     try:
@@ -266,7 +357,7 @@ def _run_job(
             error=str(exc),
         )
     finally:
-        if _should_cleanup_uploads():
+        if upload_dir and _should_cleanup_uploads(mode="async"):
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
@@ -301,9 +392,113 @@ def _resolve_upload_root() -> str:
     return str(Path.cwd() / ".ai_estimator" / "uploads")
 
 
-def _should_cleanup_uploads() -> bool:
-    raw = os.environ.get("AI_ESTIMATOR_CLEANUP_UPLOADS", "true").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+def _should_cleanup_uploads(mode: str) -> bool:
+    if mode not in {"sync", "async"}:
+        raise ValueError("mode must be 'sync' or 'async'.")
+
+    specific_var = (
+        "AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS"
+        if mode == "sync"
+        else "AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS"
+    )
+    specific_raw = os.environ.get(specific_var)
+    if specific_raw is not None:
+        return _parse_bool_env(specific_raw)
+
+    global_raw = os.environ.get("AI_ESTIMATOR_CLEANUP_UPLOADS")
+    if global_raw is not None:
+        return _parse_bool_env(global_raw)
+
+    # Default behavior: clean up sync uploads, retain async uploads for reruns/audit.
+    return mode == "sync"
+
+
+def _parse_bool_env(raw: str) -> bool:
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_uploaded_pdf_paths(source_input: dict[str, Any]) -> tuple[list[str], list[str]]:
+    uploaded_files = source_input.get("uploaded_files")
+    if not isinstance(uploaded_files, list):
+        return [], []
+
+    paths: list[str] = []
+    missing: list[str] = []
+    seen: set[str] = set()
+    for item in uploaded_files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        if Path(path).exists():
+            paths.append(path)
+        else:
+            missing.append(path)
+    return paths, missing
+
+
+def _resolve_rerun_inputs(
+    *,
+    source_input: dict[str, Any],
+    analysis_mode: str | None,
+    selected_trades: str | None,
+    sheet_overrides_json: str | None,
+    notes: str | None,
+) -> tuple[str, list[str], list[dict[str, Any]] | None, str | None]:
+    if analysis_mode is None:
+        resolved_mode = str(source_input.get("analysis_mode", "auto")).strip() or "auto"
+    else:
+        resolved_mode = analysis_mode.strip()
+    if resolved_mode not in {"auto", "selected", "all"}:
+        raise ValueError("analysis_mode must be auto, selected, or all")
+
+    if selected_trades is None:
+        raw_trades = source_input.get("selected_trades", [])
+        if not isinstance(raw_trades, list):
+            raw_trades = []
+        csv = ",".join(str(item).strip() for item in raw_trades if str(item).strip())
+        resolved_trades = sanitize_selected_trades(csv)
+    else:
+        resolved_trades = sanitize_selected_trades(selected_trades)
+
+    if sheet_overrides_json is None:
+        resolved_overrides = _normalize_sheet_overrides_from_input(source_input.get("sheet_overrides"))
+    else:
+        resolved_overrides = parse_sheet_overrides_json(sheet_overrides_json)
+
+    if notes is None:
+        source_notes = source_input.get("notes")
+        resolved_notes = normalize_notes(source_notes if isinstance(source_notes, str) else None)
+    else:
+        resolved_notes = normalize_notes(notes)
+
+    return resolved_mode, resolved_trades, resolved_overrides, resolved_notes
+
+
+def _normalize_sheet_overrides_from_input(raw: object) -> list[dict[str, Any]] | None:
+    if not isinstance(raw, list):
+        return None
+    normalized: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        row: dict[str, Any] = {
+            "sheet_id": str(item.get("sheet_id", "")).strip(),
+            "title": str(item.get("title", "")).strip(),
+        }
+        source_page_index = item.get("source_page_index")
+        if isinstance(source_page_index, int) and source_page_index >= 1:
+            row["source_page_index"] = source_page_index
+        elif isinstance(source_page_index, str):
+            token = source_page_index.strip()
+            if token.isdigit():
+                value = int(token)
+                if value >= 1:
+                    row["source_page_index"] = value
+        normalized.append(row)
+    return normalized
 
 
 def _safe_file_name(name: str) -> str:
