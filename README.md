@@ -85,6 +85,36 @@ Optional flags:
 --no-validate
 ```
 
+## Run benchmark harness
+
+Use the benchmark harness to score extraction quality on labeled drawing sets.
+
+```bash
+ai-estimator-benchmark ^
+  --manifest ".\benchmarks\manifest.example.json" ^
+  --output ".\benchmarks\results\latest.json"
+```
+
+Optional:
+
+```bash
+--fail-below 0.80
+--no-validate
+--schema-path C:\path\to\output_schema.json
+```
+
+Benchmark manifest shape:
+
+- `defaults` shared run options (`analysis_mode`, `selected_trades`, optional `sheet_overrides`)
+- `cases[]` list of benchmark runs
+- `cases[].expected.sheet_ids` expected detected sheet IDs
+- `cases[].expected.scales_by_sheet` expected scale string by sheet ID
+- `cases[].expected.analyzed_trades` expected analyzed trade list
+- `cases[].expected.quantity_sanity` optional checks:
+  - `require_nonempty_counts` boolean
+  - `min_total_count` integer
+  - `min_counts_by_type` map of element type to minimum count
+
 ## API endpoints
 
 - `GET /health`
