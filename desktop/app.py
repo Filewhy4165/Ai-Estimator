@@ -68,7 +68,7 @@ class DesktopEstimatorApp:
 
         actions1 = ttk.Frame(frame)
         actions1.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        actions1.columnconfigure(5, weight=1)
+        actions1.columnconfigure(6, weight=1)
         ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
         ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
@@ -81,6 +81,9 @@ class DesktopEstimatorApp:
         )
         ttk.Button(actions1, text="Load Latest Job", command=self._load_latest_job).grid(
             row=0, column=4, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions1, text="Rerun Job", command=self._rerun_job).grid(
+            row=0, column=5, sticky="w", padx=(8, 0)
         )
 
         actions2 = ttk.Frame(frame)
@@ -173,6 +176,27 @@ class DesktopEstimatorApp:
                 self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to submit async job:\n{exc}")
+
+    def _rerun_job(self) -> None:
+        source_job_id = self.current_job_id.get().strip()
+        if not source_job_id:
+            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+            return
+
+        try:
+            data = self._build_request_data()
+            payload = self._request_json("POST", f"/v1/jobs/{source_job_id}/rerun", data=data, timeout=120)
+            new_job_id = str(payload.get("job_id", "")).strip()
+            if not new_job_id:
+                raise RuntimeError("API response did not include rerun job_id.")
+            self.current_job_id.set(new_job_id)
+            self._set_output_json(payload)
+            self.status_text.set(f"Rerun job submitted: {new_job_id}")
+            self._save_settings()
+            if self.auto_poll_enabled.get():
+                self._start_auto_poll()
+        except Exception as exc:
+            self._set_output_text(f"Failed to rerun job:\n{exc}")
 
     def _refresh_job(self) -> None:
         job_id = self.current_job_id.get().strip()
