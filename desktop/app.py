@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from threading import Thread
 from tkinter import END, BooleanVar, StringVar, Text, Tk, filedialog, ttk
 from urllib.parse import urlparse
@@ -108,7 +109,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(8, weight=1)
+        actions2.columnconfigure(10, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -131,14 +132,20 @@ class DesktopEstimatorApp:
         ttk.Button(actions2, text="Run Baseline Benchmark", command=self._run_baseline_benchmark).grid(
             row=0, column=5, sticky="w", padx=(8, 0)
         )
+        ttk.Button(actions2, text="Show Benchmark History", command=self._show_benchmark_history).grid(
+            row=0, column=6, sticky="w", padx=(8, 0)
+        )
         ttk.Checkbutton(
             actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=7, sticky="w", padx=(8, 0)
+            row=0, column=8, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
+            row=0, column=9, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -952,6 +959,70 @@ class DesktopEstimatorApp:
             return
         Path(target).write_text(content, encoding="utf-8")
         self.status_text.set(f"Saved output: {target}")
+
+    def _show_benchmark_history(self) -> None:
+        results_dir = self._results_dir()
+        if not results_dir.exists():
+            self._set_output_text(f"No benchmark results directory found:\n{results_dir}")
+            return
+
+        items: list[dict[str, object]] = []
+        for path in sorted(results_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            history_item = self._build_benchmark_history_item(path)
+            if history_item is not None:
+                items.append(history_item)
+
+        payload = {
+            "results_dir": str(results_dir),
+            "total_reports": len(items),
+            "items": items[:50],
+        }
+        self._set_output_json(payload)
+        self.status_text.set(f"Loaded benchmark history: {len(items)} report(s).")
+
+    def _open_results_folder(self) -> None:
+        results_dir = self._results_dir()
+        results_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if os.name == "nt":
+                os.startfile(str(results_dir))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(results_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(results_dir)])
+            self.status_text.set(f"Opened results folder: {results_dir}")
+        except Exception as exc:
+            self._set_output_text(f"Failed to open results folder:\n{exc}")
+
+    def _results_dir(self) -> Path:
+        return Path(__file__).resolve().parents[1] / "benchmarks" / "results"
+
+    def _build_benchmark_history_item(self, path: Path) -> dict[str, object] | None:
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+
+        summary = parsed.get("summary", {})
+        if not isinstance(summary, dict):
+            return None
+        if "overall_score" not in summary:
+            return None
+
+        stat = path.stat()
+        modified_local = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+        return {
+            "file_name": path.name,
+            "path": str(path),
+            "modified_local": modified_local,
+            "generated_at_utc": parsed.get("generated_at_utc"),
+            "overall_score": summary.get("overall_score"),
+            "case_count": summary.get("case_count"),
+            "completed_count": summary.get("completed_count"),
+            "failed_count": summary.get("failed_count"),
+        }
 
     def run(self) -> None:
         self.root.mainloop()
