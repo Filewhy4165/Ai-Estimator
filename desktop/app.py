@@ -100,14 +100,17 @@ class DesktopEstimatorApp:
         ttk.Button(actions2, text="Export Overrides Template", command=self._export_overrides_template).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
+        ttk.Button(actions2, text="Export Benchmark Template", command=self._export_benchmark_template).grid(
+            row=0, column=3, sticky="w", padx=(8, 0)
+        )
         ttk.Checkbutton(
             actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=4, sticky="w", padx=(8, 0)
+            row=0, column=5, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -288,6 +291,37 @@ class DesktopEstimatorApp:
             self.status_text.set(f"Overrides template saved: {target}")
         except Exception as exc:
             self._set_output_text(f"Failed to export template:\n{exc}")
+
+    def _export_benchmark_template(self) -> None:
+        job_id = self.current_job_id.get().strip()
+        if not job_id:
+            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+            return
+
+        try:
+            payload = self._request_json(
+                "GET",
+                f"/v1/jobs/{job_id}/benchmark-template",
+                timeout=60,
+            )
+            manifest = payload.get("manifest")
+            if not isinstance(manifest, dict):
+                raise RuntimeError("Unexpected benchmark template format from API.")
+
+            target = filedialog.asksaveasfilename(
+                title="Save benchmark manifest template",
+                initialfile=f"benchmark_manifest_{job_id[:8]}.json",
+                defaultextension=".json",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            )
+            if not target:
+                self.status_text.set("Benchmark template export canceled.")
+                return
+            Path(target).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            self._set_output_json(payload)
+            self.status_text.set(f"Benchmark template saved: {target}")
+        except Exception as exc:
+            self._set_output_text(f"Failed to export benchmark template:\n{exc}")
 
     def _toggle_auto_poll(self) -> None:
         if self.auto_poll_enabled.get():

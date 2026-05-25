@@ -1,4 +1,8 @@
-from service.review_queue import build_review_queue, build_sheet_overrides_template
+from service.review_queue import (
+    build_benchmark_manifest_template,
+    build_review_queue,
+    build_sheet_overrides_template,
+)
 
 
 def test_review_queue_flags_unmapped_low_confidence_and_missing_scale():
@@ -107,3 +111,72 @@ def test_sheet_overrides_template_include_all():
     assert payload["summary"]["rows_returned"] == 2
     assert payload["items"][0]["sheet_id"] == "A101"
     assert payload["items"][1]["sheet_id"] == "A102"
+
+
+def test_benchmark_manifest_template_uses_job_input_and_filters_unmapped():
+    result = {
+        "sheets_detected": [
+            {"sheet_id": "A101", "title": "Floor Plan", "source_page_index": 1},
+            {"sheet_id": "UNMAPPED_doc_2", "title": "Untitled Sheet", "source_page_index": 2},
+            {"sheet_id": "E121", "title": "Electrical Plan", "source_page_index": 3},
+        ],
+        "scale_analysis": {
+            "by_sheet": [
+                {"sheet_id": "A101", "detected_scale": "1/8\" = 1'-0\"", "confidence": 0.7},
+                {"sheet_id": "E121", "detected_scale": "1:100", "confidence": 0.9},
+            ]
+        },
+        "trade_scope": {"analyzed_trades": ["architectural", "electrical"]},
+        "legend_and_symbols": {"unknown_symbols": []},
+    }
+    job_input = {
+        "analysis_mode": "selected",
+        "selected_trades": ["architectural", "electrical"],
+        "sheet_overrides": [{"source_page_index": 2, "sheet_id": "A102", "title": "Second Floor Plan"}],
+        "notes": "Prioritize restroom scope.",
+        "uploaded_files": [{"path": "C:/drawings/set1.pdf"}],
+    }
+    payload = build_benchmark_manifest_template(
+        job_id="job-5",
+        result=result,
+        job_input=job_input,
+        include_unmapped=False,
+        case_id="case-001",
+    )
+
+    assert payload["summary"]["total_sheets"] == 3
+    assert payload["summary"]["candidate_sheet_ids"] == 2
+    assert payload["summary"]["excluded_unmapped_count"] == 1
+
+    manifest = payload["manifest"]
+    assert manifest["defaults"]["analysis_mode"] == "selected"
+    assert manifest["defaults"]["selected_trades"] == ["architectural", "electrical"]
+    assert manifest["defaults"]["notes"] == "Prioritize restroom scope."
+    assert manifest["cases"][0]["case_id"] == "case-001"
+    assert manifest["cases"][0]["pdf_paths"] == ["C:/drawings/set1.pdf"]
+    assert manifest["cases"][0]["expected"]["sheet_ids"] == ["A101", "E121"]
+    assert manifest["cases"][0]["expected"]["scales_by_sheet"] == {
+        "A101": "1/8\" = 1'-0\"",
+        "E121": "1:100",
+    }
+    assert manifest["cases"][0]["expected"]["analyzed_trades"] == ["architectural", "electrical"]
+
+
+def test_benchmark_manifest_template_can_include_unmapped():
+    result = {
+        "sheets_detected": [
+            {"sheet_id": "UNMAPPED_doc_1", "source_page_index": 1},
+            {"sheet_id": "A101", "source_page_index": 2},
+        ],
+        "scale_analysis": {"by_sheet": []},
+        "trade_scope": {"analyzed_trades": []},
+        "legend_and_symbols": {"unknown_symbols": []},
+    }
+    payload = build_benchmark_manifest_template(
+        job_id="job-6",
+        result=result,
+        job_input={"uploaded_files": []},
+        include_unmapped=True,
+    )
+    sheet_ids = payload["manifest"]["cases"][0]["expected"]["sheet_ids"]
+    assert sheet_ids == ["UNMAPPED_doc_1", "A101"]

@@ -66,6 +66,7 @@ Desktop async workflow:
 6. Edit the template file, then load it in `Sheet Overrides JSON` and submit a new job
 7. Use `Notes` for project-specific constraints before running
 8. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
+9. Use `Export Benchmark Template` to create a prefilled benchmark manifest from a completed job
 
 ## Run CLI directly
 
@@ -125,6 +126,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}` job status/result
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
+- `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
 
 Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 
@@ -160,6 +162,18 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/sheet-overrides-template"
 ```
 
 The response `items` can be edited and sent back as `sheet_overrides_json` in a new `POST /v1/jobs` request.
+Benchmark template endpoint query params:
+
+- `include_unmapped` (default `false`) include unmapped sheet IDs in `expected.sheet_ids`
+- `case_id` optional override for the generated benchmark case ID
+
+Example:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/benchmark-template"
+```
+
+The response includes `manifest`, which you can save directly as a benchmark manifest JSON and then refine expected labels.
 The rerun endpoint reuses files from the source job and returns `409` if those files were cleaned up or moved.
 
 ## Persistent jobs and upload storage
