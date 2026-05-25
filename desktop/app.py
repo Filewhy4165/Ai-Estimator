@@ -109,7 +109,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(10, weight=1)
+        actions2.columnconfigure(11, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -135,17 +135,20 @@ class DesktopEstimatorApp:
         ttk.Button(actions2, text="Show Benchmark History", command=self._show_benchmark_history).grid(
             row=0, column=6, sticky="w", padx=(8, 0)
         )
+        ttk.Button(actions2, text="Compare Reports", command=self._compare_benchmark_reports).grid(
+            row=0, column=7, sticky="w", padx=(8, 0)
+        )
         ttk.Checkbutton(
             actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=8, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=8, sticky="w", padx=(8, 0)
+            row=0, column=9, sticky="w", padx=(8, 0)
         )
         ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
-            row=0, column=9, sticky="w", padx=(8, 0)
+            row=0, column=10, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -980,6 +983,43 @@ class DesktopEstimatorApp:
         self._set_output_json(payload)
         self.status_text.set(f"Loaded benchmark history: {len(items)} report(s).")
 
+    def _compare_benchmark_reports(self) -> None:
+        results_dir = self._results_dir()
+        default_dir = results_dir if results_dir.exists() else Path(__file__).resolve().parents[1]
+
+        baseline_path = filedialog.askopenfilename(
+            title="Select baseline benchmark report",
+            initialdir=str(default_dir),
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not baseline_path:
+            self.status_text.set("Benchmark report compare canceled.")
+            return
+
+        candidate_path = filedialog.askopenfilename(
+            title="Select candidate benchmark report",
+            initialdir=str(Path(baseline_path).parent),
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not candidate_path:
+            self.status_text.set("Benchmark report compare canceled.")
+            return
+
+        try:
+            baseline_report = _load_json_dict_file(Path(baseline_path))
+            candidate_report = _load_json_dict_file(Path(candidate_path))
+            comparison = compare_benchmark_reports(
+                baseline_report=baseline_report,
+                candidate_report=candidate_report,
+                baseline_path=str(baseline_path),
+                candidate_path=str(candidate_path),
+            )
+            self._set_output_json(comparison)
+            delta = comparison.get("overall_score_delta")
+            self.status_text.set(f"Report compare complete. Overall score delta: {delta}")
+        except Exception as exc:
+            self._set_output_text(f"Failed to compare benchmark reports:\n{exc}")
+
     def _open_results_folder(self) -> None:
         results_dir = self._results_dir()
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -1026,6 +1066,102 @@ class DesktopEstimatorApp:
 
     def run(self) -> None:
         self.root.mainloop()
+
+
+def compare_benchmark_reports(
+    *,
+    baseline_report: dict,
+    candidate_report: dict,
+    baseline_path: str,
+    candidate_path: str,
+) -> dict[str, object]:
+    baseline_summary = _extract_report_summary(baseline_report)
+    candidate_summary = _extract_report_summary(candidate_report)
+
+    baseline_overall = _to_float_or_none(baseline_summary.get("overall_score"))
+    candidate_overall = _to_float_or_none(candidate_summary.get("overall_score"))
+    overall_delta = _score_delta(candidate_overall, baseline_overall)
+
+    baseline_metrics = baseline_summary.get("metric_averages", {})
+    candidate_metrics = candidate_summary.get("metric_averages", {})
+    if not isinstance(baseline_metrics, dict):
+        baseline_metrics = {}
+    if not isinstance(candidate_metrics, dict):
+        candidate_metrics = {}
+
+    all_metrics = sorted(set(baseline_metrics.keys()).union(candidate_metrics.keys()))
+    metric_deltas: dict[str, dict[str, object]] = {}
+    for metric_name in all_metrics:
+        baseline_metric = _to_float_or_none(baseline_metrics.get(metric_name))
+        candidate_metric = _to_float_or_none(candidate_metrics.get(metric_name))
+        metric_deltas[metric_name] = {
+            "baseline": baseline_metric,
+            "candidate": candidate_metric,
+            "delta": _score_delta(candidate_metric, baseline_metric),
+        }
+
+    trend = "no_change"
+    if overall_delta is not None:
+        if overall_delta > 0:
+            trend = "improved"
+        elif overall_delta < 0:
+            trend = "regressed"
+
+    return {
+        "baseline": {
+            "path": baseline_path,
+            "overall_score": baseline_overall,
+            "case_count": baseline_summary.get("case_count"),
+            "completed_count": baseline_summary.get("completed_count"),
+            "failed_count": baseline_summary.get("failed_count"),
+            "metric_averages": baseline_metrics,
+        },
+        "candidate": {
+            "path": candidate_path,
+            "overall_score": candidate_overall,
+            "case_count": candidate_summary.get("case_count"),
+            "completed_count": candidate_summary.get("completed_count"),
+            "failed_count": candidate_summary.get("failed_count"),
+            "metric_averages": candidate_metrics,
+        },
+        "overall_score_delta": overall_delta,
+        "trend": trend,
+        "metric_deltas": metric_deltas,
+    }
+
+
+def _extract_report_summary(report: dict) -> dict:
+    summary = report.get("summary", {})
+    if isinstance(summary, dict):
+        return summary
+    return {}
+
+
+def _load_json_dict_file(path: Path) -> dict:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Invalid JSON file: {path}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"JSON root must be an object: {path}")
+    return parsed
+
+
+def _to_float_or_none(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return round(float(value), 4)
+    if isinstance(value, str):
+        try:
+            return round(float(value.strip()), 4)
+        except ValueError:
+            return None
+    return None
+
+
+def _score_delta(current: float | None, baseline: float | None) -> float | None:
+    if current is None or baseline is None:
+        return None
+    return round(current - baseline, 4)
 
 
 def main() -> None:

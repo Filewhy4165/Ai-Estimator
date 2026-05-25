@@ -71,6 +71,7 @@ Desktop async workflow:
 10. Use `Run Baseline Benchmark` to export a manifest and produce a scored benchmark report in one action
 11. Use `Run End-to-End Benchmark` to submit selected PDFs, wait for completion, then auto-generate and score a benchmark report
 12. Use `Show Benchmark History` to review recent benchmark reports and `Open Results Folder` to access saved outputs
+13. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric
 
 ## Run CLI directly
 
