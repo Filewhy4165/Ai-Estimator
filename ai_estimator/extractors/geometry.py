@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 
@@ -8,8 +8,46 @@ from ai_estimator.extractors.sheet_classifier import ClassifiedSheet
 
 DOOR_TAG_RE = re.compile(r"\bD[- ]?(\d{1,3}[A-Z]?)\b", re.IGNORECASE)
 WINDOW_TAG_RE = re.compile(r"\bW[- ]?(\d{1,3}[A-Z]?)\b", re.IGNORECASE)
+SYMBOL_TAG_RE = re.compile(r"\b([A-Z]{1,6})[-_](\d{1,4}[A-Z]?)\b", re.IGNORECASE)
 ROOM_RE = re.compile(r"\bROOM\s+([A-Z0-9\-\s]+)", re.IGNORECASE)
-DIMENSION_RE = re.compile(r"\b(\d+['’]-\d+[\"]?)\b")
+DIMENSION_RE = re.compile(r"\b(\d+'-\d+[\"]?)\b")
+
+
+FIXTURE_PREFIX_TO_KIND: dict[str, str] = {
+    "WC": "water_closet",
+    "UR": "urinal",
+    "LAV": "lavatory",
+    "LV": "lavatory",
+    "SNK": "sink",
+    "KS": "kitchen_sink",
+    "MS": "mop_sink",
+    "FD": "floor_drain",
+    "FS": "floor_sink",
+    "DF": "drinking_fountain",
+    "EWC": "drinking_fountain",
+    "HB": "hose_bibb",
+    "BT": "bathtub",
+    "SH": "shower",
+    "FCO": "cleanout",
+}
+
+
+EQUIPMENT_PREFIX_TO_KIND: dict[str, str] = {
+    "AHU": "air_handling_unit",
+    "RTU": "roof_top_unit",
+    "FCU": "fan_coil_unit",
+    "EF": "exhaust_fan",
+    "SF": "supply_fan",
+    "CHLR": "chiller",
+    "CH": "chiller",
+    "PUMP": "pump",
+    "WH": "water_heater",
+    "GI": "grease_interceptor",
+    "TP": "trap_primer",
+    "SAT": "speaker",
+    "DSW": "device_switch",
+    "PN": "panel",
+}
 
 
 def extract_geometry(
@@ -64,6 +102,33 @@ def extract_geometry(
                 }
             )
 
+        fixture_tags, equipment_tags = _extract_symbol_tags(text)
+        for tag, kind in fixture_tags:
+            fixtures.append(
+                {
+                    "id": f"Fixture_{sheet_id}_{tag}",
+                    "type": "fixture",
+                    "trade": trade,
+                    "properties": {"tag": tag, "kind": kind},
+                    "geometry": {},
+                    "relationships": [],
+                    "source_sheet": sheet_id,
+                }
+            )
+
+        for tag, kind in equipment_tags:
+            equipment.append(
+                {
+                    "id": f"Equipment_{sheet_id}_{tag}",
+                    "type": "equipment",
+                    "trade": trade,
+                    "properties": {"tag": tag, "kind": kind},
+                    "geometry": {},
+                    "relationships": [],
+                    "source_sheet": sheet_id,
+                }
+            )
+
         for room in _extract_room_tokens(text):
             annotations["rooms"].append({"sheet_id": sheet_id, "name": room})
 
@@ -83,8 +148,8 @@ def extract_geometry(
             "windows": _dedupe_by_id(windows),
             "slabs": slabs,
             "roofs": roofs,
-            "fixtures": fixtures,
-            "equipment": equipment,
+            "fixtures": _dedupe_by_id(fixtures),
+            "equipment": _dedupe_by_id(equipment),
             "annotations": annotations,
         },
         issues,
@@ -127,6 +192,36 @@ def _extract_room_tokens(text: str) -> list[str]:
             continue
         rooms.append(cleaned)
     return _dedupe_strings(rooms, limit=200)
+
+
+def _extract_symbol_tags(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    fixtures: list[tuple[str, str]] = []
+    equipment: list[tuple[str, str]] = []
+    seen_fixture_tags: set[str] = set()
+    seen_equipment_tags: set[str] = set()
+
+    for prefix_raw, suffix_raw in SYMBOL_TAG_RE.findall((text or "").upper()):
+        prefix = prefix_raw.strip().upper()
+        suffix = suffix_raw.strip().upper()
+        if not prefix or not suffix:
+            continue
+        tag = f"{prefix}-{suffix}"
+
+        fixture_kind = FIXTURE_PREFIX_TO_KIND.get(prefix)
+        if fixture_kind:
+            if tag not in seen_fixture_tags:
+                seen_fixture_tags.add(tag)
+                fixtures.append((tag, fixture_kind))
+            continue
+
+        equipment_kind = EQUIPMENT_PREFIX_TO_KIND.get(prefix)
+        if equipment_kind:
+            if tag not in seen_equipment_tags:
+                seen_equipment_tags.add(tag)
+                equipment.append((tag, equipment_kind))
+            continue
+
+    return fixtures, equipment
 
 
 def _dedupe_strings(values: list[str], limit: int) -> list[str]:
