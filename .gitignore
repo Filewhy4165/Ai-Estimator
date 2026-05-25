@@ -9,4 +9,6 @@ build/
 sample_output*.json
 tmp_uvicorn_*.log
 baseline_*.json
+benchmark_manifest_*.json
+benchmarks/results/*.json
 test-drawings/*.pdf

@@ -67,6 +67,7 @@ Desktop async workflow:
 7. Use `Notes` for project-specific constraints before running
 8. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
 9. Use `Export Benchmark Template` to create a prefilled benchmark manifest from a completed job
+10. Use `Run Baseline Benchmark` to export a manifest and produce a scored benchmark report in one action
 
 ## Run CLI directly
 

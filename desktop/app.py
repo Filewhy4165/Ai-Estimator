@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
+from threading import Thread
 from tkinter import END, BooleanVar, StringVar, Text, Tk, filedialog, ttk
 
 import requests
+
+from ai_estimator.benchmark import run_benchmark_manifest
 
 
 class DesktopEstimatorApp:
@@ -21,9 +25,11 @@ class DesktopEstimatorApp:
         self.current_job_id = StringVar(value="")
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
+        self.include_unmapped_benchmark = BooleanVar(value=True)
         self.auto_poll_enabled = BooleanVar(value=False)
         self.auto_poll_interval_ms = 2000
         self.auto_poll_handle: str | None = None
+        self.benchmark_task_running = False
         self.status_text = StringVar(value="Ready.")
         self.files: list[str] = []
 
@@ -88,7 +94,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(6, weight=1)
+        actions2.columnconfigure(8, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -105,12 +111,20 @@ class DesktopEstimatorApp:
         )
         ttk.Checkbutton(
             actions2,
+            text="Benchmark Include Unmapped",
+            variable=self.include_unmapped_benchmark,
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Button(actions2, text="Run Baseline Benchmark", command=self._run_baseline_benchmark).grid(
+            row=0, column=5, sticky="w", padx=(8, 0)
+        )
+        ttk.Checkbutton(
+            actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
+            row=0, column=7, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -293,15 +307,18 @@ class DesktopEstimatorApp:
             self._set_output_text(f"Failed to export template:\n{exc}")
 
     def _export_benchmark_template(self) -> None:
-        job_id = self.current_job_id.get().strip()
-        if not job_id:
-            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
             return
+
+        include_unmapped_value = "true" if self.include_unmapped_benchmark.get() else "false"
 
         try:
             payload = self._request_json(
                 "GET",
-                f"/v1/jobs/{job_id}/benchmark-template",
+                f"/v1/jobs/{job_id}/benchmark-template?include_unmapped={include_unmapped_value}",
                 timeout=60,
             )
             manifest = payload.get("manifest")
@@ -322,6 +339,78 @@ class DesktopEstimatorApp:
             self.status_text.set(f"Benchmark template saved: {target}")
         except Exception as exc:
             self._set_output_text(f"Failed to export benchmark template:\n{exc}")
+
+    def _run_baseline_benchmark(self) -> None:
+        if self.benchmark_task_running:
+            self.status_text.set("Benchmark run already in progress.")
+            return
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
+            return
+
+        include_unmapped = bool(self.include_unmapped_benchmark.get())
+        self.benchmark_task_running = True
+        self.status_text.set(f"Running baseline benchmark for completed job {job_id}...")
+
+        thread = Thread(
+            target=self._run_baseline_benchmark_worker,
+            args=(job_id, include_unmapped),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_baseline_benchmark_worker(self, job_id: str, include_unmapped: bool) -> None:
+        try:
+            include_unmapped_value = "true" if include_unmapped else "false"
+            payload = self._request_json(
+                "GET",
+                f"/v1/jobs/{job_id}/benchmark-template?include_unmapped={include_unmapped_value}",
+                timeout=90,
+            )
+            manifest = payload.get("manifest")
+            if not isinstance(manifest, dict):
+                raise RuntimeError("Benchmark template payload did not include a manifest object.")
+
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            output_dir = Path.cwd() / "benchmarks" / "results"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = output_dir / f"baseline-manifest-{job_id[:8]}-{stamp}.json"
+            report_path = output_dir / f"baseline-report-{job_id[:8]}-{stamp}.json"
+
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            report = run_benchmark_manifest(
+                manifest=manifest,
+                manifest_path=manifest_path,
+                validate_schema=True,
+                schema_path=None,
+            )
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+            summary = report.get("summary", {}) if isinstance(report, dict) else {}
+            response_payload = {
+                "job_id": job_id,
+                "include_unmapped": include_unmapped,
+                "manifest_path": str(manifest_path),
+                "report_path": str(report_path),
+                "summary": summary,
+            }
+            self.root.after(0, lambda: self._on_baseline_benchmark_success(response_payload))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_baseline_benchmark_failure(exc))
+
+    def _on_baseline_benchmark_success(self, payload: dict) -> None:
+        self.benchmark_task_running = False
+        self._set_output_json(payload)
+        summary = payload.get("summary", {})
+        score = summary.get("overall_score", "n/a") if isinstance(summary, dict) else "n/a"
+        self.status_text.set(f"Baseline benchmark complete. Overall score: {score}")
+
+    def _on_baseline_benchmark_failure(self, exc: Exception) -> None:
+        self.benchmark_task_running = False
+        self._set_output_text(f"Baseline benchmark failed:\n{exc}")
+        self.status_text.set("Baseline benchmark failed.")
 
     def _toggle_auto_poll(self) -> None:
         if self.auto_poll_enabled.get():
@@ -489,6 +578,10 @@ class DesktopEstimatorApp:
         if isinstance(include_all_template, bool):
             self.include_all_template.set(include_all_template)
 
+        include_unmapped_benchmark = loaded.get("include_unmapped_benchmark")
+        if isinstance(include_unmapped_benchmark, bool):
+            self.include_unmapped_benchmark.set(include_unmapped_benchmark)
+
         auto_poll_enabled = loaded.get("auto_poll_enabled")
         if isinstance(auto_poll_enabled, bool):
             self.auto_poll_enabled.set(auto_poll_enabled)
@@ -515,6 +608,7 @@ class DesktopEstimatorApp:
             "sheet_overrides_path": self.sheet_overrides_path.get().strip(),
             "current_job_id": self.current_job_id.get().strip(),
             "include_all_template": bool(self.include_all_template.get()),
+            "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
             "auto_poll_enabled": bool(self.auto_poll_enabled.get()),
             "files": self.files,
         }
@@ -528,6 +622,30 @@ class DesktopEstimatorApp:
         self._save_settings()
         self._stop_auto_poll()
         self.root.destroy()
+
+    def _resolve_completed_job_id(self) -> str:
+        requested = self.current_job_id.get().strip()
+        if requested:
+            try:
+                detail = self._request_json("GET", f"/v1/jobs/{requested}", timeout=30)
+                status = str(detail.get("status", "")).strip()
+                if status == "completed":
+                    return requested
+            except Exception:
+                # Fall back to latest completed job.
+                pass
+
+        payload = self._request_json("GET", "/v1/jobs?limit=1&status=completed", timeout=30)
+        items = payload.get("items", [])
+        if not isinstance(items, list) or not items:
+            raise RuntimeError("No completed jobs found. Submit and complete a job first.")
+        latest = items[0] if isinstance(items[0], dict) else {}
+        job_id = str(latest.get("job_id", "")).strip()
+        if not job_id:
+            raise RuntimeError("Latest completed job is missing job_id.")
+        self.current_job_id.set(job_id)
+        self._save_settings()
+        return job_id
 
     def _save_output(self) -> None:
         content = self.output.get("1.0", END).strip()
