@@ -174,6 +174,7 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/benchmark-template"
 ```
 
 The response includes `manifest`, which you can save directly as a benchmark manifest JSON and then refine expected labels.
+The generated `quantity_sanity.min_total_count` is seeded from the source job's current total count baseline.
 The rerun endpoint reuses files from the source job and returns `409` if those files were cleaned up or moved.
 
 ## Persistent jobs and upload storage

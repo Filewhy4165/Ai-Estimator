@@ -127,6 +127,7 @@ def test_benchmark_manifest_template_uses_job_input_and_filters_unmapped():
             ]
         },
         "trade_scope": {"analyzed_trades": ["architectural", "electrical"]},
+        "quantity_takeoff": {"counts": {"door": 2, "window": 1}},
         "legend_and_symbols": {"unknown_symbols": []},
     }
     job_input = {
@@ -147,6 +148,7 @@ def test_benchmark_manifest_template_uses_job_input_and_filters_unmapped():
     assert payload["summary"]["total_sheets"] == 3
     assert payload["summary"]["candidate_sheet_ids"] == 2
     assert payload["summary"]["excluded_unmapped_count"] == 1
+    assert payload["summary"]["source_total_count"] == 3
 
     manifest = payload["manifest"]
     assert manifest["defaults"]["analysis_mode"] == "selected"
@@ -160,6 +162,10 @@ def test_benchmark_manifest_template_uses_job_input_and_filters_unmapped():
         "E121": "1:100",
     }
     assert manifest["cases"][0]["expected"]["analyzed_trades"] == ["architectural", "electrical"]
+    assert manifest["cases"][0]["expected"]["quantity_sanity"] == {
+        "require_nonempty_counts": True,
+        "min_total_count": 3,
+    }
 
 
 def test_benchmark_manifest_template_can_include_unmapped():
@@ -170,6 +176,7 @@ def test_benchmark_manifest_template_can_include_unmapped():
         ],
         "scale_analysis": {"by_sheet": []},
         "trade_scope": {"analyzed_trades": []},
+        "quantity_takeoff": {"counts": {}},
         "legend_and_symbols": {"unknown_symbols": []},
     }
     payload = build_benchmark_manifest_template(
@@ -180,3 +187,7 @@ def test_benchmark_manifest_template_can_include_unmapped():
     )
     sheet_ids = payload["manifest"]["cases"][0]["expected"]["sheet_ids"]
     assert sheet_ids == ["UNMAPPED_doc_1", "A101"]
+    assert payload["manifest"]["cases"][0]["expected"]["quantity_sanity"] == {
+        "require_nonempty_counts": False,
+        "min_total_count": 0,
+    }

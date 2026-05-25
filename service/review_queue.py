@@ -244,6 +244,12 @@ def build_benchmark_manifest_template(
         if isinstance(raw_trades, list):
             analyzed_trades = [str(item).strip() for item in raw_trades if str(item).strip()]
 
+    source_total_count = _extract_total_count(result)
+    quantity_sanity = {
+        "require_nonempty_counts": source_total_count > 0,
+        "min_total_count": source_total_count,
+    }
+
     input_analysis_mode = str(job_input.get("analysis_mode", "auto")).strip() or "auto"
     if input_analysis_mode not in {"auto", "selected", "all"}:
         input_analysis_mode = "auto"
@@ -295,10 +301,7 @@ def build_benchmark_manifest_template(
                     "sheet_ids": candidate_sheet_ids,
                     "scales_by_sheet": scales_by_sheet,
                     "analyzed_trades": analyzed_trades,
-                    "quantity_sanity": {
-                        "require_nonempty_counts": True,
-                        "min_total_count": 1,
-                    },
+                    "quantity_sanity": quantity_sanity,
                 },
             }
         ],
@@ -319,6 +322,7 @@ def build_benchmark_manifest_template(
             "excluded_unmapped_count": excluded_unmapped_count,
             "sheets_with_detected_scale": len(scales_by_sheet),
             "suggested_trades": len(analyzed_trades),
+            "source_total_count": source_total_count,
             "flagged_sheet_count": review_queue.get("summary", {}).get("flagged_sheets", 0),
         },
         "manifest": manifest,
@@ -437,3 +441,25 @@ def _to_float(value: object, default: float = 0.0) -> float:
         except ValueError:
             return default
     return default
+
+
+def _extract_total_count(result: dict[str, Any]) -> int:
+    quantity_takeoff = result.get("quantity_takeoff", {})
+    if not isinstance(quantity_takeoff, dict):
+        return 0
+    counts = quantity_takeoff.get("counts", {})
+    if not isinstance(counts, dict):
+        return 0
+    total = 0
+    for value in counts.values():
+        if isinstance(value, bool):
+            total += int(value)
+        elif isinstance(value, int):
+            total += value
+        elif isinstance(value, float):
+            total += int(value)
+        elif isinstance(value, str):
+            token = value.strip()
+            if token.isdigit():
+                total += int(token)
+    return total
