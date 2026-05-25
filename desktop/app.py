@@ -34,6 +34,7 @@ class DesktopEstimatorApp:
         self.auto_poll_interval_ms = 2000
         self.auto_poll_handle: str | None = None
         self.benchmark_task_running = False
+        self.end_to_end_task_running = False
         self.status_text = StringVar(value="Ready.")
         self.files: list[str] = []
 
@@ -84,7 +85,7 @@ class DesktopEstimatorApp:
 
         actions1 = ttk.Frame(frame)
         actions1.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        actions1.columnconfigure(6, weight=1)
+        actions1.columnconfigure(7, weight=1)
         ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
         ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
@@ -100,6 +101,9 @@ class DesktopEstimatorApp:
         )
         ttk.Button(actions1, text="Rerun Job", command=self._rerun_job).grid(
             row=0, column=5, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions1, text="Run End-to-End Benchmark", command=self._run_end_to_end_benchmark).grid(
+            row=0, column=6, sticky="w", padx=(8, 0)
         )
 
         actions2 = ttk.Frame(frame)
@@ -351,6 +355,9 @@ class DesktopEstimatorApp:
             self._set_output_text(f"Failed to export benchmark template:\n{exc}")
 
     def _run_baseline_benchmark(self) -> None:
+        if self.end_to_end_task_running:
+            self.status_text.set("End-to-end benchmark is already running.")
+            return
         if self.benchmark_task_running:
             self.status_text.set("Benchmark run already in progress.")
             return
@@ -426,6 +433,119 @@ class DesktopEstimatorApp:
         self.benchmark_task_running = False
         self._set_output_text(f"Baseline benchmark failed:\n{exc}")
         self.status_text.set("Baseline benchmark failed.")
+
+    def _run_end_to_end_benchmark(self) -> None:
+        if self.end_to_end_task_running:
+            self.status_text.set("End-to-end benchmark is already running.")
+            return
+        if self.benchmark_task_running:
+            self.status_text.set("Baseline benchmark is already running.")
+            return
+        if not self.files:
+            self._set_output_text("Please select at least one PDF.")
+            return
+
+        try:
+            api_base = self.api_url.get().strip().rstrip("/")
+            if not api_base:
+                raise RuntimeError("API URL is required.")
+            request_data = self._build_request_data()
+            file_paths = list(self.files)
+            include_unmapped = bool(self.include_unmapped_benchmark.get())
+        except Exception as exc:
+            self._set_output_text(f"Failed to start end-to-end benchmark:\n{exc}")
+            return
+
+        self.end_to_end_task_running = True
+        self.status_text.set("Submitting job and running end-to-end benchmark...")
+        thread = Thread(
+            target=self._run_end_to_end_benchmark_worker,
+            args=(api_base, request_data, file_paths, include_unmapped),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_end_to_end_benchmark_worker(
+        self,
+        api_base: str,
+        request_data: dict[str, str],
+        file_paths: list[str],
+        include_unmapped: bool,
+    ) -> None:
+        try:
+            create_payload = self._post_files_to_base(
+                api_base=api_base,
+                path="/v1/jobs",
+                data=request_data,
+                file_paths=file_paths,
+                timeout=180,
+            )
+            job_id = str(create_payload.get("job_id", "")).strip()
+            if not job_id:
+                raise RuntimeError("API response did not include job_id.")
+
+            job_payload = self._poll_job_until_terminal(
+                api_base=api_base,
+                job_id=job_id,
+                max_wait_seconds=1200,
+                poll_interval_seconds=2,
+            )
+            status = str(job_payload.get("status", "")).strip()
+            if status != "completed":
+                error = job_payload.get("error")
+                raise RuntimeError(f"Job ended with status '{status}'. Error: {error}")
+
+            include_unmapped_value = "true" if include_unmapped else "false"
+            benchmark_template = self._request_json_from_base(
+                "GET",
+                api_base=api_base,
+                path=f"/v1/jobs/{job_id}/benchmark-template?include_unmapped={include_unmapped_value}",
+                timeout=90,
+            )
+            manifest = benchmark_template.get("manifest")
+            if not isinstance(manifest, dict):
+                raise RuntimeError("Benchmark template payload did not include a manifest object.")
+
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            output_dir = Path(__file__).resolve().parents[1] / "benchmarks" / "results"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = output_dir / f"e2e-manifest-{job_id[:8]}-{stamp}.json"
+            report_path = output_dir / f"e2e-report-{job_id[:8]}-{stamp}.json"
+
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            report = run_benchmark_manifest(
+                manifest=manifest,
+                manifest_path=manifest_path,
+                validate_schema=True,
+                schema_path=None,
+            )
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+            summary = report.get("summary", {}) if isinstance(report, dict) else {}
+            response_payload = {
+                "job_id": job_id,
+                "include_unmapped": include_unmapped,
+                "manifest_path": str(manifest_path),
+                "report_path": str(report_path),
+                "summary": summary,
+            }
+            self.root.after(0, lambda: self._on_end_to_end_benchmark_success(job_id, response_payload))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_end_to_end_benchmark_failure(exc))
+
+    def _on_end_to_end_benchmark_success(self, job_id: str, payload: dict) -> None:
+        self.end_to_end_task_running = False
+        self.current_job_id.set(job_id)
+        self._save_settings()
+        self._set_output_json(payload)
+        summary = payload.get("summary", {})
+        score = summary.get("overall_score", "n/a") if isinstance(summary, dict) else "n/a"
+        self.status_text.set(f"End-to-end benchmark complete. Overall score: {score}")
+
+    def _on_end_to_end_benchmark_failure(self, exc: Exception) -> None:
+        self.end_to_end_task_running = False
+        self._set_output_text(f"End-to-end benchmark failed:\n{exc}")
+        self.status_text.set("End-to-end benchmark failed.")
 
     def _toggle_auto_poll(self) -> None:
         if self.auto_poll_enabled.get():
@@ -523,6 +643,60 @@ class DesktopEstimatorApp:
         finally:
             for handle in handles:
                 handle.close()
+
+    def _post_files_to_base(
+        self,
+        *,
+        api_base: str,
+        path: str,
+        data: dict[str, str],
+        file_paths: list[str],
+        timeout: int,
+    ) -> dict:
+        files = []
+        handles = []
+        try:
+            for file_path in file_paths:
+                handle = open(file_path, "rb")
+                handles.append(handle)
+                files.append(("files", (Path(file_path).name, handle, "application/pdf")))
+            return self._request_json_from_base(
+                "POST",
+                api_base=api_base,
+                path=path,
+                data=data,
+                files=files,
+                timeout=timeout,
+            )
+        finally:
+            for handle in handles:
+                handle.close()
+
+    def _poll_job_until_terminal(
+        self,
+        *,
+        api_base: str,
+        job_id: str,
+        max_wait_seconds: int,
+        poll_interval_seconds: int,
+    ) -> dict:
+        deadline = time.time() + max(1, max_wait_seconds)
+        last_payload: dict = {}
+        while time.time() < deadline:
+            payload = self._request_json_from_base(
+                "GET",
+                api_base=api_base,
+                path=f"/v1/jobs/{job_id}",
+                timeout=30,
+            )
+            last_payload = payload
+            status = str(payload.get("status", "")).strip()
+            if status in {"completed", "failed"}:
+                return payload
+            time.sleep(max(1, poll_interval_seconds))
+        raise RuntimeError(
+            f"Timed out waiting for job {job_id}. Last status: {last_payload.get('status', 'unknown')}"
+        )
 
     def _request_json(self, method: str, path: str, *, timeout: int = 60, **kwargs: object) -> dict:
         base = self.api_url.get().strip().rstrip("/")
