@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import os
 from pathlib import Path
+import subprocess
 from threading import Thread
 from tkinter import END, BooleanVar, StringVar, Text, Tk, filedialog, ttk
+from urllib.parse import urlparse
+import time
 
 import requests
 
@@ -43,7 +47,13 @@ class DesktopEstimatorApp:
         frame.pack(fill="both", expand=True)
 
         ttk.Label(frame, text="API URL").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.api_url, width=68).grid(row=0, column=1, sticky="ew")
+        api_row = ttk.Frame(frame)
+        api_row.grid(row=0, column=1, sticky="ew")
+        api_row.columnconfigure(0, weight=1)
+        ttk.Entry(api_row, textvariable=self.api_url, width=58).grid(row=0, column=0, sticky="ew")
+        ttk.Button(api_row, text="Start Local API", command=self._start_local_api_clicked).grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
 
         ttk.Label(frame, text="Analysis Mode").grid(row=1, column=0, sticky="w")
         ttk.Combobox(
@@ -351,22 +361,27 @@ class DesktopEstimatorApp:
             return
 
         include_unmapped = bool(self.include_unmapped_benchmark.get())
+        api_base = self.api_url.get().strip().rstrip("/")
+        if not api_base:
+            self._set_output_text("API URL is required.")
+            return
         self.benchmark_task_running = True
         self.status_text.set(f"Running baseline benchmark for completed job {job_id}...")
 
         thread = Thread(
             target=self._run_baseline_benchmark_worker,
-            args=(job_id, include_unmapped),
+            args=(job_id, include_unmapped, api_base),
             daemon=True,
         )
         thread.start()
 
-    def _run_baseline_benchmark_worker(self, job_id: str, include_unmapped: bool) -> None:
+    def _run_baseline_benchmark_worker(self, job_id: str, include_unmapped: bool, api_base: str) -> None:
         try:
             include_unmapped_value = "true" if include_unmapped else "false"
-            payload = self._request_json(
+            payload = self._request_json_from_base(
                 "GET",
-                f"/v1/jobs/{job_id}/benchmark-template?include_unmapped={include_unmapped_value}",
+                api_base=api_base,
+                path=f"/v1/jobs/{job_id}/benchmark-template?include_unmapped={include_unmapped_value}",
                 timeout=90,
             )
             manifest = payload.get("manifest")
@@ -374,7 +389,7 @@ class DesktopEstimatorApp:
                 raise RuntimeError("Benchmark template payload did not include a manifest object.")
 
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            output_dir = Path.cwd() / "benchmarks" / "results"
+            output_dir = Path(__file__).resolve().parents[1] / "benchmarks" / "results"
             output_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = output_dir / f"baseline-manifest-{job_id[:8]}-{stamp}.json"
             report_path = output_dir / f"baseline-report-{job_id[:8]}-{stamp}.json"
@@ -513,8 +528,31 @@ class DesktopEstimatorApp:
         base = self.api_url.get().strip().rstrip("/")
         if not base:
             raise RuntimeError("API URL is required.")
+        return self._request_json_from_base(method, api_base=base, path=path, timeout=timeout, **kwargs)
+
+    def _request_json_from_base(
+        self,
+        method: str,
+        *,
+        api_base: str,
+        path: str,
+        timeout: int = 60,
+        **kwargs: object,
+    ) -> dict:
+        base = api_base.strip().rstrip("/")
+        if not base:
+            raise RuntimeError("API URL is required.")
         url = f"{base}{path}"
-        response = requests.request(method, url, timeout=timeout, **kwargs)
+        try:
+            response = requests.request(method, url, timeout=timeout, **kwargs)
+        except requests.exceptions.ConnectionError as exc:
+            auto_started = self._ensure_local_api_running(base)
+            if auto_started:
+                response = requests.request(method, url, timeout=timeout, **kwargs)
+            else:
+                raise RuntimeError(
+                    "Could not connect to API. If using local mode, click 'Start Local API'."
+                ) from exc
         if response.status_code >= 400:
             raise RuntimeError(f"{response.status_code}: {response.text}")
         try:
@@ -646,6 +684,84 @@ class DesktopEstimatorApp:
         self.current_job_id.set(job_id)
         self._save_settings()
         return job_id
+
+    def _start_local_api_clicked(self) -> None:
+        try:
+            base = self.api_url.get().strip().rstrip("/")
+            if not base:
+                raise RuntimeError("API URL is required.")
+            self._ensure_local_api_running(base, force_start=True)
+            if self._can_reach_health(base, timeout_seconds=2):
+                self.status_text.set("Local API is running.")
+            else:
+                self.status_text.set("Local API start attempted, but health check is not responding yet.")
+        except Exception as exc:
+            self._set_output_text(f"Failed to start local API:\n{exc}")
+
+    def _ensure_local_api_running(self, api_base: str, force_start: bool = False) -> bool:
+        if not self._is_local_api_base(api_base):
+            return False
+
+        if not force_start and self._can_reach_health(api_base, timeout_seconds=2):
+            return False
+
+        self._spawn_local_api_process()
+        return self._wait_for_health(api_base, wait_seconds=8)
+
+    def _is_local_api_base(self, api_base: str) -> bool:
+        parsed = urlparse(api_base if "://" in api_base else f"http://{api_base}")
+        host = (parsed.hostname or "").lower()
+        return host in {"127.0.0.1", "localhost"}
+
+    def _spawn_local_api_process(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        api_exe = project_root / ".venv" / "Scripts" / "ai-estimator-api.exe"
+        python_exe = project_root / ".venv" / "Scripts" / "python.exe"
+
+        if api_exe.exists():
+            cmd = [str(api_exe)]
+        elif python_exe.exists():
+            cmd = [str(python_exe), "-m", "service.run_api"]
+        else:
+            raise RuntimeError(
+                "Local API launcher was not found. Reinstall with: python -m pip install -e \".[dev]\""
+            )
+
+        popen_kwargs = {
+            "cwd": str(project_root),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            create_no_window = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            detached = int(getattr(subprocess, "DETACHED_PROCESS", 0))
+            popen_kwargs["creationflags"] = create_no_window | detached
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        subprocess.Popen(cmd, **popen_kwargs)
+
+    def _wait_for_health(self, api_base: str, wait_seconds: int) -> bool:
+        deadline = time.time() + max(1, wait_seconds)
+        while time.time() < deadline:
+            if self._can_reach_health(api_base, timeout_seconds=2):
+                return True
+            time.sleep(0.5)
+        return False
+
+    def _can_reach_health(self, api_base: str, timeout_seconds: int = 2) -> bool:
+        base = api_base.strip().rstrip("/")
+        if not base:
+            return False
+        try:
+            response = requests.get(f"{base}/health", timeout=timeout_seconds)
+            if response.status_code >= 400:
+                return False
+            payload = response.json()
+            return isinstance(payload, dict) and payload.get("status") == "ok"
+        except Exception:
+            return False
 
     def _save_output(self) -> None:
         content = self.output.get("1.0", END).strip()
