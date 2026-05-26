@@ -16,6 +16,7 @@ import requests
 from ai_estimator.benchmark import run_benchmark_manifest
 from ai_estimator.benchmark_compare import (
     build_benchmark_history,
+    build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
     compare_latest_benchmark_reports,
     compare_reports_from_paths,
@@ -115,7 +116,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(13, weight=1)
+        actions2.columnconfigure(14, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -150,17 +151,20 @@ class DesktopEstimatorApp:
         ttk.Button(actions2, text="Latest Trend Snapshot", command=self._show_benchmark_trend_snapshot).grid(
             row=0, column=9, sticky="w", padx=(8, 0)
         )
+        ttk.Button(actions2, text="Score Timeline", command=self._show_benchmark_score_timeline).grid(
+            row=0, column=10, sticky="w", padx=(8, 0)
+        )
         ttk.Checkbutton(
             actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=10, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=11, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=11, sticky="w", padx=(8, 0)
+            row=0, column=12, sticky="w", padx=(8, 0)
         )
         ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
-            row=0, column=12, sticky="w", padx=(8, 0)
+            row=0, column=13, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -1010,6 +1014,25 @@ class DesktopEstimatorApp:
         trend = payload.get("trend", "unknown")
         delta = payload.get("overall_score_delta", "n/a")
         self.status_text.set(f"Loaded latest trend snapshot ({source}): trend={trend}, delta={delta}")
+
+    def _show_benchmark_score_timeline(self) -> None:
+        results_dir = self._results_dir()
+        try:
+            payload = self._request_json(
+                "GET",
+                "/v1/benchmark-reports/timeline",
+                timeout=60,
+                params={"limit": 30, "offset": 0},
+            )
+            source = "API"
+        except Exception:
+            payload = build_benchmark_score_timeline(results_dir=results_dir, limit=30, offset=0)
+            source = "local fallback"
+
+        self._set_output_json(payload)
+        total = payload.get("total_available", 0)
+        returned = payload.get("total_returned", 0)
+        self.status_text.set(f"Loaded score timeline ({source}): {returned}/{total} point(s).")
 
     def _compare_benchmark_reports(self) -> None:
         results_dir = self._results_dir()

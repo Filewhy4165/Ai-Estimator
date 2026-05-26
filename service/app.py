@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ai_estimator.benchmark_compare import (
     build_benchmark_history,
+    build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
     compare_latest_benchmark_reports as compare_latest_benchmark_reports_from_dir,
     compare_reports_from_paths,
@@ -77,6 +78,15 @@ class BenchmarkTrendResponse(BaseModel):
     baseline: dict[str, Any]
     candidate: dict[str, Any]
     metric_count: int
+
+
+class BenchmarkTimelineResponse(BaseModel):
+    results_dir: str
+    total_available: int
+    total_returned: int
+    limit: int
+    offset: int
+    points: list[dict[str, Any]]
 
 
 app = FastAPI(title="AI Estimator Service", version="0.1.0")
@@ -415,6 +425,21 @@ def get_benchmark_reports_trend(
         return BenchmarkTrendResponse(**payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/benchmark-reports/timeline", response_model=BenchmarkTimelineResponse)
+def get_benchmark_reports_timeline(
+    results_dir: str = "",
+    limit: int = 30,
+    offset: int = 0,
+) -> BenchmarkTimelineResponse:
+    if str(results_dir).strip():
+        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
+    else:
+        target_dir = Path.cwd() / "benchmarks" / "results"
+
+    payload = build_benchmark_score_timeline(results_dir=target_dir, limit=limit, offset=offset)
+    return BenchmarkTimelineResponse(**payload)
 
 
 @app.get("/v1/jobs", response_model=JobListResponse)

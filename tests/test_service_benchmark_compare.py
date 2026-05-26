@@ -7,6 +7,7 @@ from service.app import (
     compare_benchmark_reports_endpoint,
     compare_latest_benchmark_reports_endpoint,
     get_benchmark_reports_history,
+    get_benchmark_reports_timeline,
     get_benchmark_reports_trend,
 )
 
@@ -129,3 +130,23 @@ def test_get_benchmark_reports_trend_requires_two_reports(tmp_path):
         assert "Need at least two benchmark reports" in str(exc.detail)
     else:
         raise AssertionError("Expected HTTPException when fewer than two reports are present")
+
+
+def test_get_benchmark_reports_timeline(tmp_path):
+    oldest = tmp_path / "oldest.json"
+    middle = tmp_path / "middle.json"
+    newest = tmp_path / "newest.json"
+    _write_report(oldest, 0.3)
+    _write_report(middle, 0.5)
+    _write_report(newest, 0.8)
+    os.utime(oldest, (1_700_000_000, 1_700_000_000))
+    os.utime(middle, (1_700_000_010, 1_700_000_010))
+    os.utime(newest, (1_700_000_020, 1_700_000_020))
+
+    payload = get_benchmark_reports_timeline(results_dir=str(tmp_path), limit=3, offset=0)
+
+    assert payload.total_available == 3
+    assert payload.total_returned == 3
+    assert payload.points[0]["file_name"] == "newest.json"
+    assert payload.points[0]["trend_vs_previous"] == "improved"
+    assert payload.points[0]["delta_vs_previous"] == 0.3

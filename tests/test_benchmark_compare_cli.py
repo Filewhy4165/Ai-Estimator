@@ -4,6 +4,7 @@ import sys
 
 from ai_estimator.benchmark_compare import (
     build_benchmark_history,
+    build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
     compare_reports_from_paths,
     main,
@@ -167,3 +168,29 @@ def test_build_latest_benchmark_trend_summary_requires_two_reports(tmp_path):
         assert "Need at least two benchmark reports" in str(exc)
     else:
         raise AssertionError("Expected RuntimeError when fewer than two reports are present")
+
+
+def test_build_benchmark_score_timeline(tmp_path):
+    oldest = tmp_path / "oldest.json"
+    middle = tmp_path / "middle.json"
+    newest = tmp_path / "newest.json"
+    _write_report(oldest, 0.3)
+    _write_report(middle, 0.5)
+    _write_report(newest, 0.8)
+    os.utime(oldest, (1_700_000_000, 1_700_000_000))
+    os.utime(middle, (1_700_000_010, 1_700_000_010))
+    os.utime(newest, (1_700_000_020, 1_700_000_020))
+
+    payload = build_benchmark_score_timeline(results_dir=tmp_path, limit=3, offset=0)
+    points = payload["points"]
+
+    assert payload["total_available"] == 3
+    assert payload["total_returned"] == 3
+    assert points[0]["file_name"] == "newest.json"
+    assert points[0]["delta_vs_previous"] == 0.3
+    assert points[0]["trend_vs_previous"] == "improved"
+    assert points[1]["file_name"] == "middle.json"
+    assert points[1]["delta_vs_previous"] == 0.2
+    assert points[1]["trend_vs_previous"] == "improved"
+    assert points[2]["file_name"] == "oldest.json"
+    assert points[2]["delta_vs_previous"] is None

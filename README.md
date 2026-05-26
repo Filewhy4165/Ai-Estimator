@@ -74,6 +74,7 @@ Desktop async workflow:
 13. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric (via API when available; local fallback otherwise)
 14. Use `Compare Latest Reports` to automatically compare the two most recent benchmark reports (via API when available; local fallback otherwise)
 15. Use `Latest Trend Snapshot` to get a compact benchmark trend summary (trend, delta, baseline/candidate scores)
+16. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
 
 ## Run CLI directly
 
@@ -163,6 +164,7 @@ Benchmark manifest shape:
 - `GET /v1/benchmark-reports/compare` compare two benchmark report JSON files
 - `GET /v1/benchmark-reports/compare-latest` compare the two most recent valid benchmark reports in a results folder
 - `GET /v1/benchmark-reports/trend` compact trend summary based on the latest two valid benchmark reports
+- `GET /v1/benchmark-reports/timeline` recent score points with delta vs previous report
 
 Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 
@@ -220,6 +222,7 @@ curl "http://127.0.0.1:8000/v1/benchmark-reports/history?results_dir=C:\path\to\
 curl "http://127.0.0.1:8000/v1/benchmark-reports/compare?baseline_path=C:\path\to\baseline.json&candidate_path=C:\path\to\candidate.json"
 curl "http://127.0.0.1:8000/v1/benchmark-reports/compare-latest?results_dir=C:\path\to\benchmarks\results"
 curl "http://127.0.0.1:8000/v1/benchmark-reports/trend?results_dir=C:\path\to\benchmarks\results"
+curl "http://127.0.0.1:8000/v1/benchmark-reports/timeline?results_dir=C:\path\to\benchmarks\results&limit=30&offset=0"
 ```
 
 ## Persistent jobs and upload storage
