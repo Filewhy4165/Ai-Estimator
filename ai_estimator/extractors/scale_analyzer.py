@@ -17,8 +17,7 @@ def analyze_scales(
     pages: list[LoadedPage], sheets: list[ClassifiedSheet]
 ) -> tuple[dict[str, object], list[str]]:
     issues: list[str] = []
-    by_sheet: list[dict[str, object]] = []
-    undetected: list[str] = []
+    by_sheet_rows: list[dict[str, object]] = []
 
     sheet_lookup = {sheet.source_page_index: sheet for sheet in sheets}
     for page in pages:
@@ -44,10 +43,7 @@ def analyze_scales(
                 units = "imperial"
                 confidence = 0.75
 
-        if not detected:
-            undetected.append(sheet_id)
-
-        by_sheet.append(
+        by_sheet_rows.append(
             {
                 "sheet_id": sheet_id,
                 "detected_scale": detected,
@@ -56,6 +52,8 @@ def analyze_scales(
             }
         )
 
+    by_sheet = _collapse_scale_rows(by_sheet_rows)
+    undetected = [str(row.get("sheet_id", "")) for row in by_sheet if not row.get("detected_scale")]
     if undetected:
         issues.append(
             "Scale could not be determined for sheets: "
@@ -77,3 +75,25 @@ def _normalize_scale(raw: str) -> str | None:
         return value
     return None
 
+
+def _collapse_scale_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    best_by_sheet: dict[str, dict[str, object]] = {}
+    for row in rows:
+        sheet_id = str(row.get("sheet_id", "")).strip()
+        if not sheet_id:
+            continue
+        current = best_by_sheet.get(sheet_id)
+        if current is None:
+            best_by_sheet[sheet_id] = row
+            continue
+        if _scale_row_rank(row) > _scale_row_rank(current):
+            best_by_sheet[sheet_id] = row
+    return list(best_by_sheet.values())
+
+
+def _scale_row_rank(row: dict[str, object]) -> tuple[int, float]:
+    detected = row.get("detected_scale")
+    has_detected = 1 if isinstance(detected, str) and detected.strip() else 0
+    confidence_raw = row.get("confidence")
+    confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else 0.0
+    return (has_detected, confidence)
