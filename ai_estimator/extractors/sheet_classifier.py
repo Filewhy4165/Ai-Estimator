@@ -15,6 +15,7 @@ SHEET_ID_LINE_HINTS_RE = re.compile(
 STRONG_TITLE_HINTS_RE = re.compile(
     r"\b(plan|elevation|section|detail|schedule|legend|diagram)\b", re.IGNORECASE
 )
+SCALE_METADATA_RE = re.compile(r"\bSCALE\b\s*[:=]", re.IGNORECASE)
 ALLOWED_PREFIXES = set(DISCIPLINE_PREFIX_TO_TRADE.keys())
 
 
@@ -215,6 +216,8 @@ def _looks_like_grid_label(line: str) -> bool:
 
 def _is_metadata_label(line: str) -> bool:
     normalized = " ".join(line.upper().split())
+    if SCALE_METADATA_RE.search(normalized):
+        return True
     metadata_terms = {
         "DRAWING NO",
         "DRAWING NO.",
