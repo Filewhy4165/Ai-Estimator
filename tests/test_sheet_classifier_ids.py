@@ -59,3 +59,61 @@ def test_sheet_id_does_not_accept_short_single_digit_standard_id():
     assert len(sheets) == 1
     assert sheets[0].sheet_id.startswith("UNMAPPED_")
 
+
+def test_sheet_id_uses_building_context_for_short_form():
+    pages = [
+        LoadedPage(
+            page_index=0,
+            source_pdf="x.pdf",
+            text="\n".join(
+                [
+                    "BUILDING 4476",
+                    "A1 FLOOR PLAN, SCHEDULES AND NOTES",
+                ]
+            ),
+        )
+    ]
+    sheets = classify_sheets(pages, sheet_overrides=None)
+    assert len(sheets) == 1
+    assert sheets[0].sheet_id == "FAC-4476-A1"
+    assert sheets[0].sheet_type == "plan"
+    assert sheets[0].trade == "architectural"
+
+
+def test_sheet_id_ignores_trailing_short_token_in_notes():
+    pages = [
+        LoadedPage(
+            page_index=0,
+            source_pdf="x.pdf",
+            text="\n".join(
+                [
+                    "BUILDING 4476",
+                    "MATCH EXISTING PLAN DIMENSIONS. INSTALL NEW TOILET PARTITIONS..  A4.",
+                    "GENERAL NOTES",
+                ]
+            ),
+        )
+    ]
+    sheets = classify_sheets(pages, sheet_overrides=None)
+    assert len(sheets) == 1
+    assert sheets[0].sheet_id.startswith("UNMAPPED_")
+
+
+def test_sheet_id_short_fallback_skips_other_prefixes():
+    pages = [
+        LoadedPage(
+            page_index=0,
+            source_pdf="x.pdf",
+            text="\n".join(
+                [
+                    "BUILDING 4476",
+                    "X1",
+                    "GENERAL NOTES",
+                ]
+            ),
+        )
+    ]
+    sheets = classify_sheets(pages, sheet_overrides=None)
+    assert len(sheets) == 1
+    assert sheets[0].sheet_id.startswith("UNMAPPED_")
+
