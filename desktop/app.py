@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,8 @@ import requests
 from ai_estimator.benchmark import run_benchmark_manifest
 from ai_estimator.benchmark_compare import (
     build_benchmark_history,
-    compare_benchmark_reports,
     compare_latest_benchmark_reports,
+    compare_reports_from_paths,
 )
 
 
@@ -972,10 +973,21 @@ class DesktopEstimatorApp:
 
     def _show_benchmark_history(self) -> None:
         results_dir = self._results_dir()
-        payload = build_benchmark_history(results_dir=results_dir, limit=50, offset=0)
+        try:
+            payload = self._request_json(
+                "GET",
+                "/v1/benchmark-reports/history",
+                timeout=60,
+                params={"limit": 50, "offset": 0},
+            )
+            source = "API"
+        except Exception:
+            payload = build_benchmark_history(results_dir=results_dir, limit=50, offset=0)
+            source = "local fallback"
+
         self._set_output_json(payload)
         total_reports = payload.get("total_available", 0)
-        self.status_text.set(f"Loaded benchmark history: {total_reports} report(s).")
+        self.status_text.set(f"Loaded benchmark history ({source}): {total_reports} report(s).")
 
     def _compare_benchmark_reports(self) -> None:
         results_dir = self._results_dir()
@@ -1000,28 +1012,47 @@ class DesktopEstimatorApp:
             return
 
         try:
-            baseline_report = _load_json_dict_file(Path(baseline_path))
-            candidate_report = _load_json_dict_file(Path(candidate_path))
-            comparison = compare_benchmark_reports(
-                baseline_report=baseline_report,
-                candidate_report=candidate_report,
-                baseline_path=str(baseline_path),
-                candidate_path=str(candidate_path),
+            comparison = self._request_json(
+                "GET",
+                "/v1/benchmark-reports/compare",
+                timeout=120,
+                params={"baseline_path": baseline_path, "candidate_path": candidate_path},
             )
+            source = "API"
+        except Exception:
+            comparison = compare_reports_from_paths(
+                baseline_path=Path(baseline_path),
+                candidate_path=Path(candidate_path),
+            )
+            source = "local fallback"
+
+        try:
             self._set_output_json(comparison)
             delta = comparison.get("overall_score_delta")
-            self.status_text.set(f"Report compare complete. Overall score delta: {delta}")
+            self.status_text.set(f"Report compare complete ({source}). Overall score delta: {delta}")
         except Exception as exc:
             self._set_output_text(f"Failed to compare benchmark reports:\n{exc}")
 
     def _compare_latest_benchmark_reports(self) -> None:
         results_dir = self._results_dir()
         try:
+            comparison = self._request_json(
+                "GET",
+                "/v1/benchmark-reports/compare-latest",
+                timeout=120,
+            )
+            source = "API"
+        except Exception:
             comparison = compare_latest_benchmark_reports(results_dir)
+            source = "local fallback"
+
+        try:
             self._set_output_json(comparison)
             delta = comparison.get("overall_score_delta")
             trend = comparison.get("trend")
-            self.status_text.set(f"Latest report comparison complete. Trend: {trend}; delta: {delta}")
+            self.status_text.set(
+                f"Latest report comparison complete ({source}). Trend: {trend}; delta: {delta}"
+            )
         except Exception as exc:
             self._set_output_text(f"Failed to compare latest benchmark reports:\n{exc}")
 
