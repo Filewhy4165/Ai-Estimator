@@ -251,6 +251,53 @@ def build_latest_benchmark_trend_summary(results_dir: Path) -> dict[str, object]
     }
 
 
+def build_benchmark_score_timeline(results_dir: Path, limit: int = 30, offset: int = 0) -> dict[str, object]:
+    history = build_benchmark_history(results_dir=results_dir, limit=limit, offset=offset)
+    items = history.get("items", [])
+    if not isinstance(items, list):
+        items = []
+
+    points: list[dict[str, object]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        score = _to_float_or_none(item.get("overall_score"))
+        next_score: float | None = None
+        if index + 1 < len(items):
+            next_item = items[index + 1]
+            if isinstance(next_item, dict):
+                next_score = _to_float_or_none(next_item.get("overall_score"))
+        delta_vs_previous = _score_delta(score, next_score)
+        trend_vs_previous = "no_change"
+        if delta_vs_previous is not None:
+            if delta_vs_previous > 0:
+                trend_vs_previous = "improved"
+            elif delta_vs_previous < 0:
+                trend_vs_previous = "regressed"
+
+        points.append(
+            {
+                "index": index,
+                "file_name": item.get("file_name"),
+                "path": item.get("path"),
+                "generated_at_utc": item.get("generated_at_utc"),
+                "modified_local": item.get("modified_local"),
+                "overall_score": score,
+                "delta_vs_previous": delta_vs_previous,
+                "trend_vs_previous": trend_vs_previous,
+            }
+        )
+
+    return {
+        "results_dir": history.get("results_dir"),
+        "total_available": history.get("total_available", 0),
+        "total_returned": len(points),
+        "limit": history.get("limit", limit),
+        "offset": history.get("offset", offset),
+        "points": points,
+    }
+
+
 def build_benchmark_history_item(path: Path) -> dict[str, object] | None:
     try:
         parsed = _load_json_dict_file(path)
