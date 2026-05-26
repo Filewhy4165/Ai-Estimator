@@ -14,6 +14,7 @@ import time
 import requests
 
 from ai_estimator.benchmark import run_benchmark_manifest
+from ai_estimator.benchmark_compare import compare_benchmark_reports, compare_latest_benchmark_reports
 
 
 class DesktopEstimatorApp:
@@ -1080,141 +1081,6 @@ class DesktopEstimatorApp:
 
     def run(self) -> None:
         self.root.mainloop()
-
-
-def compare_benchmark_reports(
-    *,
-    baseline_report: dict,
-    candidate_report: dict,
-    baseline_path: str,
-    candidate_path: str,
-) -> dict[str, object]:
-    baseline_summary = _extract_report_summary(baseline_report)
-    candidate_summary = _extract_report_summary(candidate_report)
-
-    baseline_overall = _to_float_or_none(baseline_summary.get("overall_score"))
-    candidate_overall = _to_float_or_none(candidate_summary.get("overall_score"))
-    overall_delta = _score_delta(candidate_overall, baseline_overall)
-
-    baseline_metrics = baseline_summary.get("metric_averages", {})
-    candidate_metrics = candidate_summary.get("metric_averages", {})
-    if not isinstance(baseline_metrics, dict):
-        baseline_metrics = {}
-    if not isinstance(candidate_metrics, dict):
-        candidate_metrics = {}
-
-    all_metrics = sorted(set(baseline_metrics.keys()).union(candidate_metrics.keys()))
-    metric_deltas: dict[str, dict[str, object]] = {}
-    for metric_name in all_metrics:
-        baseline_metric = _to_float_or_none(baseline_metrics.get(metric_name))
-        candidate_metric = _to_float_or_none(candidate_metrics.get(metric_name))
-        metric_deltas[metric_name] = {
-            "baseline": baseline_metric,
-            "candidate": candidate_metric,
-            "delta": _score_delta(candidate_metric, baseline_metric),
-        }
-
-    trend = "no_change"
-    if overall_delta is not None:
-        if overall_delta > 0:
-            trend = "improved"
-        elif overall_delta < 0:
-            trend = "regressed"
-
-    return {
-        "baseline": {
-            "path": baseline_path,
-            "overall_score": baseline_overall,
-            "case_count": baseline_summary.get("case_count"),
-            "completed_count": baseline_summary.get("completed_count"),
-            "failed_count": baseline_summary.get("failed_count"),
-            "metric_averages": baseline_metrics,
-        },
-        "candidate": {
-            "path": candidate_path,
-            "overall_score": candidate_overall,
-            "case_count": candidate_summary.get("case_count"),
-            "completed_count": candidate_summary.get("completed_count"),
-            "failed_count": candidate_summary.get("failed_count"),
-            "metric_averages": candidate_metrics,
-        },
-        "overall_score_delta": overall_delta,
-        "trend": trend,
-        "metric_deltas": metric_deltas,
-    }
-
-
-def compare_latest_benchmark_reports(results_dir: Path) -> dict[str, object]:
-    report_paths = _list_recent_benchmark_report_paths(results_dir)
-    if len(report_paths) < 2:
-        raise RuntimeError(
-            f"Need at least two benchmark reports in {results_dir} to compare latest trend."
-        )
-
-    candidate_path = report_paths[0]
-    baseline_path = report_paths[1]
-    baseline_report = _load_json_dict_file(baseline_path)
-    candidate_report = _load_json_dict_file(candidate_path)
-
-    comparison = compare_benchmark_reports(
-        baseline_report=baseline_report,
-        candidate_report=candidate_report,
-        baseline_path=str(baseline_path),
-        candidate_path=str(candidate_path),
-    )
-    comparison["comparison_mode"] = "latest_pair"
-    return comparison
-
-
-def _extract_report_summary(report: dict) -> dict:
-    summary = report.get("summary", {})
-    if isinstance(summary, dict):
-        return summary
-    return {}
-
-
-def _load_json_dict_file(path: Path) -> dict:
-    try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"Invalid JSON file: {path}") from exc
-    if not isinstance(parsed, dict):
-        raise RuntimeError(f"JSON root must be an object: {path}")
-    return parsed
-
-
-def _list_recent_benchmark_report_paths(results_dir: Path) -> list[Path]:
-    if not results_dir.exists():
-        return []
-
-    candidates = sorted(results_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    valid: list[Path] = []
-    for path in candidates:
-        try:
-            parsed = _load_json_dict_file(path)
-        except Exception:
-            continue
-        summary = _extract_report_summary(parsed)
-        if "overall_score" in summary:
-            valid.append(path)
-    return valid
-
-
-def _to_float_or_none(value: object) -> float | None:
-    if isinstance(value, (int, float)):
-        return round(float(value), 4)
-    if isinstance(value, str):
-        try:
-            return round(float(value.strip()), 4)
-        except ValueError:
-            return None
-    return None
-
-
-def _score_delta(current: float | None, baseline: float | None) -> float | None:
-    if current is None or baseline is None:
-        return None
-    return round(current - baseline, 4)
 
 
 def main() -> None:

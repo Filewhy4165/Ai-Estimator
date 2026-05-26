@@ -110,6 +110,31 @@ Optional:
 --schema-path C:\path\to\output_schema.json
 ```
 
+## Compare benchmark reports
+
+Use the benchmark comparison CLI to compare two reports directly or compare the latest pair in a folder.
+
+```bash
+ai-estimator-benchmark-compare ^
+  --baseline ".\benchmarks\results\run_a.json" ^
+  --candidate ".\benchmarks\results\run_b.json"
+```
+
+Latest two reports:
+
+```bash
+ai-estimator-benchmark-compare ^
+  --latest ^
+  --results-dir ".\benchmarks\results"
+```
+
+Optional quality gates:
+
+```bash
+--fail-on-regression
+--max-negative-delta 0.05
+```
+
 Benchmark manifest shape:
 
 - `defaults` shared run options (`analysis_mode`, `selected_trades`, optional `sheet_overrides`)

@@ -1,7 +1,7 @@
 import json
 import os
 
-from desktop.app import compare_benchmark_reports, compare_latest_benchmark_reports
+from ai_estimator.benchmark_compare import compare_benchmark_reports, compare_latest_benchmark_reports
 
 
 def test_compare_benchmark_reports_improved():
