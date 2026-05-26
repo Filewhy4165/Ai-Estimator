@@ -12,6 +12,10 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from ai_estimator.benchmark_compare import (
+    compare_latest_benchmark_reports as compare_latest_benchmark_reports_from_dir,
+    compare_reports_from_paths,
+)
 from ai_estimator.pipeline import run_pipeline, sanitize_selected_trades
 from service.job_store import JobRecord, JobStore
 from service.request_parsing import normalize_notes, parse_sheet_overrides_json
@@ -325,6 +329,39 @@ def get_benchmark_template(
         case_id=case_id,
     )
     return BenchmarkTemplateResponse(**payload)
+
+
+@app.get("/v1/benchmark-reports/compare")
+def compare_benchmark_reports_endpoint(
+    baseline_path: str,
+    candidate_path: str,
+) -> dict[str, Any]:
+    baseline = Path(str(baseline_path).strip()).expanduser().resolve()
+    candidate = Path(str(candidate_path).strip()).expanduser().resolve()
+    if not baseline.exists():
+        raise HTTPException(status_code=404, detail=f"Baseline report not found: {baseline}")
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail=f"Candidate report not found: {candidate}")
+
+    try:
+        return compare_reports_from_paths(baseline, candidate)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/benchmark-reports/compare-latest")
+def compare_latest_benchmark_reports_endpoint(
+    results_dir: str = "",
+) -> dict[str, Any]:
+    if str(results_dir).strip():
+        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
+    else:
+        target_dir = Path.cwd() / "benchmarks" / "results"
+
+    try:
+        return compare_latest_benchmark_reports_from_dir(target_dir)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/v1/jobs", response_model=JobListResponse)
