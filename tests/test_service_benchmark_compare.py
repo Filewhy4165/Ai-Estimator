@@ -7,6 +7,7 @@ from service.app import (
     compare_benchmark_reports_endpoint,
     compare_latest_benchmark_reports_endpoint,
     get_benchmark_reports_history,
+    get_benchmark_reports_trend,
 )
 
 
@@ -98,3 +99,33 @@ def test_get_benchmark_reports_history_returns_paginated_items(tmp_path):
     assert payload.limit == 2
     assert payload.offset == 1
     assert [item["file_name"] for item in payload.items] == ["second.json", "first.json"]
+
+
+def test_get_benchmark_reports_trend(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.4)
+    _write_report(newer, 0.8)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = get_benchmark_reports_trend(results_dir=str(tmp_path))
+
+    assert payload.trend == "improved"
+    assert payload.overall_score_delta == 0.4
+    assert payload.total_available == 2
+    assert payload.metric_count == 1
+
+
+def test_get_benchmark_reports_trend_requires_two_reports(tmp_path):
+    only = tmp_path / "only.json"
+    _write_report(only, 0.5)
+    os.utime(only, (1_700_000_000, 1_700_000_000))
+
+    try:
+        get_benchmark_reports_trend(results_dir=str(tmp_path))
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "Need at least two benchmark reports" in str(exc.detail)
+    else:
+        raise AssertionError("Expected HTTPException when fewer than two reports are present")

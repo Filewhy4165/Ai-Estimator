@@ -215,6 +215,42 @@ def build_benchmark_history(results_dir: Path, limit: int = 50, offset: int = 0)
     }
 
 
+def build_latest_benchmark_trend_summary(results_dir: Path) -> dict[str, object]:
+    comparison = compare_latest_benchmark_reports(results_dir)
+    history = build_benchmark_history(results_dir=results_dir, limit=2, offset=0)
+    items = history.get("items", [])
+    if not isinstance(items, list):
+        items = []
+
+    baseline = comparison.get("baseline", {})
+    candidate = comparison.get("candidate", {})
+    if not isinstance(baseline, dict):
+        baseline = {}
+    if not isinstance(candidate, dict):
+        candidate = {}
+
+    return {
+        "results_dir": str(results_dir),
+        "total_available": history.get("total_available", 0),
+        "trend": comparison.get("trend"),
+        "overall_score_delta": comparison.get("overall_score_delta"),
+        "comparison_mode": comparison.get("comparison_mode", "latest_pair"),
+        "baseline": {
+            "path": baseline.get("path"),
+            "overall_score": baseline.get("overall_score"),
+            "generated_at_utc": items[1].get("generated_at_utc") if len(items) > 1 else None,
+        },
+        "candidate": {
+            "path": candidate.get("path"),
+            "overall_score": candidate.get("overall_score"),
+            "generated_at_utc": items[0].get("generated_at_utc") if len(items) > 0 else None,
+        },
+        "metric_count": len(comparison.get("metric_deltas", {}))
+        if isinstance(comparison.get("metric_deltas"), dict)
+        else 0,
+    }
+
+
 def build_benchmark_history_item(path: Path) -> dict[str, object] | None:
     try:
         parsed = _load_json_dict_file(path)
