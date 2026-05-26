@@ -109,7 +109,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(11, weight=1)
+        actions2.columnconfigure(12, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -138,17 +138,20 @@ class DesktopEstimatorApp:
         ttk.Button(actions2, text="Compare Reports", command=self._compare_benchmark_reports).grid(
             row=0, column=7, sticky="w", padx=(8, 0)
         )
+        ttk.Button(actions2, text="Compare Latest Reports", command=self._compare_latest_benchmark_reports).grid(
+            row=0, column=8, sticky="w", padx=(8, 0)
+        )
         ttk.Checkbutton(
             actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=8, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=9, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=9, sticky="w", padx=(8, 0)
+            row=0, column=10, sticky="w", padx=(8, 0)
         )
         ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
-            row=0, column=10, sticky="w", padx=(8, 0)
+            row=0, column=11, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -1020,6 +1023,17 @@ class DesktopEstimatorApp:
         except Exception as exc:
             self._set_output_text(f"Failed to compare benchmark reports:\n{exc}")
 
+    def _compare_latest_benchmark_reports(self) -> None:
+        results_dir = self._results_dir()
+        try:
+            comparison = compare_latest_benchmark_reports(results_dir)
+            self._set_output_json(comparison)
+            delta = comparison.get("overall_score_delta")
+            trend = comparison.get("trend")
+            self.status_text.set(f"Latest report comparison complete. Trend: {trend}; delta: {delta}")
+        except Exception as exc:
+            self._set_output_text(f"Failed to compare latest benchmark reports:\n{exc}")
+
     def _open_results_folder(self) -> None:
         results_dir = self._results_dir()
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -1130,6 +1144,28 @@ def compare_benchmark_reports(
     }
 
 
+def compare_latest_benchmark_reports(results_dir: Path) -> dict[str, object]:
+    report_paths = _list_recent_benchmark_report_paths(results_dir)
+    if len(report_paths) < 2:
+        raise RuntimeError(
+            f"Need at least two benchmark reports in {results_dir} to compare latest trend."
+        )
+
+    candidate_path = report_paths[0]
+    baseline_path = report_paths[1]
+    baseline_report = _load_json_dict_file(baseline_path)
+    candidate_report = _load_json_dict_file(candidate_path)
+
+    comparison = compare_benchmark_reports(
+        baseline_report=baseline_report,
+        candidate_report=candidate_report,
+        baseline_path=str(baseline_path),
+        candidate_path=str(candidate_path),
+    )
+    comparison["comparison_mode"] = "latest_pair"
+    return comparison
+
+
 def _extract_report_summary(report: dict) -> dict:
     summary = report.get("summary", {})
     if isinstance(summary, dict):
@@ -1145,6 +1181,23 @@ def _load_json_dict_file(path: Path) -> dict:
     if not isinstance(parsed, dict):
         raise RuntimeError(f"JSON root must be an object: {path}")
     return parsed
+
+
+def _list_recent_benchmark_report_paths(results_dir: Path) -> list[Path]:
+    if not results_dir.exists():
+        return []
+
+    candidates = sorted(results_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    valid: list[Path] = []
+    for path in candidates:
+        try:
+            parsed = _load_json_dict_file(path)
+        except Exception:
+            continue
+        summary = _extract_report_summary(parsed)
+        if "overall_score" in summary:
+            valid.append(path)
+    return valid
 
 
 def _to_float_or_none(value: object) -> float | None:
