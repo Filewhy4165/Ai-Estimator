@@ -158,6 +158,8 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
+- `GET /v1/benchmark-reports/compare` compare two benchmark report JSON files
+- `GET /v1/benchmark-reports/compare-latest` compare the two most recent valid benchmark reports in a results folder
 
 Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 
@@ -207,6 +209,13 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/benchmark-template"
 The response includes `manifest`, which you can save directly as a benchmark manifest JSON and then refine expected labels.
 The generated `quantity_sanity.min_total_count` is seeded from the source job's current total count baseline.
 The rerun endpoint reuses files from the source job and returns `409` if those files were cleaned up or moved.
+
+Benchmark report compare endpoint examples:
+
+```bash
+curl "http://127.0.0.1:8000/v1/benchmark-reports/compare?baseline_path=C:\path\to\baseline.json&candidate_path=C:\path\to\candidate.json"
+curl "http://127.0.0.1:8000/v1/benchmark-reports/compare-latest?results_dir=C:\path\to\benchmarks\results"
+```
 
 ## Persistent jobs and upload storage
 
