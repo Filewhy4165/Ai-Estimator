@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +192,51 @@ def list_recent_benchmark_report_paths(results_dir: Path) -> list[Path]:
         if "overall_score" in summary:
             valid.append(path)
     return valid
+
+
+def build_benchmark_history(results_dir: Path, limit: int = 50, offset: int = 0) -> dict[str, object]:
+    safe_limit = max(1, min(int(limit), 200))
+    safe_offset = max(0, int(offset))
+    report_paths = list_recent_benchmark_report_paths(results_dir)
+
+    items: list[dict[str, object]] = []
+    for path in report_paths[safe_offset : safe_offset + safe_limit]:
+        item = build_benchmark_history_item(path)
+        if item is not None:
+            items.append(item)
+
+    return {
+        "results_dir": str(results_dir),
+        "total_available": len(report_paths),
+        "total_returned": len(items),
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
+    }
+
+
+def build_benchmark_history_item(path: Path) -> dict[str, object] | None:
+    try:
+        parsed = _load_json_dict_file(path)
+    except Exception:
+        return None
+
+    summary = _extract_report_summary(parsed)
+    if "overall_score" not in summary:
+        return None
+
+    stat = path.stat()
+    modified_local = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+    return {
+        "file_name": path.name,
+        "path": str(path),
+        "modified_local": modified_local,
+        "generated_at_utc": parsed.get("generated_at_utc"),
+        "overall_score": summary.get("overall_score"),
+        "case_count": summary.get("case_count"),
+        "completed_count": summary.get("completed_count"),
+        "failed_count": summary.get("failed_count"),
+    }
 
 
 def _extract_report_summary(report: dict[str, Any]) -> dict[str, Any]:

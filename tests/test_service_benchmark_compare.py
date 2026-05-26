@@ -3,7 +3,11 @@ import os
 
 from fastapi import HTTPException
 
-from service.app import compare_benchmark_reports_endpoint, compare_latest_benchmark_reports_endpoint
+from service.app import (
+    compare_benchmark_reports_endpoint,
+    compare_latest_benchmark_reports_endpoint,
+    get_benchmark_reports_history,
+)
 
 
 def _write_report(path, score: float) -> None:
@@ -74,3 +78,23 @@ def test_compare_latest_benchmark_reports_endpoint_requires_two_reports(tmp_path
         assert "Need at least two benchmark reports" in str(exc.detail)
     else:
         raise AssertionError("Expected HTTPException when fewer than two reports are present")
+
+
+def test_get_benchmark_reports_history_returns_paginated_items(tmp_path):
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    third = tmp_path / "third.json"
+    _write_report(first, 0.3)
+    _write_report(second, 0.6)
+    _write_report(third, 0.9)
+    os.utime(first, (1_700_000_000, 1_700_000_000))
+    os.utime(second, (1_700_000_010, 1_700_000_010))
+    os.utime(third, (1_700_000_020, 1_700_000_020))
+
+    payload = get_benchmark_reports_history(results_dir=str(tmp_path), limit=2, offset=1)
+
+    assert payload.total_available == 3
+    assert payload.total_returned == 2
+    assert payload.limit == 2
+    assert payload.offset == 1
+    assert [item["file_name"] for item in payload.items] == ["second.json", "first.json"]

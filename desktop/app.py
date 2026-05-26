@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,11 @@ import time
 import requests
 
 from ai_estimator.benchmark import run_benchmark_manifest
-from ai_estimator.benchmark_compare import compare_benchmark_reports, compare_latest_benchmark_reports
+from ai_estimator.benchmark_compare import (
+    build_benchmark_history,
+    compare_benchmark_reports,
+    compare_latest_benchmark_reports,
+)
 
 
 class DesktopEstimatorApp:
@@ -969,23 +972,10 @@ class DesktopEstimatorApp:
 
     def _show_benchmark_history(self) -> None:
         results_dir = self._results_dir()
-        if not results_dir.exists():
-            self._set_output_text(f"No benchmark results directory found:\n{results_dir}")
-            return
-
-        items: list[dict[str, object]] = []
-        for path in sorted(results_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            history_item = self._build_benchmark_history_item(path)
-            if history_item is not None:
-                items.append(history_item)
-
-        payload = {
-            "results_dir": str(results_dir),
-            "total_reports": len(items),
-            "items": items[:50],
-        }
+        payload = build_benchmark_history(results_dir=results_dir, limit=50, offset=0)
         self._set_output_json(payload)
-        self.status_text.set(f"Loaded benchmark history: {len(items)} report(s).")
+        total_reports = payload.get("total_available", 0)
+        self.status_text.set(f"Loaded benchmark history: {total_reports} report(s).")
 
     def _compare_benchmark_reports(self) -> None:
         results_dir = self._results_dir()
@@ -1051,33 +1041,6 @@ class DesktopEstimatorApp:
 
     def _results_dir(self) -> Path:
         return Path(__file__).resolve().parents[1] / "benchmarks" / "results"
-
-    def _build_benchmark_history_item(self, path: Path) -> dict[str, object] | None:
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-
-        summary = parsed.get("summary", {})
-        if not isinstance(summary, dict):
-            return None
-        if "overall_score" not in summary:
-            return None
-
-        stat = path.stat()
-        modified_local = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
-        return {
-            "file_name": path.name,
-            "path": str(path),
-            "modified_local": modified_local,
-            "generated_at_utc": parsed.get("generated_at_utc"),
-            "overall_score": summary.get("overall_score"),
-            "case_count": summary.get("case_count"),
-            "completed_count": summary.get("completed_count"),
-            "failed_count": summary.get("failed_count"),
-        }
 
     def run(self) -> None:
         self.root.mainloop()
