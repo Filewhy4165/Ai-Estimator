@@ -47,7 +47,11 @@ def main() -> None:
     args = parser.parse_args()
 
     selected_trades = sanitize_selected_trades(args.selected_trades)
-    sheet_overrides = load_sheet_overrides(args.sheet_overrides or None)
+    try:
+        sheet_overrides = load_sheet_overrides(args.sheet_overrides or None)
+    except ValueError as exc:
+        parser.error(str(exc))
+        return
     notes = load_notes(args.notes or None)
 
     payload = run_pipeline(
@@ -70,4 +74,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
