@@ -10,6 +10,8 @@ from ai_estimator.extractors.pdf_loader import LoadedPage
 
 SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})[-\s]?(\d{1,4}(?:\.\d{1,2})?[A-Z]?)\b")
 COMPLEX_SHEET_ID_RE = re.compile(r"\b([A-Z0-9]{2,}(?:-[A-Z0-9]{1,12}){2,})\b")
+SHORT_SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})(\d{1,2})\b")
+BUILDING_CODE_RE = re.compile(r"\bBUILDING\s+(\d{4})\b", re.IGNORECASE)
 SHEET_ID_LINE_HINTS_RE = re.compile(
     r"\b(sheet|drawing|title|plan|elevation|section|detail|schedule)\b", re.IGNORECASE
 )
@@ -60,6 +62,10 @@ def _extract_sheet_id(text: str) -> str:
 
     if best_sheet_id:
         return best_sheet_id
+
+    facility_scoped = _extract_facility_scoped_short_sheet_id(lines=lines, full_text=text)
+    if facility_scoped:
+        return facility_scoped
 
     # Conservative fallback across the full extracted page text.
     for line in lines:
@@ -259,6 +265,59 @@ def _complex_sheet_id_score(candidate: str, line: str) -> int:
         score += 3
     if line.strip().upper().startswith(candidate):
         score += 2
+    return score
+
+
+def _extract_facility_scoped_short_sheet_id(lines: list[str], full_text: str) -> str:
+    building_code = _extract_building_code(full_text)
+    if not building_code:
+        return ""
+
+    best_token = ""
+    best_score = -1
+    for line in lines:
+        upper_line = line.upper()
+        for match in SHORT_SHEET_ID_RE.finditer(upper_line):
+            if match.start() != 0:
+                continue
+            prefix = match.group(1)
+            sequence = match.group(2)
+            if prefix not in ALLOWED_PREFIXES:
+                continue
+            if DISCIPLINE_PREFIX_TO_TRADE.get(prefix) == "other":
+                continue
+            token = f"{prefix}{sequence}"
+            score = _short_sheet_id_score(token, line)
+            if score > best_score:
+                best_score = score
+                best_token = token
+
+    if best_token and best_score >= 4:
+        return f"FAC-{building_code}-{best_token}"
+    return ""
+
+
+def _extract_building_code(text: str) -> str:
+    match = BUILDING_CODE_RE.search(text.upper())
+    return match.group(1) if match else ""
+
+
+def _short_sheet_id_score(token: str, line: str) -> int:
+    compact_line = line.strip().upper()
+    score = 0
+
+    if compact_line == token:
+        score += 5
+    if compact_line.startswith(token):
+        score += 1
+    if SHEET_ID_LINE_HINTS_RE.search(line):
+        score += 3
+    if STRONG_TITLE_HINTS_RE.search(line):
+        score += 2
+    if len(compact_line) <= 24:
+        score += 1
+    elif len(compact_line) <= 40:
+        score += 1
     return score
 
 
