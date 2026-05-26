@@ -52,6 +52,23 @@ def test_geometry_dimension_extraction_skips_scale_and_dedupes():
     dimensions = geometry.get("annotations", {}).get("dimensions", [])
     values = [row.get("value") for row in dimensions if isinstance(row, dict)]
 
-    assert "6'-0" in values
-    assert "1'-0" not in values
-    assert values.count("6'-0") == 1
+    assert "6'-0\"" in values
+    assert "1'-0\"" not in values
+    assert values.count("6'-0\"") == 1
+
+
+def test_geometry_dimension_extraction_normalizes_spacing():
+    text = "\n".join(
+        [
+            "CLEARANCE 2' - 11\"",
+            "CLEARANCE 2'-11\"",
+        ]
+    )
+    pages = [LoadedPage(page_index=0, source_pdf="x.pdf", text=text)]
+    sheets = [_sheet(page_index=0, sheet_id="A101")]
+
+    geometry, _ = extract_geometry(pages, sheets)
+    dimensions = geometry.get("annotations", {}).get("dimensions", [])
+    values = [row.get("value") for row in dimensions if isinstance(row, dict)]
+
+    assert values.count("2'-11\"") == 1

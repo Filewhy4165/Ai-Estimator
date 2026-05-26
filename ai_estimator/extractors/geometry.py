@@ -11,7 +11,7 @@ WINDOW_TAG_RE = re.compile(r"\bW[- ]?(\d{1,3}[A-Z]?)\b", re.IGNORECASE)
 SYMBOL_TAG_RE = re.compile(r"\b([A-Z]{1,6})[-_](\d{1,4}[A-Z]?)\b", re.IGNORECASE)
 ROOM_RE = re.compile(r"\bROOM\s+([A-Z0-9\-\s]+)", re.IGNORECASE)
 ROOM_NAME_NUMBER_RE = re.compile(r"\b([A-Z][A-Z0-9/&\-]{1,20})\s+ROOM\s+(\d{1,4}[A-Z]?)\b", re.IGNORECASE)
-DIMENSION_RE = re.compile(r"\b(\d+'-\d+[\"]?)\b")
+DIMENSION_RE = re.compile(r"(?<!\d)(\d+\s*'\s*-\s*\d+\s*\"?)")
 
 
 FIXTURE_PREFIX_TO_KIND: dict[str, str] = {
@@ -147,11 +147,14 @@ def extract_geometry(
             if "SCALE" in line.upper():
                 continue
             for dim in DIMENSION_RE.findall(line):
-                key = (sheet_id, dim)
+                normalized_dim = _normalize_dimension_token(dim)
+                if not normalized_dim:
+                    continue
+                key = (sheet_id, normalized_dim)
                 if key in seen_dimension_pairs:
                     continue
                 seen_dimension_pairs.add(key)
-                annotations["dimensions"].append({"sheet_id": sheet_id, "value": dim})
+                annotations["dimensions"].append({"sheet_id": sheet_id, "value": normalized_dim})
 
     if not (walls or doors or windows or slabs or roofs or fixtures or equipment):
         issues.append(
@@ -280,3 +283,12 @@ def _dedupe_strings(values: list[str], limit: int) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def _normalize_dimension_token(raw: str) -> str | None:
+    token = "".join((raw or "").split())
+    if not token:
+        return None
+    if "'" not in token or "-" not in token:
+        return None
+    return token
