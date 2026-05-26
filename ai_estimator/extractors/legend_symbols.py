@@ -16,7 +16,7 @@ def extract_legend_and_symbols(
 ) -> tuple[dict[str, object], list[str]]:
     issues: list[str] = []
     sheet_lookup = {sheet.source_page_index: sheet for sheet in sheets}
-    legends: list[dict[str, object]] = []
+    legends_by_sheet: dict[str, list[dict[str, str]]] = {}
     unknown_symbols: list[dict[str, object]] = []
     unknown_seen: set[tuple[str, str]] = set()
 
@@ -69,7 +69,13 @@ def extract_legend_and_symbols(
 
         dedup_entries = _dedupe_entries(entries)
         if dedup_entries:
-            legends.append({"sheet_id": sheet_id, "entries": dedup_entries})
+            legends_by_sheet.setdefault(sheet_id, []).extend(dedup_entries)
+
+    legends: list[dict[str, object]] = []
+    for sheet_id, entries in sorted(legends_by_sheet.items(), key=lambda pair: pair[0]):
+        deduped = _dedupe_entries(entries)
+        if deduped:
+            legends.append({"sheet_id": sheet_id, "entries": deduped})
 
     if not legends:
         issues.append("No legend or symbol tables were confidently extracted from page text.")
@@ -96,4 +102,3 @@ def _is_reasonable_definition(definition: str) -> bool:
     if not any(ch.isalpha() for ch in normalized):
         return False
     return True
-
