@@ -16,6 +16,7 @@ from ai_estimator.benchmark_compare import (
     build_benchmark_history,
     build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
+    evaluate_latest_benchmark_quality_gate,
     compare_latest_benchmark_reports as compare_latest_benchmark_reports_from_dir,
     compare_reports_from_paths,
 )
@@ -87,6 +88,15 @@ class BenchmarkTimelineResponse(BaseModel):
     limit: int
     offset: int
     points: list[dict[str, Any]]
+
+
+class BenchmarkGateResponse(BaseModel):
+    results_dir: str
+    total_available: int
+    passed: bool
+    thresholds: dict[str, Any]
+    actual: dict[str, Any]
+    failures: list[dict[str, Any]]
 
 
 app = FastAPI(title="AI Estimator Service", version="0.1.0")
@@ -423,6 +433,32 @@ def get_benchmark_reports_trend(
     try:
         payload = build_latest_benchmark_trend_summary(target_dir)
         return BenchmarkTrendResponse(**payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/benchmark-reports/gate", response_model=BenchmarkGateResponse)
+def get_benchmark_reports_gate(
+    results_dir: str = "",
+    min_candidate_score: float | None = None,
+    max_negative_delta: float | None = None,
+    require_non_regression: bool = True,
+    require_improvement: bool = False,
+) -> BenchmarkGateResponse:
+    if str(results_dir).strip():
+        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
+    else:
+        target_dir = Path.cwd() / "benchmarks" / "results"
+
+    try:
+        payload = evaluate_latest_benchmark_quality_gate(
+            target_dir,
+            min_candidate_score=min_candidate_score,
+            max_negative_delta=max_negative_delta,
+            require_non_regression=require_non_regression,
+            require_improvement=require_improvement,
+        )
+        return BenchmarkGateResponse(**payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

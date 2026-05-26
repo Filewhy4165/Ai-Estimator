@@ -6,6 +6,7 @@ from ai_estimator.benchmark_compare import (
     build_benchmark_history,
     build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
+    evaluate_latest_benchmark_quality_gate,
     compare_reports_from_paths,
     main,
 )
@@ -194,3 +195,42 @@ def test_build_benchmark_score_timeline(tmp_path):
     assert points[1]["trend_vs_previous"] == "improved"
     assert points[2]["file_name"] == "oldest.json"
     assert points[2]["delta_vs_previous"] is None
+
+
+def test_evaluate_latest_benchmark_quality_gate_passes(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.6)
+    _write_report(newer, 0.8)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = evaluate_latest_benchmark_quality_gate(
+        tmp_path,
+        min_candidate_score=0.75,
+        max_negative_delta=0.05,
+        require_non_regression=True,
+        require_improvement=False,
+    )
+
+    assert payload["passed"] is True
+    assert payload["failures"] == []
+    assert payload["actual"]["trend"] == "improved"
+
+
+def test_evaluate_latest_benchmark_quality_gate_fails_on_regression(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.8)
+    _write_report(newer, 0.7)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = evaluate_latest_benchmark_quality_gate(
+        tmp_path,
+        require_non_regression=True,
+    )
+    codes = [item["code"] for item in payload["failures"]]
+
+    assert payload["passed"] is False
+    assert "trend_regressed" in codes
