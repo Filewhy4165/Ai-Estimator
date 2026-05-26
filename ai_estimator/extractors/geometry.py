@@ -10,6 +10,7 @@ DOOR_TAG_RE = re.compile(r"\bD[- ]?(\d{1,3}[A-Z]?)\b", re.IGNORECASE)
 WINDOW_TAG_RE = re.compile(r"\bW[- ]?(\d{1,3}[A-Z]?)\b", re.IGNORECASE)
 SYMBOL_TAG_RE = re.compile(r"\b([A-Z]{1,6})[-_](\d{1,4}[A-Z]?)\b", re.IGNORECASE)
 ROOM_RE = re.compile(r"\bROOM\s+([A-Z0-9\-\s]+)", re.IGNORECASE)
+ROOM_NAME_NUMBER_RE = re.compile(r"\b([A-Z][A-Z0-9/&\-]{1,20})\s+ROOM\s+(\d{1,4}[A-Z]?)\b", re.IGNORECASE)
 DIMENSION_RE = re.compile(r"\b(\d+'-\d+[\"]?)\b")
 
 
@@ -64,6 +65,8 @@ def extract_geometry(
     fixtures: list[dict[str, object]] = []
     equipment: list[dict[str, object]] = []
     annotations: dict[str, object] = {"rooms": [], "dimensions": [], "callouts": []}
+    seen_room_pairs: set[tuple[str, str]] = set()
+    seen_dimension_pairs: set[tuple[str, str]] = set()
 
     # Conservative extraction: only extract explicit textual tags and dimensions.
     for page in pages:
@@ -130,10 +133,25 @@ def extract_geometry(
             )
 
         for room in _extract_room_tokens(text):
+            key = (sheet_id, room.upper())
+            if key in seen_room_pairs:
+                continue
+            seen_room_pairs.add(key)
             annotations["rooms"].append({"sheet_id": sheet_id, "name": room})
 
-        for dim in DIMENSION_RE.findall(text):
-            annotations["dimensions"].append({"sheet_id": sheet_id, "value": dim})
+        for raw_line in text.splitlines():
+            line = " ".join(raw_line.split())
+            if not line:
+                continue
+            # Avoid extracting scale notations as geometry dimensions.
+            if "SCALE" in line.upper():
+                continue
+            for dim in DIMENSION_RE.findall(line):
+                key = (sheet_id, dim)
+                if key in seen_dimension_pairs:
+                    continue
+                seen_dimension_pairs.add(key)
+                annotations["dimensions"].append({"sheet_id": sheet_id, "value": dim})
 
     if not (walls or doors or windows or slabs or roofs or fixtures or equipment):
         issues.append(
@@ -169,6 +187,18 @@ def _dedupe_by_id(items: list[dict[str, object]]) -> list[dict[str, object]]:
 
 def _extract_room_tokens(text: str) -> list[str]:
     rooms: list[str] = []
+    blocked_tokens = {
+        "NAME",
+        "FLOOR",
+        "BASE",
+        "WALL",
+        "WALLS",
+        "CEILING",
+        "GENERAL",
+        "LEGEND",
+        "NOTES",
+        "IDENTIFICATION",
+    }
     for raw_line in text.splitlines():
         line = " ".join(raw_line.split())
         if not line:
@@ -180,6 +210,13 @@ def _extract_room_tokens(text: str) -> list[str]:
         upper = line.upper()
         if "ROOM" not in upper:
             continue
+        # Handle "MEN ROOM 115" style labels first.
+        name_num = ROOM_NAME_NUMBER_RE.search(line)
+        if name_num:
+            room_name = name_num.group(1).strip().upper()
+            room_number = name_num.group(2).strip().upper()
+            rooms.append(f"{room_name} {room_number}")
+            continue
 
         match = ROOM_RE.search(line)
         if not match:
@@ -189,6 +226,13 @@ def _extract_room_tokens(text: str) -> list[str]:
         tail = tail.split("  ")[0].split(".")[0].split(";")[0]
         cleaned = " ".join(tail.split())[:60]
         if len(cleaned) < 2:
+            continue
+        tokens = cleaned.upper().split()
+        if len(tokens) > 4:
+            continue
+        if not any(ch.isdigit() for ch in cleaned):
+            continue
+        if any(token in blocked_tokens for token in tokens):
             continue
         rooms.append(cleaned)
     return _dedupe_strings(rooms, limit=200)
