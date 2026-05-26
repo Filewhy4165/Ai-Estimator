@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from service.app import (
     compare_benchmark_reports_endpoint,
+    get_benchmark_reports_gate,
     compare_latest_benchmark_reports_endpoint,
     get_benchmark_reports_history,
     get_benchmark_reports_timeline,
@@ -150,3 +151,39 @@ def test_get_benchmark_reports_timeline(tmp_path):
     assert payload.points[0]["file_name"] == "newest.json"
     assert payload.points[0]["trend_vs_previous"] == "improved"
     assert payload.points[0]["delta_vs_previous"] == 0.3
+
+
+def test_get_benchmark_reports_gate_passes(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.65)
+    _write_report(newer, 0.8)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = get_benchmark_reports_gate(
+        results_dir=str(tmp_path),
+        min_candidate_score=0.75,
+        require_non_regression=True,
+    )
+
+    assert payload.passed is True
+    assert payload.failures == []
+
+
+def test_get_benchmark_reports_gate_fails_with_regression(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.8)
+    _write_report(newer, 0.7)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = get_benchmark_reports_gate(
+        results_dir=str(tmp_path),
+        require_non_regression=True,
+    )
+    codes = [item["code"] for item in payload.failures]
+
+    assert payload.passed is False
+    assert "trend_regressed" in codes

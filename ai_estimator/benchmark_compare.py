@@ -298,6 +298,107 @@ def build_benchmark_score_timeline(results_dir: Path, limit: int = 30, offset: i
     }
 
 
+def evaluate_latest_benchmark_quality_gate(
+    results_dir: Path,
+    *,
+    min_candidate_score: float | None = None,
+    max_negative_delta: float | None = None,
+    require_non_regression: bool = True,
+    require_improvement: bool = False,
+) -> dict[str, object]:
+    summary = build_latest_benchmark_trend_summary(results_dir)
+    candidate = summary.get("candidate", {})
+    baseline = summary.get("baseline", {})
+    if not isinstance(candidate, dict):
+        candidate = {}
+    if not isinstance(baseline, dict):
+        baseline = {}
+
+    candidate_score = _to_float_or_none(candidate.get("overall_score"))
+    baseline_score = _to_float_or_none(baseline.get("overall_score"))
+    overall_delta = _to_float_or_none(summary.get("overall_score_delta"))
+    trend = str(summary.get("trend", "no_change"))
+
+    failures: list[dict[str, object]] = []
+
+    if min_candidate_score is not None:
+        threshold = round(float(min_candidate_score), 4)
+        if candidate_score is None:
+            failures.append(
+                {
+                    "code": "missing_candidate_score",
+                    "message": "Candidate overall score is missing; cannot evaluate minimum score threshold.",
+                    "threshold": threshold,
+                }
+            )
+        elif candidate_score < threshold:
+            failures.append(
+                {
+                    "code": "candidate_score_below_threshold",
+                    "message": "Candidate overall score is below the configured minimum.",
+                    "threshold": threshold,
+                    "actual": candidate_score,
+                }
+            )
+
+    if max_negative_delta is not None:
+        max_drop = round(abs(float(max_negative_delta)), 4)
+        min_allowed_delta = round(-max_drop, 4)
+        if overall_delta is None:
+            failures.append(
+                {
+                    "code": "missing_overall_delta",
+                    "message": "Overall delta is missing; cannot evaluate delta threshold.",
+                    "threshold": min_allowed_delta,
+                }
+            )
+        elif overall_delta < min_allowed_delta:
+            failures.append(
+                {
+                    "code": "overall_delta_below_threshold",
+                    "message": "Overall delta is below the configured negative-delta limit.",
+                    "threshold": min_allowed_delta,
+                    "actual": overall_delta,
+                }
+            )
+
+    if require_improvement and trend != "improved":
+        failures.append(
+            {
+                "code": "trend_not_improved",
+                "message": "Quality gate requires an improved trend, but the latest trend is not improved.",
+                "actual": trend,
+            }
+        )
+    elif require_non_regression and trend == "regressed":
+        failures.append(
+            {
+                "code": "trend_regressed",
+                "message": "Quality gate requires non-regression, but the latest trend regressed.",
+                "actual": trend,
+            }
+        )
+
+    return {
+        "results_dir": str(results_dir),
+        "total_available": summary.get("total_available", 0),
+        "passed": len(failures) == 0,
+        "thresholds": {
+            "min_candidate_score": min_candidate_score,
+            "max_negative_delta": max_negative_delta,
+            "require_non_regression": require_non_regression,
+            "require_improvement": require_improvement,
+        },
+        "actual": {
+            "trend": trend,
+            "candidate_score": candidate_score,
+            "baseline_score": baseline_score,
+            "overall_score_delta": overall_delta,
+        },
+        "failures": failures,
+    }
+
+
 def build_benchmark_history_item(path: Path) -> dict[str, object] | None:
     try:
         parsed = _load_json_dict_file(path)
