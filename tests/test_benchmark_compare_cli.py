@@ -2,7 +2,12 @@ import json
 import os
 import sys
 
-from ai_estimator.benchmark_compare import build_benchmark_history, compare_reports_from_paths, main
+from ai_estimator.benchmark_compare import (
+    build_benchmark_history,
+    build_latest_benchmark_trend_summary,
+    compare_reports_from_paths,
+    main,
+)
 
 
 def _write_report(path, score: float) -> None:
@@ -132,3 +137,33 @@ def test_build_benchmark_history_paginates(tmp_path):
     assert payload["offset"] == 1
     names = [item["file_name"] for item in payload["items"]]
     assert names == ["second.json", "first.json"]
+
+
+def test_build_latest_benchmark_trend_summary(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.45)
+    _write_report(newer, 0.7)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = build_latest_benchmark_trend_summary(tmp_path)
+
+    assert payload["comparison_mode"] == "latest_pair"
+    assert payload["trend"] == "improved"
+    assert payload["overall_score_delta"] == 0.25
+    assert payload["total_available"] == 2
+    assert payload["metric_count"] == 1
+
+
+def test_build_latest_benchmark_trend_summary_requires_two_reports(tmp_path):
+    only = tmp_path / "only.json"
+    _write_report(only, 0.5)
+    os.utime(only, (1_700_000_000, 1_700_000_000))
+
+    try:
+        build_latest_benchmark_trend_summary(tmp_path)
+    except RuntimeError as exc:
+        assert "Need at least two benchmark reports" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError when fewer than two reports are present")
