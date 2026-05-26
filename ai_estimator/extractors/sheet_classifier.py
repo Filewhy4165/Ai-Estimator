@@ -8,7 +8,8 @@ from ai_estimator.constants import DISCIPLINE_PREFIX_TO_TRADE, SHEET_TYPE_MAP, T
 from ai_estimator.extractors.pdf_loader import LoadedPage
 
 
-SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})[-\s]?(\d{2,4}(?:\.\d{1,2})?[A-Z]?)\b")
+SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})[-\s]?(\d{1,4}(?:\.\d{1,2})?[A-Z]?)\b")
+COMPLEX_SHEET_ID_RE = re.compile(r"\b([A-Z0-9]{2,}(?:-[A-Z0-9]{1,12}){2,})\b")
 SHEET_ID_LINE_HINTS_RE = re.compile(
     r"\b(sheet|drawing|title|plan|elevation|section|detail|schedule)\b", re.IGNORECASE
 )
@@ -40,6 +41,11 @@ def _extract_sheet_id(text: str) -> str:
     best_sheet_id = ""
     best_score = -1
     for line in candidate_lines:
+        for candidate in _extract_complex_sheet_id_candidates(line):
+            score = _complex_sheet_id_score(candidate, line)
+            if score > best_score:
+                best_score = score
+                best_sheet_id = candidate
         for match in SHEET_ID_RE.finditer(line.upper()):
             prefix = match.group(1)
             sequence = match.group(2)
@@ -56,6 +62,10 @@ def _extract_sheet_id(text: str) -> str:
         return best_sheet_id
 
     # Conservative fallback across the full extracted page text.
+    for line in lines:
+        for candidate in _extract_complex_sheet_id_candidates(line):
+            return candidate
+
     for match in SHEET_ID_RE.finditer(text.upper()):
         prefix = match.group(1)
         sequence = match.group(2)
@@ -137,6 +147,11 @@ def classify_sheets(
 
 
 def _split_sheet_id(sheet_id: str) -> tuple[str, str]:
+    parsed_complex = _parse_complex_sheet_id(sheet_id.upper())
+    if parsed_complex is not None:
+        prefix, sequence, _ = parsed_complex
+        return prefix, sequence
+
     match = SHEET_ID_RE.match(sheet_id)
     if not match:
         if len(sheet_id) >= 2 and sheet_id[0].isalpha() and sheet_id[1].isalpha():
@@ -202,6 +217,48 @@ def _sheet_id_score(prefix: str, sequence: str, line: str) -> int:
         score += 3
     if line.strip().startswith(prefix):
         score += 1
+    return score
+
+
+def _extract_complex_sheet_id_candidates(line: str) -> list[str]:
+    candidates: list[str] = []
+    for match in COMPLEX_SHEET_ID_RE.finditer(line.upper()):
+        token = match.group(1)
+        parsed = _parse_complex_sheet_id(token)
+        if parsed is None:
+            continue
+        _, _, normalized = parsed
+        candidates.append(normalized)
+    return candidates
+
+
+def _parse_complex_sheet_id(token: str) -> tuple[str, str, str] | None:
+    parts = token.split("-")
+    if len(parts) < 3:
+        return None
+
+    # Ensure this looks like a facility-prefixed sheet id, not arbitrary hyphen text.
+    if not any(any(ch.isdigit() for ch in part) for part in parts[:-1]):
+        return None
+
+    tail = parts[-1]
+    tail_match = re.fullmatch(r"([A-Z]{1,2})(\d{1,4}(?:\.\d{1,2})?[A-Z]?)", tail)
+    if not tail_match:
+        return None
+
+    prefix = tail_match.group(1)
+    sequence = tail_match.group(2)
+    if prefix not in ALLOWED_PREFIXES:
+        return None
+    return prefix, sequence, token
+
+
+def _complex_sheet_id_score(candidate: str, line: str) -> int:
+    score = 9
+    if SHEET_ID_LINE_HINTS_RE.search(line):
+        score += 3
+    if line.strip().upper().startswith(candidate):
+        score += 2
     return score
 
 
