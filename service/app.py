@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from ai_estimator.benchmark_compare import (
+    build_benchmark_dashboard,
     build_benchmark_history,
     build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
@@ -97,6 +98,16 @@ class BenchmarkGateResponse(BaseModel):
     thresholds: dict[str, Any]
     actual: dict[str, Any]
     failures: list[dict[str, Any]]
+
+
+class BenchmarkDashboardResponse(BaseModel):
+    results_dir: str
+    total_available: int
+    history: dict[str, Any]
+    timeline: dict[str, Any]
+    trend: dict[str, Any] | None
+    gate: dict[str, Any] | None
+    warnings: list[str]
 
 
 app = FastAPI(title="AI Estimator Service", version="0.1.0")
@@ -476,6 +487,37 @@ def get_benchmark_reports_timeline(
 
     payload = build_benchmark_score_timeline(results_dir=target_dir, limit=limit, offset=offset)
     return BenchmarkTimelineResponse(**payload)
+
+
+@app.get("/v1/benchmark-reports/dashboard", response_model=BenchmarkDashboardResponse)
+def get_benchmark_reports_dashboard(
+    results_dir: str = "",
+    history_limit: int = 20,
+    history_offset: int = 0,
+    timeline_limit: int = 30,
+    timeline_offset: int = 0,
+    gate_min_candidate_score: float | None = None,
+    gate_max_negative_delta: float | None = None,
+    gate_require_non_regression: bool = True,
+    gate_require_improvement: bool = False,
+) -> BenchmarkDashboardResponse:
+    if str(results_dir).strip():
+        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
+    else:
+        target_dir = Path.cwd() / "benchmarks" / "results"
+
+    payload = build_benchmark_dashboard(
+        results_dir=target_dir,
+        history_limit=history_limit,
+        history_offset=history_offset,
+        timeline_limit=timeline_limit,
+        timeline_offset=timeline_offset,
+        gate_min_candidate_score=gate_min_candidate_score,
+        gate_max_negative_delta=gate_max_negative_delta,
+        gate_require_non_regression=gate_require_non_regression,
+        gate_require_improvement=gate_require_improvement,
+    )
+    return BenchmarkDashboardResponse(**payload)
 
 
 @app.get("/v1/jobs", response_model=JobListResponse)

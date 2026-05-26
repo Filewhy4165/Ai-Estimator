@@ -15,6 +15,7 @@ import requests
 
 from ai_estimator.benchmark import run_benchmark_manifest
 from ai_estimator.benchmark_compare import (
+    build_benchmark_dashboard,
     build_benchmark_history,
     build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
@@ -117,7 +118,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(15, weight=1)
+        actions2.columnconfigure(16, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -158,17 +159,20 @@ class DesktopEstimatorApp:
         ttk.Button(actions2, text="Evaluate Gate", command=self._evaluate_benchmark_quality_gate).grid(
             row=0, column=11, sticky="w", padx=(8, 0)
         )
+        ttk.Button(actions2, text="Benchmark Dashboard", command=self._show_benchmark_dashboard).grid(
+            row=0, column=12, sticky="w", padx=(8, 0)
+        )
         ttk.Checkbutton(
             actions2,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=12, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=13, sticky="w", padx=(8, 0))
         ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=13, sticky="w", padx=(8, 0)
+            row=0, column=14, sticky="w", padx=(8, 0)
         )
         ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
-            row=0, column=14, sticky="w", padx=(8, 0)
+            row=0, column=15, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -1063,6 +1067,43 @@ class DesktopEstimatorApp:
         passed = payload.get("passed")
         status = "PASSED" if passed is True else "FAILED"
         self.status_text.set(f"Benchmark quality gate {status} ({source}).")
+
+    def _show_benchmark_dashboard(self) -> None:
+        results_dir = self._results_dir()
+        try:
+            payload = self._request_json(
+                "GET",
+                "/v1/benchmark-reports/dashboard",
+                timeout=60,
+                params={
+                    "history_limit": 20,
+                    "history_offset": 0,
+                    "timeline_limit": 30,
+                    "timeline_offset": 0,
+                    "gate_require_non_regression": "true",
+                    "gate_require_improvement": "false",
+                },
+            )
+            source = "API"
+        except Exception:
+            payload = build_benchmark_dashboard(
+                results_dir=results_dir,
+                history_limit=20,
+                history_offset=0,
+                timeline_limit=30,
+                timeline_offset=0,
+                gate_require_non_regression=True,
+                gate_require_improvement=False,
+            )
+            source = "local fallback"
+
+        self._set_output_json(payload)
+        total = payload.get("total_available", 0)
+        warnings = payload.get("warnings", [])
+        warning_count = len(warnings) if isinstance(warnings, list) else 0
+        self.status_text.set(
+            f"Loaded benchmark dashboard ({source}): {total} report(s), {warning_count} warning(s)."
+        )
 
     def _compare_benchmark_reports(self) -> None:
         results_dir = self._results_dir()

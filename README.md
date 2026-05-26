@@ -76,6 +76,7 @@ Desktop async workflow:
 15. Use `Latest Trend Snapshot` to get a compact benchmark trend summary (trend, delta, baseline/candidate scores)
 16. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
 17. Use `Evaluate Gate` to run a benchmark quality gate (default: non-regression required)
+18. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
 
 ## Run CLI directly
 
@@ -167,6 +168,7 @@ Benchmark manifest shape:
 - `GET /v1/benchmark-reports/trend` compact trend summary based on the latest two valid benchmark reports
 - `GET /v1/benchmark-reports/timeline` recent score points with delta vs previous report
 - `GET /v1/benchmark-reports/gate` quality gate evaluation for latest benchmark run pair
+- `GET /v1/benchmark-reports/dashboard` combined benchmark history, timeline, trend, and gate payload
 
 Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 
@@ -226,6 +228,7 @@ curl "http://127.0.0.1:8000/v1/benchmark-reports/compare-latest?results_dir=C:\p
 curl "http://127.0.0.1:8000/v1/benchmark-reports/trend?results_dir=C:\path\to\benchmarks\results"
 curl "http://127.0.0.1:8000/v1/benchmark-reports/timeline?results_dir=C:\path\to\benchmarks\results&limit=30&offset=0"
 curl "http://127.0.0.1:8000/v1/benchmark-reports/gate?results_dir=C:\path\to\benchmarks\results&require_non_regression=true&min_candidate_score=0.80"
+curl "http://127.0.0.1:8000/v1/benchmark-reports/dashboard?results_dir=C:\path\to\benchmarks\results&history_limit=20&timeline_limit=30&gate_require_non_regression=true"
 ```
 
 ## Persistent jobs and upload storage
