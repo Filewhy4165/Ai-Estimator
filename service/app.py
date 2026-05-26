@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from ai_estimator.benchmark_compare import (
+    build_benchmark_history,
     compare_latest_benchmark_reports as compare_latest_benchmark_reports_from_dir,
     compare_reports_from_paths,
 )
@@ -55,6 +56,15 @@ class BenchmarkTemplateResponse(BaseModel):
     job_id: str
     summary: dict[str, Any]
     manifest: dict[str, Any]
+
+
+class BenchmarkHistoryResponse(BaseModel):
+    results_dir: str
+    total_available: int
+    total_returned: int
+    limit: int
+    offset: int
+    items: list[dict[str, Any]]
 
 
 app = FastAPI(title="AI Estimator Service", version="0.1.0")
@@ -362,6 +372,21 @@ def compare_latest_benchmark_reports_endpoint(
         return compare_latest_benchmark_reports_from_dir(target_dir)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/benchmark-reports/history", response_model=BenchmarkHistoryResponse)
+def get_benchmark_reports_history(
+    results_dir: str = "",
+    limit: int = 50,
+    offset: int = 0,
+) -> BenchmarkHistoryResponse:
+    if str(results_dir).strip():
+        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
+    else:
+        target_dir = Path.cwd() / "benchmarks" / "results"
+
+    payload = build_benchmark_history(results_dir=target_dir, limit=limit, offset=offset)
+    return BenchmarkHistoryResponse(**payload)
 
 
 @app.get("/v1/jobs", response_model=JobListResponse)

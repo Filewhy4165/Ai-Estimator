@@ -2,7 +2,7 @@ import json
 import os
 import sys
 
-from ai_estimator.benchmark_compare import compare_reports_from_paths, main
+from ai_estimator.benchmark_compare import build_benchmark_history, compare_reports_from_paths, main
 
 
 def _write_report(path, score: float) -> None:
@@ -111,3 +111,24 @@ def test_cli_latest_max_negative_delta_exits_three(tmp_path, monkeypatch):
         assert exc.code == 3
     else:
         raise AssertionError("Expected SystemExit(3) when negative delta exceeds threshold")
+
+
+def test_build_benchmark_history_paginates(tmp_path):
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    third = tmp_path / "third.json"
+    _write_report(first, 0.3)
+    _write_report(second, 0.6)
+    _write_report(third, 0.9)
+    os.utime(first, (1_700_000_000, 1_700_000_000))
+    os.utime(second, (1_700_000_010, 1_700_000_010))
+    os.utime(third, (1_700_000_020, 1_700_000_020))
+
+    payload = build_benchmark_history(results_dir=tmp_path, limit=2, offset=1)
+
+    assert payload["total_available"] == 3
+    assert payload["total_returned"] == 2
+    assert payload["limit"] == 2
+    assert payload["offset"] == 1
+    names = [item["file_name"] for item in payload["items"]]
+    assert names == ["second.json", "first.json"]
