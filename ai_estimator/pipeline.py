@@ -13,6 +13,7 @@ from ai_estimator.extractors.scale_analyzer import analyze_scales
 from ai_estimator.extractors.semantic_graph import build_semantic_graph
 from ai_estimator.extractors.sheet_classifier import classify_sheets
 from ai_estimator.extractors.takeoff import compute_quantity_takeoff
+from ai_estimator.sheet_overrides import normalize_sheet_overrides_items
 from ai_estimator.trade_scope import resolve_trade_scope
 from ai_estimator.utils.json_validation import validate_output
 
@@ -120,33 +121,7 @@ def load_sheet_overrides(path: str | None) -> list[dict[str, object]] | None:
         return None
     with p.open("r", encoding="utf-8") as f:
         loaded = json.load(f)
-    if not isinstance(loaded, list):
-        return None
-    normalized: list[dict[str, object]] = []
-    for item in loaded:
-        if not isinstance(item, dict):
-            continue
-        source_page_index = item.get("source_page_index")
-        parsed_page_index: int | None = None
-        if isinstance(source_page_index, int) and source_page_index >= 1:
-            parsed_page_index = source_page_index
-        elif isinstance(source_page_index, str):
-            text = source_page_index.strip()
-            if text.isdigit():
-                value = int(text)
-                if value >= 1:
-                    parsed_page_index = value
-
-        row: dict[str, object] = {
-            "sheet_id": str(item.get("sheet_id", "")),
-            "title": str(item.get("title", "")),
-        }
-        if parsed_page_index is not None:
-            row["source_page_index"] = parsed_page_index
-        normalized.append(
-            row
-        )
-    return normalized
+    return normalize_sheet_overrides_items(loaded, source_name="sheet_overrides")
 
 
 def load_notes(path: str | None) -> str | None:

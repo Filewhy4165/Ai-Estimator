@@ -23,6 +23,7 @@ from ai_estimator.benchmark_compare import (
     compare_latest_benchmark_reports,
     compare_reports_from_paths,
 )
+from ai_estimator.sheet_overrides import parse_sheet_overrides_json
 
 
 class DesktopEstimatorApp:
@@ -657,12 +658,12 @@ class DesktopEstimatorApp:
             raise RuntimeError(f"Overrides file not found: {overrides_path}")
         raw = overrides_path.read_text(encoding="utf-8")
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Overrides JSON is invalid: {exc.msg}") from exc
-        if not isinstance(parsed, list):
-            raise RuntimeError("Overrides JSON must be a JSON array.")
-        data["sheet_overrides_json"] = raw
+            parsed = parse_sheet_overrides_json(raw)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if parsed is None:
+            raise RuntimeError("Overrides JSON is empty.")
+        data["sheet_overrides_json"] = json.dumps(parsed, ensure_ascii=True)
         return data
 
     def _post_files(self, path: str, *, data: dict[str, str], timeout: int) -> dict:
