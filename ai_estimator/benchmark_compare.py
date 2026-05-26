@@ -399,6 +399,56 @@ def evaluate_latest_benchmark_quality_gate(
     }
 
 
+def build_benchmark_dashboard(
+    results_dir: Path,
+    *,
+    history_limit: int = 20,
+    history_offset: int = 0,
+    timeline_limit: int = 30,
+    timeline_offset: int = 0,
+    gate_min_candidate_score: float | None = None,
+    gate_max_negative_delta: float | None = None,
+    gate_require_non_regression: bool = True,
+    gate_require_improvement: bool = False,
+) -> dict[str, object]:
+    history = build_benchmark_history(results_dir=results_dir, limit=history_limit, offset=history_offset)
+    timeline = build_benchmark_score_timeline(results_dir=results_dir, limit=timeline_limit, offset=timeline_offset)
+
+    warnings: list[str] = []
+    trend: dict[str, object] | None = None
+    gate: dict[str, object] | None = None
+
+    try:
+        trend = build_latest_benchmark_trend_summary(results_dir)
+    except RuntimeError as exc:
+        warnings.append(str(exc))
+
+    try:
+        gate = evaluate_latest_benchmark_quality_gate(
+            results_dir,
+            min_candidate_score=gate_min_candidate_score,
+            max_negative_delta=gate_max_negative_delta,
+            require_non_regression=gate_require_non_regression,
+            require_improvement=gate_require_improvement,
+        )
+    except RuntimeError as exc:
+        warnings.append(str(exc))
+
+    total_available = 0
+    if isinstance(history.get("total_available"), int):
+        total_available = int(history.get("total_available"))
+
+    return {
+        "results_dir": str(results_dir),
+        "total_available": total_available,
+        "history": history,
+        "timeline": timeline,
+        "trend": trend,
+        "gate": gate,
+        "warnings": warnings,
+    }
+
+
 def build_benchmark_history_item(path: Path) -> dict[str, object] | None:
     try:
         parsed = _load_json_dict_file(path)

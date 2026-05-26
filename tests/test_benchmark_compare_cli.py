@@ -3,6 +3,7 @@ import os
 import sys
 
 from ai_estimator.benchmark_compare import (
+    build_benchmark_dashboard,
     build_benchmark_history,
     build_benchmark_score_timeline,
     build_latest_benchmark_trend_summary,
@@ -234,3 +235,40 @@ def test_evaluate_latest_benchmark_quality_gate_fails_on_regression(tmp_path):
 
     assert payload["passed"] is False
     assert "trend_regressed" in codes
+
+
+def test_build_benchmark_dashboard_with_two_reports(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.6)
+    _write_report(newer, 0.8)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = build_benchmark_dashboard(
+        results_dir=tmp_path,
+        history_limit=20,
+        timeline_limit=30,
+        gate_require_non_regression=True,
+    )
+
+    assert payload["total_available"] == 2
+    assert isinstance(payload["history"], dict)
+    assert isinstance(payload["timeline"], dict)
+    assert isinstance(payload["trend"], dict)
+    assert isinstance(payload["gate"], dict)
+    assert payload["warnings"] == []
+
+
+def test_build_benchmark_dashboard_with_single_report_has_warnings(tmp_path):
+    only = tmp_path / "only.json"
+    _write_report(only, 0.5)
+    os.utime(only, (1_700_000_000, 1_700_000_000))
+
+    payload = build_benchmark_dashboard(results_dir=tmp_path)
+
+    assert payload["total_available"] == 1
+    assert payload["trend"] is None
+    assert payload["gate"] is None
+    assert isinstance(payload["warnings"], list)
+    assert len(payload["warnings"]) >= 1

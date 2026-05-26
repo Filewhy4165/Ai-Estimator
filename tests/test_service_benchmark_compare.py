@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from service.app import (
     compare_benchmark_reports_endpoint,
+    get_benchmark_reports_dashboard,
     get_benchmark_reports_gate,
     compare_latest_benchmark_reports_endpoint,
     get_benchmark_reports_history,
@@ -187,3 +188,34 @@ def test_get_benchmark_reports_gate_fails_with_regression(tmp_path):
 
     assert payload.passed is False
     assert "trend_regressed" in codes
+
+
+def test_get_benchmark_reports_dashboard(tmp_path):
+    older = tmp_path / "older.json"
+    newer = tmp_path / "newer.json"
+    _write_report(older, 0.6)
+    _write_report(newer, 0.8)
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_010, 1_700_000_010))
+
+    payload = get_benchmark_reports_dashboard(results_dir=str(tmp_path))
+
+    assert payload.total_available == 2
+    assert isinstance(payload.history, dict)
+    assert isinstance(payload.timeline, dict)
+    assert isinstance(payload.trend, dict)
+    assert isinstance(payload.gate, dict)
+    assert payload.warnings == []
+
+
+def test_get_benchmark_reports_dashboard_with_single_report_has_warnings(tmp_path):
+    only = tmp_path / "only.json"
+    _write_report(only, 0.5)
+    os.utime(only, (1_700_000_000, 1_700_000_000))
+
+    payload = get_benchmark_reports_dashboard(results_dir=str(tmp_path))
+
+    assert payload.total_available == 1
+    assert payload.trend is None
+    assert payload.gate is None
+    assert len(payload.warnings) >= 1
