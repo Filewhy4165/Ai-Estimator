@@ -72,6 +72,7 @@ Desktop async workflow:
 11. Use `Run End-to-End Benchmark` to submit selected PDFs, wait for completion, then auto-generate and score a benchmark report
 12. Use `Show Benchmark History` to review recent benchmark reports and `Open Results Folder` to access saved outputs
 13. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric
+14. Use `Compare Latest Reports` to automatically compare the two most recent benchmark reports
 
 ## Run CLI directly
 
