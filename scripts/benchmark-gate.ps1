@@ -21,7 +21,11 @@ if (-not (Test-Path -LiteralPath $python)) {
     throw "Python executable not found in $venv."
 }
 
-$resultsPath = Resolve-Path -LiteralPath (Join-Path $root $ResultsDir)
+$resultsPath = if ([System.IO.Path]::IsPathRooted($ResultsDir)) {
+    Resolve-Path -LiteralPath $ResultsDir
+} else {
+    Resolve-Path -LiteralPath (Join-Path $root $ResultsDir)
+}
 if (-not (Test-Path -LiteralPath $resultsPath)) {
     throw "Results directory not found: $resultsPath"
 }
