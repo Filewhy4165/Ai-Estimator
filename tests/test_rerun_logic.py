@@ -76,3 +76,38 @@ def test_resolve_rerun_inputs_rejects_invalid_mode():
         assert "analysis_mode" in str(exc)
     else:
         raise AssertionError("Expected ValueError for invalid analysis_mode")
+
+
+def test_resolve_rerun_inputs_rejects_selected_mode_without_valid_trades_from_source():
+    source_input = {
+        "analysis_mode": "selected",
+        "selected_trades": ["not_a_trade"],
+    }
+    try:
+        _resolve_rerun_inputs(
+            source_input=source_input,
+            analysis_mode=None,
+            selected_trades=None,
+            sheet_overrides_json=None,
+            notes=None,
+        )
+    except ValueError as exc:
+        assert "selected_trades" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for selected mode with no valid trades")
+
+
+def test_resolve_rerun_inputs_rejects_selected_mode_without_valid_trades_from_override():
+    source_input = {"analysis_mode": "auto", "selected_trades": []}
+    try:
+        _resolve_rerun_inputs(
+            source_input=source_input,
+            analysis_mode="selected",
+            selected_trades="unknown_trade",
+            sheet_overrides_json=None,
+            notes=None,
+        )
+    except ValueError as exc:
+        assert "selected_trades" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for selected mode with no valid override trades")
