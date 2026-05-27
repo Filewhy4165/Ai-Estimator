@@ -30,6 +30,7 @@ from service.review_queue import (
     build_review_queue,
     build_sheet_overrides_template,
 )
+from service.trade_coverage import build_trade_coverage_report
 from service.trade_recommendation import build_trade_recommendation
 
 
@@ -81,6 +82,13 @@ class TradeRecommendationResponse(BaseModel):
     needs_user_review: bool
     decision_rationale: list[str]
     trade_scores: list[dict[str, Any]]
+
+
+class TradeCoverageResponse(BaseModel):
+    job_id: str
+    summary: dict[str, Any]
+    needs_review_trades: list[str]
+    trades: list[dict[str, Any]]
 
 
 class JobRerunRecommendationResponse(JobCreateResponse):
@@ -520,6 +528,18 @@ def get_trade_recommendation(job_id: str) -> TradeRecommendationResponse:
         result=record.result if isinstance(record.result, dict) else None,
     )
     return TradeRecommendationResponse(**payload)
+
+
+@app.get("/v1/jobs/{job_id}/trade-coverage", response_model=TradeCoverageResponse)
+def get_trade_coverage(job_id: str) -> TradeCoverageResponse:
+    record = _get_job_store().get_job(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = build_trade_coverage_report(
+        job_id=job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+    )
+    return TradeCoverageResponse(**payload)
 
 
 @app.get("/v1/jobs/{job_id}/benchmark-template", response_model=BenchmarkTemplateResponse)
