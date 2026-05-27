@@ -25,6 +25,8 @@ from ai_estimator.benchmark_compare import (
 )
 from ai_estimator.sheet_overrides import parse_sheet_overrides_json
 
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
+
 
 def parse_selected_trade_tokens(selected_trades_csv: str) -> list[str]:
     seen: set[str] = set()
@@ -151,7 +153,7 @@ class DesktopEstimatorApp:
 
         actions1 = ttk.Frame(frame)
         actions1.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        actions1.columnconfigure(8, weight=1)
+        actions1.columnconfigure(9, weight=1)
         ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
         ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
@@ -176,6 +178,9 @@ class DesktopEstimatorApp:
             text="Rerun Recommended",
             command=self._rerun_job_with_recommendation,
         ).grid(row=0, column=7, sticky="w", padx=(8, 0))
+        ttk.Button(actions1, text="Cancel Job", command=self._cancel_job).grid(
+            row=0, column=8, sticky="w", padx=(8, 0)
+        )
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -385,6 +390,23 @@ class DesktopEstimatorApp:
         except Exception as exc:
             self._set_output_text(f"Failed to submit recommended rerun:\n{exc}")
 
+    def _cancel_job(self) -> None:
+        job_id = self.current_job_id.get().strip()
+        if not job_id:
+            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+            return
+
+        try:
+            payload = self._request_json("POST", f"/v1/jobs/{job_id}/cancel", timeout=60)
+            status = str(payload.get("status", "unknown")).strip() or "unknown"
+            self._set_output_json(payload)
+            self.status_text.set(f"Job {job_id} cancel result: {status}")
+            if status == "canceled":
+                self.auto_poll_enabled.set(False)
+                self._stop_auto_poll()
+        except Exception as exc:
+            self._set_output_text(f"Failed to cancel job:\n{exc}")
+
     def _refresh_job(self) -> None:
         job_id = self.current_job_id.get().strip()
         if not job_id:
@@ -399,7 +421,7 @@ class DesktopEstimatorApp:
             else:
                 self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} status: {status or 'unknown'}")
-            if status in {"completed", "failed"}:
+            if status in _TERMINAL_JOB_STATUSES:
                 self._stop_auto_poll()
         except Exception as exc:
             self._stop_auto_poll()
@@ -423,7 +445,7 @@ class DesktopEstimatorApp:
             self._save_settings()
             if self.auto_poll_enabled.get():
                 latest_status = str(latest.get("status", "")).strip()
-                if latest_status not in {"completed", "failed"}:
+                if latest_status not in _TERMINAL_JOB_STATUSES:
                     self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to load latest job:\n{exc}")
@@ -441,10 +463,11 @@ class DesktopEstimatorApp:
             queued = counts.get("queued", "n/a") if isinstance(counts, dict) else "n/a"
             running = counts.get("running", "n/a") if isinstance(counts, dict) else "n/a"
             failed = counts.get("failed", "n/a") if isinstance(counts, dict) else "n/a"
+            canceled = counts.get("canceled", "n/a") if isinstance(counts, dict) else "n/a"
             failure_rate = payload.get("failure_rate", "n/a")
             self.status_text.set(
                 "Loaded job ops snapshot: "
-                f"queued={queued}, running={running}, failed={failed}, failure_rate={failure_rate}"
+                f"queued={queued}, running={running}, failed={failed}, canceled={canceled}, failure_rate={failure_rate}"
             )
         except Exception as exc:
             self._set_output_text(f"Failed to load job ops snapshot:\n{exc}")
@@ -851,9 +874,9 @@ class DesktopEstimatorApp:
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
                 return
-            if status == "failed":
+            if status in {"failed", "canceled"}:
                 self._set_output_json(payload)
-                self.status_text.set(f"Job {job_id} failed.")
+                self.status_text.set(f"Job {job_id} {status}.")
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
                 return
@@ -1002,7 +1025,7 @@ class DesktopEstimatorApp:
             )
             last_payload = payload
             status = str(payload.get("status", "")).strip()
-            if status in {"completed", "failed"}:
+            if status in _TERMINAL_JOB_STATUSES:
                 return payload
             time.sleep(max(1, poll_interval_seconds))
         raise RuntimeError(

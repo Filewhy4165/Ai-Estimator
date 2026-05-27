@@ -123,3 +123,40 @@ def test_job_store_migrates_legacy_db_without_started_at(tmp_path: Path):
     updated = store.get_job("legacy-1")
     assert updated is not None
     assert updated.started_at == "2026-05-24T00:00:10+00:00"
+
+
+def test_transition_job_if_current_applies_and_rejects_when_status_mismatch(tmp_path: Path):
+    db_path = tmp_path / "jobs_transition.db"
+    store = JobStore(str(db_path))
+    store.create_job(
+        JobRecord(
+            job_id="job-transition",
+            status="queued",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T00:00:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+
+    claimed = store.transition_job_if_current(
+        "job-transition",
+        current_status="queued",
+        status="running",
+        updated_at="2026-05-24T00:00:02+00:00",
+        started_at="2026-05-24T00:00:02+00:00",
+    )
+    assert claimed is True
+
+    rejected = store.transition_job_if_current(
+        "job-transition",
+        current_status="queued",
+        status="canceled",
+        updated_at="2026-05-24T00:00:03+00:00",
+        completed_at="2026-05-24T00:00:03+00:00",
+    )
+    assert rejected is False
+
+    stored = store.get_job("job-transition")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.started_at == "2026-05-24T00:00:02+00:00"

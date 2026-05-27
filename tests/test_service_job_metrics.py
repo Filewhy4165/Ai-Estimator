@@ -57,11 +57,13 @@ def test_jobs_metrics_endpoint_returns_snapshot(monkeypatch, tmp_path):
     assert payload["status_counts"]["completed"] == 1
     assert payload["status_counts"]["failed"] == 1
     assert payload["status_counts"]["queued"] == 1
+    assert payload["status_counts"]["canceled"] == 0
     assert payload["active_jobs"] == 1
     assert payload["terminal_jobs"] == 2
     assert payload["failure_rate"] == 0.5
     assert payload["window_applied"] == 500
     assert payload["throughput_last_24h"]["terminal_jobs"] == 2
+    assert payload["throughput_last_24h"]["canceled_jobs"] == 0
     assert payload["quality"]["completed_jobs_with_result"] == 1
     assert payload["quality"]["unmapped_sheet_id_count"] == 1
     assert payload["quality"]["missing_scale_count"] == 1

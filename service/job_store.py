@@ -121,6 +121,45 @@ class JobStore:
             )
             conn.commit()
 
+    def transition_job_if_current(
+        self,
+        job_id: str,
+        *,
+        current_status: str,
+        status: str,
+        updated_at: str,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?,
+                    updated_at = ?,
+                    started_at = COALESCE(?, started_at),
+                    completed_at = ?,
+                    result_json = ?,
+                    error = ?
+                WHERE job_id = ?
+                  AND status = ?
+                """,
+                (
+                    status,
+                    updated_at,
+                    started_at,
+                    completed_at,
+                    json.dumps(result) if result is not None else None,
+                    error,
+                    job_id,
+                    current_status,
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def get_job(self, job_id: str) -> JobRecord | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()

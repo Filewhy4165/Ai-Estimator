@@ -7,7 +7,7 @@ from typing import Any
 from service.job_store import JobRecord
 
 
-_STATUS_KEYS = ("queued", "running", "completed", "failed")
+_STATUS_KEYS = ("queued", "running", "completed", "failed", "canceled")
 
 
 def build_job_metrics_snapshot(
@@ -31,6 +31,7 @@ def build_job_metrics_snapshot(
     unknown_symbols_total = 0
     completed_24h = 0
     failed_24h = 0
+    canceled_24h = 0
     generated_dt = _parse_iso_datetime(generated_at) or datetime.now(timezone.utc)
     throughput_start = generated_dt - timedelta(hours=24)
 
@@ -48,11 +49,13 @@ def build_job_metrics_snapshot(
         if isinstance(record.result_issue_count, int) and record.result_issue_count >= 0:
             issue_counts.append(record.result_issue_count)
 
-        if status in {"completed", "failed"}:
+        if status in {"completed", "failed", "canceled"}:
             terminal_at = _parse_iso_datetime(record.completed_at) or _parse_iso_datetime(record.updated_at)
             if terminal_at and throughput_start <= terminal_at <= generated_dt:
                 if status == "completed":
                     completed_24h += 1
+                elif status == "canceled":
+                    canceled_24h += 1
                 else:
                     failed_24h += 1
 
@@ -93,9 +96,10 @@ def build_job_metrics_snapshot(
             if isinstance(unknown_symbols, list):
                 unknown_symbols_total += len(unknown_symbols)
 
-    terminal = status_counts["completed"] + status_counts["failed"]
-    failure_rate = round(status_counts["failed"] / terminal, 4) if terminal > 0 else None
-    terminal_24h = completed_24h + failed_24h
+    completed_or_failed = status_counts["completed"] + status_counts["failed"]
+    terminal = completed_or_failed + status_counts["canceled"]
+    failure_rate = round(status_counts["failed"] / completed_or_failed, 4) if completed_or_failed > 0 else None
+    terminal_24h = completed_24h + failed_24h + canceled_24h
 
     return {
         "generated_at": generated_at,
@@ -110,6 +114,7 @@ def build_job_metrics_snapshot(
             "terminal_jobs": terminal_24h,
             "completed_jobs": completed_24h,
             "failed_jobs": failed_24h,
+            "canceled_jobs": canceled_24h,
             "jobs_per_hour": round(terminal_24h / 24.0, 3),
         },
         "queue_wait_seconds": _distribution(queue_waits),
