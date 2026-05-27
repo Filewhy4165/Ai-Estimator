@@ -6,6 +6,7 @@ from ai_estimator.extractors.sheet_classifier import ClassifiedSheet
 def _sheet(*, page_index: int, sheet_id: str) -> ClassifiedSheet:
     return ClassifiedSheet(
         sheet_id=sheet_id,
+        sheet_id_source="detected",
         title="Test",
         sheet_type="plan",
         trade="architectural",

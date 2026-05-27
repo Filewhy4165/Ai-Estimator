@@ -6,6 +6,7 @@ def test_collect_sheet_id_inference_issues_returns_warning_with_source_sheets():
     sheets = [
         ClassifiedSheet(
             sheet_id="FAC-4476-A1",
+            sheet_id_source="inferred_facility_short",
             title="Floor Plan",
             sheet_type="plan",
             trade="architectural",
@@ -15,6 +16,7 @@ def test_collect_sheet_id_inference_issues_returns_warning_with_source_sheets():
         ),
         ClassifiedSheet(
             sheet_id="A101",
+            sheet_id_source="detected",
             title="First Floor Plan",
             sheet_type="plan",
             trade="architectural",
@@ -24,6 +26,7 @@ def test_collect_sheet_id_inference_issues_returns_warning_with_source_sheets():
         ),
         ClassifiedSheet(
             sheet_id="FAC-4583-E1",
+            sheet_id_source="inferred_facility_short",
             title="Electrical Plan",
             sheet_type="plan",
             trade="electrical",
@@ -43,6 +46,7 @@ def test_collect_sheet_id_inference_issues_returns_empty_when_none():
     sheets = [
         ClassifiedSheet(
             sheet_id="A101",
+            sheet_id_source="detected",
             title="First Floor Plan",
             sheet_type="plan",
             trade="architectural",

@@ -18,6 +18,7 @@ def test_sheet_id_supports_single_digit_dotted_form():
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id == "A1.01"
+    assert sheets[0].sheet_id_source == "detected"
     assert sheets[0].sheet_type == "plan"
     assert sheets[0].trade == "architectural"
 
@@ -38,6 +39,7 @@ def test_sheet_id_supports_facility_prefixed_hyphenated_form():
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id == "FAC-AZ-4556-E1"
+    assert sheets[0].sheet_id_source == "detected"
     assert sheets[0].sheet_type == "plan"
     assert sheets[0].trade == "electrical"
 
@@ -58,6 +60,7 @@ def test_sheet_id_does_not_accept_short_single_digit_standard_id():
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id.startswith("UNMAPPED_")
+    assert sheets[0].sheet_id_source == "unmapped"
 
 
 def test_sheet_id_uses_building_context_for_short_form():
@@ -76,6 +79,7 @@ def test_sheet_id_uses_building_context_for_short_form():
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id == "FAC-4476-A1"
+    assert sheets[0].sheet_id_source == "inferred_facility_short"
     assert sheets[0].sheet_type == "plan"
     assert sheets[0].trade == "architectural"
     assert sheets[0].confidence == 0.62
@@ -98,6 +102,7 @@ def test_sheet_id_ignores_trailing_short_token_in_notes():
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id.startswith("UNMAPPED_")
+    assert sheets[0].sheet_id_source == "unmapped"
 
 
 def test_sheet_id_short_fallback_skips_other_prefixes():
@@ -117,6 +122,7 @@ def test_sheet_id_short_fallback_skips_other_prefixes():
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id.startswith("UNMAPPED_")
+    assert sheets[0].sheet_id_source == "unmapped"
 
 
 def test_sheet_id_short_fallback_confidence_is_capped_even_with_strong_keywords():
@@ -135,5 +141,6 @@ def test_sheet_id_short_fallback_confidence_is_capped_even_with_strong_keywords(
     sheets = classify_sheets(pages, sheet_overrides=None)
     assert len(sheets) == 1
     assert sheets[0].sheet_id == "FAC-4476-E2"
+    assert sheets[0].sheet_id_source == "inferred_facility_short"
     assert sheets[0].confidence == 0.62
 

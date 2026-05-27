@@ -26,6 +26,7 @@ ALLOWED_PREFIXES = set(DISCIPLINE_PREFIX_TO_TRADE.keys())
 @dataclass
 class ClassifiedSheet:
     sheet_id: str
+    sheet_id_source: str
     title: str
     sheet_type: str
     trade: str
@@ -34,10 +35,10 @@ class ClassifiedSheet:
     source_pdf: str
 
 
-def _extract_sheet_id(text: str) -> str:
+def _extract_sheet_id(text: str) -> tuple[str, str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
-        return ""
+        return "", ""
 
     # Title blocks are commonly near top/bottom, so prioritize those zones.
     candidate_lines = lines[:40] + lines[-40:]
@@ -62,16 +63,16 @@ def _extract_sheet_id(text: str) -> str:
                 best_sheet_id = f"{prefix}{sequence}"
 
     if best_sheet_id:
-        return best_sheet_id
+        return best_sheet_id, "detected"
 
     facility_scoped = _extract_facility_scoped_short_sheet_id(lines=lines, full_text=text)
     if facility_scoped:
-        return facility_scoped
+        return facility_scoped, "inferred_facility_short"
 
     # Conservative fallback across the full extracted page text.
     for line in lines:
         for candidate in _extract_complex_sheet_id_candidates(line):
-            return candidate
+            return candidate, "detected"
 
     for match in SHEET_ID_RE.finditer(text.upper()):
         prefix = match.group(1)
@@ -79,8 +80,8 @@ def _extract_sheet_id(text: str) -> str:
         if prefix not in ALLOWED_PREFIXES:
             continue
         if _is_valid_sheet_sequence(sequence):
-            return f"{prefix}{sequence}"
-    return ""
+            return f"{prefix}{sequence}", "detected"
+    return "", ""
 
 
 def _score_trade_from_keywords(text: str) -> tuple[str, float]:
@@ -114,7 +115,12 @@ def classify_sheets(
         override = overrides_by_index.get(page.page_index, {})
         candidate_text = (override.get("title", "") + "\n" + page.text).strip()
 
-        sheet_id = override.get("sheet_id", "") or _extract_sheet_id(candidate_text)
+        override_sheet_id = str(override.get("sheet_id", "")).strip()
+        if override_sheet_id:
+            sheet_id = override_sheet_id
+            sheet_id_source = "override"
+        else:
+            sheet_id, sheet_id_source = _extract_sheet_id(candidate_text)
         title = override.get("title", "") or _best_effort_title(candidate_text)
 
         trade_from_prefix = "other"
@@ -142,11 +148,13 @@ def classify_sheets(
 
         if not sheet_id:
             sheet_id = f"UNMAPPED_{Path(page.source_pdf).name}_{page.page_index + 1}"
+            sheet_id_source = "unmapped"
             confidence = min(confidence, 0.45)
 
         sheets.append(
             ClassifiedSheet(
                 sheet_id=sheet_id,
+                sheet_id_source=sheet_id_source,
                 title=title,
                 sheet_type=sheet_type,
                 trade=final_trade,
