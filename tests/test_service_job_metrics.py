@@ -13,7 +13,17 @@ def _record(job_id: str, *, status: str, started_at: str | None = None, complete
         started_at=started_at,
         completed_at=completed_at,
         input={"analysis_mode": "auto", "selected_trades": []},
-        result={"sheets_detected": [{"sheet_id": "A101"}], "issues_or_ambiguities": []}
+        result={
+            "sheets_detected": [{"sheet_id": "A101"}, {"sheet_id": "UNMAPPED_1"}],
+            "issues_or_ambiguities": [],
+            "scale_analysis": {
+                "by_sheet": [
+                    {"sheet_id": "A101", "detected_scale": "1/8\" = 1'-0\""},
+                    {"sheet_id": "UNMAPPED_1", "detected_scale": None},
+                ]
+            },
+            "legend_and_symbols": {"unknown_symbols": [{"symbol": "X1"}, {"symbol": "X2"}]},
+        }
         if status == "completed"
         else None,
     )
@@ -47,9 +57,14 @@ def test_jobs_metrics_endpoint_returns_snapshot(monkeypatch, tmp_path):
     assert payload["status_counts"]["completed"] == 1
     assert payload["status_counts"]["failed"] == 1
     assert payload["status_counts"]["queued"] == 1
+    assert payload["active_jobs"] == 1
     assert payload["terminal_jobs"] == 2
     assert payload["failure_rate"] == 0.5
     assert payload["window_applied"] == 500
+    assert payload["throughput_last_24h"]["terminal_jobs"] == 2
+    assert payload["quality"]["completed_jobs_with_result"] == 1
+    assert payload["quality"]["unmapped_sheet_id_count"] == 1
+    assert payload["quality"]["missing_scale_count"] == 1
 
 
 def test_jobs_metrics_endpoint_clamps_window(monkeypatch, tmp_path):
