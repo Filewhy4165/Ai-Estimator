@@ -48,6 +48,14 @@ class JobCancelResponse(BaseModel):
     message: str
 
 
+class JobDeleteResponse(BaseModel):
+    job_id: str
+    deleted: bool
+    previous_status: str
+    removed_upload_dirs: list[str]
+    skipped_upload_dirs: list[str]
+
+
 class TradeCatalogItem(BaseModel):
     trade: str
     label: str
@@ -507,6 +515,44 @@ def cancel_job(job_id: str) -> JobCancelResponse:
     raise HTTPException(
         status_code=409,
         detail=f"Job status changed to '{latest_status}' before cancellation could be applied.",
+    )
+
+
+@app.delete("/v1/jobs/{job_id}", response_model=JobDeleteResponse)
+def delete_job(job_id: str, cleanup_uploads: bool = False) -> JobDeleteResponse:
+    store = _get_job_store()
+    record = store.get_job(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    current_status = str(record.status).strip().lower()
+    if current_status in _ACTIVE_JOB_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete active job with status '{current_status}'. "
+                "Cancel or wait for completion first."
+            ),
+        )
+
+    removed_dirs: list[str] = []
+    skipped_dirs: list[str] = []
+    if cleanup_uploads:
+        removed_dirs, skipped_dirs = _cleanup_upload_dirs_for_job(record)
+
+    deleted = store.delete_job(job_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=409,
+            detail="Job changed before deletion could be applied.",
+        )
+
+    return JobDeleteResponse(
+        job_id=job_id,
+        deleted=True,
+        previous_status=current_status,
+        removed_upload_dirs=removed_dirs,
+        skipped_upload_dirs=skipped_dirs,
     )
 
 
@@ -1136,6 +1182,45 @@ def _resolve_uploaded_pdf_paths(source_input: dict[str, Any]) -> tuple[list[str]
         else:
             missing.append(path)
     return paths, missing
+
+
+def _cleanup_upload_dirs_for_job(record: JobRecord) -> tuple[list[str], list[str]]:
+    job_input = record.input if isinstance(record.input, dict) else {}
+    uploaded_files = job_input.get("uploaded_files")
+    if not isinstance(uploaded_files, list):
+        return [], []
+
+    root = _get_upload_root().resolve()
+    candidate_dirs: list[Path] = []
+    seen: set[str] = set()
+    for item in uploaded_files:
+        if not isinstance(item, dict):
+            continue
+        raw_path = str(item.get("path", "")).strip()
+        if not raw_path:
+            continue
+        try:
+            parent = Path(raw_path).expanduser().resolve(strict=False).parent
+        except OSError:
+            continue
+        key = str(parent).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidate_dirs.append(parent)
+
+    removed: list[str] = []
+    skipped: list[str] = []
+    for candidate in candidate_dirs:
+        resolved = candidate.resolve(strict=False)
+        if not resolved.is_relative_to(root):
+            skipped.append(str(resolved))
+            continue
+        if not resolved.exists():
+            continue
+        shutil.rmtree(resolved, ignore_errors=True)
+        removed.append(str(resolved))
+    return removed, skipped
 
 
 def _queue_rerun_job(

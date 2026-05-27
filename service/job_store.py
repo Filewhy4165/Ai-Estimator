@@ -230,6 +230,12 @@ class JobStore:
             return 0
         return int(row["total"])
 
+    def delete_job(self, job_id: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
 
 def _row_to_job_record(row: sqlite3.Row) -> JobRecord:
     raw_input = row["input_json"]
