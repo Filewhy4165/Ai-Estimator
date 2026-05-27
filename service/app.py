@@ -84,6 +84,15 @@ class JobMetricsGateResponse(BaseModel):
     snapshot: dict[str, Any]
 
 
+class JobCapacityResponse(BaseModel):
+    worker_limit: int
+    running_jobs: int
+    queued_jobs: int
+    running_slots_available: int
+    max_queued_jobs: int | None
+    queue_capacity_remaining: int | None
+
+
 class TradeRecommendationResponse(BaseModel):
     job_id: str
     requested_mode: str
@@ -536,6 +545,26 @@ def get_job_metrics_gate(
         min_jobs_per_hour_24h=min_jobs_per_hour_24h,
     )
     return JobMetricsGateResponse(**payload)
+
+
+@app.get("/v1/jobs/capacity", response_model=JobCapacityResponse)
+def get_job_capacity() -> JobCapacityResponse:
+    store = _get_job_store()
+    worker_limit = _resolve_job_worker_limit()
+    running_jobs = store.count_jobs(status="running")
+    queued_jobs = store.count_jobs(status="queued")
+    max_queued_jobs = _resolve_max_queued_jobs()
+    queue_capacity_remaining = (
+        max(0, max_queued_jobs - queued_jobs) if max_queued_jobs is not None else None
+    )
+    return JobCapacityResponse(
+        worker_limit=worker_limit,
+        running_jobs=running_jobs,
+        queued_jobs=queued_jobs,
+        running_slots_available=max(0, worker_limit - running_jobs),
+        max_queued_jobs=max_queued_jobs,
+        queue_capacity_remaining=queue_capacity_remaining,
+    )
 
 
 @app.get("/v1/jobs/{job_id}")
