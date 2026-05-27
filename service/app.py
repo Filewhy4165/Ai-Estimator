@@ -219,8 +219,11 @@ async def analyze(
     sheet_overrides_json: str | None = Form(None),
     notes: str | None = Form(None),
 ) -> dict[str, Any]:
-    if analysis_mode not in {"auto", "selected", "all"}:
-        raise HTTPException(status_code=400, detail="analysis_mode must be auto, selected, or all")
+    selected_trade_list = sanitize_selected_trades(selected_trades)
+    try:
+        _validate_analysis_scope(analysis_mode=analysis_mode, selected_trades=selected_trade_list)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     request_id = str(uuid.uuid4())
     request_dir = _get_upload_root() / "sync" / request_id
@@ -238,7 +241,7 @@ async def analyze(
         payload = run_pipeline(
             pdf_paths=pdf_paths,
             analysis_mode=analysis_mode,
-            selected_trades=sanitize_selected_trades(selected_trades),
+            selected_trades=selected_trade_list,
             sheet_overrides=sheet_overrides,
             notes=normalized_notes,
             validate_schema=True,
@@ -257,11 +260,13 @@ async def create_job(
     sheet_overrides_json: str | None = Form(None),
     notes: str | None = Form(None),
 ) -> JobCreateResponse:
-    if analysis_mode not in {"auto", "selected", "all"}:
-        raise HTTPException(status_code=400, detail="analysis_mode must be auto, selected, or all")
+    selected_trade_list = sanitize_selected_trades(selected_trades)
+    try:
+        _validate_analysis_scope(analysis_mode=analysis_mode, selected_trades=selected_trade_list)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     job_id = str(uuid.uuid4())
-    selected_trade_list = sanitize_selected_trades(selected_trades)
     job_upload_dir = _get_upload_root() / "jobs" / job_id
     pdf_paths = await _save_uploads(files, job_upload_dir)
     if not pdf_paths:
@@ -1043,8 +1048,6 @@ def _resolve_rerun_inputs(
         resolved_mode = str(source_input.get("analysis_mode", "auto")).strip() or "auto"
     else:
         resolved_mode = analysis_mode.strip()
-    if resolved_mode not in {"auto", "selected", "all"}:
-        raise ValueError("analysis_mode must be auto, selected, or all")
 
     if selected_trades is None:
         raw_trades = source_input.get("selected_trades", [])
@@ -1054,6 +1057,7 @@ def _resolve_rerun_inputs(
         resolved_trades = sanitize_selected_trades(csv)
     else:
         resolved_trades = sanitize_selected_trades(selected_trades)
+    _validate_analysis_scope(analysis_mode=resolved_mode, selected_trades=resolved_trades)
 
     if sheet_overrides_json is None:
         resolved_overrides = _normalize_sheet_overrides_from_input(source_input.get("sheet_overrides"))
@@ -1067,6 +1071,15 @@ def _resolve_rerun_inputs(
         resolved_notes = normalize_notes(notes)
 
     return resolved_mode, resolved_trades, resolved_overrides, resolved_notes
+
+
+def _validate_analysis_scope(*, analysis_mode: str, selected_trades: list[str]) -> None:
+    if analysis_mode not in {"auto", "selected", "all"}:
+        raise ValueError("analysis_mode must be auto, selected, or all")
+    if analysis_mode == "selected" and not selected_trades:
+        raise ValueError(
+            "selected_trades must include at least one valid trade when analysis_mode is selected"
+        )
 
 
 def _normalize_sheet_overrides_from_input(raw: object) -> list[dict[str, Any]] | None:
