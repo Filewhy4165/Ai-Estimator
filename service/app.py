@@ -8,8 +8,9 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ai_estimator.benchmark_compare import (
@@ -187,6 +188,22 @@ app.add_middleware(
 _job_store: JobStore | None = None
 _upload_root: Path | None = None
 _resource_lock = Lock()
+
+
+@app.middleware("http")
+async def require_api_key_when_configured(request: Request, call_next):  # type: ignore[no-untyped-def]
+    expected = os.environ.get("AI_ESTIMATOR_API_KEY", "").strip()
+    if not expected:
+        return await call_next(request)
+    if request.url.path == "/health":
+        return await call_next(request)
+    provided = str(request.headers.get("x-api-key", "")).strip()
+    if not _is_api_key_authorized(expected=expected, provided=provided):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or missing API key."},
+        )
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -965,6 +982,10 @@ def _append_note(*, source_notes: str | None, marker: str) -> str:
     if marker_clean.lower() in base.lower():
         return base
     return f"{base}\n{marker_clean}"
+
+
+def _is_api_key_authorized(*, expected: str, provided: str) -> bool:
+    return bool(expected.strip()) and expected.strip() == provided.strip()
 
 
 def _build_handoff_recommendation(
