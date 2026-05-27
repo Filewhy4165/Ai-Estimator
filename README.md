@@ -77,6 +77,7 @@ Desktop async workflow:
 16. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
 17. Use `Evaluate Gate` to run a benchmark quality gate (default: non-regression required)
 18. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
+19. Use `Job Ops Snapshot` to view queue depth, failure rate, and latency percentiles for recent jobs
 
 ## Run CLI directly
 
@@ -158,6 +159,7 @@ Benchmark manifest shape:
 - `POST /v1/jobs` async job submission
 - `POST /v1/jobs/{job_id}/rerun` async rerun using files from an existing job
 - `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status`)
+- `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, failure rate, and latency distributions)
 - `GET /v1/jobs/{job_id}` job status/result
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets

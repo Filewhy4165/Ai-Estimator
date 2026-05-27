@@ -22,6 +22,7 @@ from ai_estimator.benchmark_compare import (
     compare_reports_from_paths,
 )
 from ai_estimator.pipeline import run_pipeline, sanitize_selected_trades
+from service.job_metrics import build_job_metrics_snapshot
 from service.job_store import JobRecord, JobStore
 from service.request_parsing import normalize_notes, parse_sheet_overrides_json
 from service.review_queue import (
@@ -41,6 +42,20 @@ class JobListResponse(BaseModel):
     total_returned: int
     limit: int
     offset: int
+
+
+class JobMetricsResponse(BaseModel):
+    generated_at: str
+    window_requested: int
+    window_applied: int
+    jobs_considered: int
+    status_counts: dict[str, int]
+    terminal_jobs: int
+    failure_rate: float | None
+    queue_wait_seconds: dict[str, float | int | None]
+    run_duration_seconds: dict[str, float | int | None]
+    result_sheet_count: dict[str, float | int | None]
+    result_issue_count: dict[str, float | int | None]
 
 
 class ReviewQueueResponse(BaseModel):
@@ -319,6 +334,19 @@ async def rerun_job(
     )
     thread.start()
     return JobCreateResponse(job_id=rerun_job_id, status="queued")
+
+
+@app.get("/v1/jobs/metrics", response_model=JobMetricsResponse)
+def get_job_metrics(window: int = 200) -> JobMetricsResponse:
+    window_applied = max(1, min(window, 5000))
+    records = _get_job_store().list_recent_jobs(limit=window_applied)
+    payload = build_job_metrics_snapshot(
+        records,
+        window_requested=window,
+        window_applied=window_applied,
+        generated_at=_utc_now(),
+    )
+    return JobMetricsResponse(**payload)
 
 
 @app.get("/v1/jobs/{job_id}")

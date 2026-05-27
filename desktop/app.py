@@ -119,7 +119,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(16, weight=1)
+        actions2.columnconfigure(17, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -174,6 +174,9 @@ class DesktopEstimatorApp:
         )
         ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
             row=0, column=15, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions2, text="Job Ops Snapshot", command=self._show_job_ops_snapshot).grid(
+            row=0, column=16, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -306,6 +309,27 @@ class DesktopEstimatorApp:
                     self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to load latest job:\n{exc}")
+
+    def _show_job_ops_snapshot(self) -> None:
+        try:
+            payload = self._request_json(
+                "GET",
+                "/v1/jobs/metrics",
+                timeout=30,
+                params={"window": 500},
+            )
+            self._set_output_json(payload)
+            counts = payload.get("status_counts", {})
+            queued = counts.get("queued", "n/a") if isinstance(counts, dict) else "n/a"
+            running = counts.get("running", "n/a") if isinstance(counts, dict) else "n/a"
+            failed = counts.get("failed", "n/a") if isinstance(counts, dict) else "n/a"
+            failure_rate = payload.get("failure_rate", "n/a")
+            self.status_text.set(
+                "Loaded job ops snapshot: "
+                f"queued={queued}, running={running}, failed={failed}, failure_rate={failure_rate}"
+            )
+        except Exception as exc:
+            self._set_output_text(f"Failed to load job ops snapshot:\n{exc}")
 
     def _get_review_queue(self) -> None:
         job_id = self.current_job_id.get().strip()
