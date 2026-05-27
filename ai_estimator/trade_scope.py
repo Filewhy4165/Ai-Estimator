@@ -63,9 +63,10 @@ def resolve_trade_scope(
 
 
 def _collapse_sheets_for_scope(sheets: list[ClassifiedSheet]) -> list[ClassifiedSheet]:
-    by_sheet_id: dict[str, ClassifiedSheet] = {}
+    by_sheet_trade: dict[tuple[str, str], ClassifiedSheet] = {}
     for sheet in sheets:
-        existing = by_sheet_id.get(sheet.sheet_id)
+        key = (sheet.sheet_id, sheet.trade)
+        existing = by_sheet_trade.get(key)
         if existing is None or sheet.confidence > existing.confidence:
-            by_sheet_id[sheet.sheet_id] = sheet
-    return list(by_sheet_id.values())
+            by_sheet_trade[key] = sheet
+    return list(by_sheet_trade.values())
