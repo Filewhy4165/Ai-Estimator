@@ -160,3 +160,26 @@ def test_transition_job_if_current_applies_and_rejects_when_status_mismatch(tmp_
     assert stored is not None
     assert stored.status == "running"
     assert stored.started_at == "2026-05-24T00:00:02+00:00"
+
+
+def test_delete_job_removes_record(tmp_path: Path):
+    db_path = tmp_path / "jobs_delete.db"
+    store = JobStore(str(db_path))
+    store.create_job(
+        JobRecord(
+            job_id="job-delete",
+            status="completed",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T00:01:00+00:00",
+            completed_at="2026-05-24T00:01:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+    assert store.get_job("job-delete") is not None
+
+    deleted = store.delete_job("job-delete")
+    assert deleted is True
+    assert store.get_job("job-delete") is None
+
+    deleted_again = store.delete_job("job-delete")
+    assert deleted_again is False
