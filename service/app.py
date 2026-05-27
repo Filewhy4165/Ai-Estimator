@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from ai_estimator.constants import DEFAULT_CSI_BY_TRADE, TRADE_NAMES
 from ai_estimator.benchmark_compare import (
     build_benchmark_dashboard,
     build_benchmark_history,
@@ -38,6 +39,17 @@ from service.trade_recommendation import build_trade_recommendation
 class JobCreateResponse(BaseModel):
     job_id: str
     status: str
+
+
+class TradeCatalogItem(BaseModel):
+    trade: str
+    label: str
+    csi_codes: list[str]
+
+
+class TradeCatalogResponse(BaseModel):
+    analysis_modes: list[str]
+    trades: list[TradeCatalogItem]
 
 
 class JobListResponse(BaseModel):
@@ -209,6 +221,21 @@ async def require_api_key_when_configured(request: Request, call_next):  # type:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "db_path": _get_job_store().db_path}
+
+
+@app.get("/v1/meta/trades", response_model=TradeCatalogResponse)
+def get_trade_catalog() -> TradeCatalogResponse:
+    return TradeCatalogResponse(
+        analysis_modes=["auto", "selected", "all"],
+        trades=[
+            TradeCatalogItem(
+                trade=trade,
+                label=_format_trade_label(trade),
+                csi_codes=list(DEFAULT_CSI_BY_TRADE.get(trade, [])),
+            )
+            for trade in TRADE_NAMES
+        ],
+    )
 
 
 @app.post("/v1/analyze")
@@ -1080,6 +1107,18 @@ def _validate_analysis_scope(*, analysis_mode: str, selected_trades: list[str]) 
         raise ValueError(
             "selected_trades must include at least one valid trade when analysis_mode is selected"
         )
+
+
+def _format_trade_label(trade: str) -> str:
+    token_map = {
+        "hvac": "HVAC",
+        "it": "IT",
+    }
+    words = []
+    for token in trade.split("_"):
+        lower = token.lower()
+        words.append(token_map.get(lower, token.capitalize()))
+    return " ".join(words)
 
 
 def _normalize_sheet_overrides_from_input(raw: object) -> list[dict[str, Any]] | None:
