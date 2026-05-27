@@ -294,6 +294,7 @@ async def create_job(
         _validate_analysis_scope(analysis_mode=analysis_mode, selected_trades=selected_trade_list)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _enforce_queued_job_limit()
 
     job_id = str(uuid.uuid4())
     job_upload_dir = _get_upload_root() / "jobs" / job_id
@@ -354,6 +355,7 @@ async def rerun_job(
     sheet_overrides_json: str | None = Form(None),
     notes: str | None = Form(None),
 ) -> JobCreateResponse:
+    _enforce_queued_job_limit()
     source_record = _get_job_store().get_job(job_id)
     if not source_record:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -414,6 +416,7 @@ async def rerun_job(
     response_model=JobRerunRecommendationResponse,
 )
 def rerun_job_with_recommendation(job_id: str) -> JobRerunRecommendationResponse:
+    _enforce_queued_job_limit()
     source_record = _get_job_store().get_job(job_id)
     if not source_record:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -909,6 +912,35 @@ def _resolve_upload_root() -> str:
     if override:
         return override
     return str(Path.cwd() / ".ai_estimator" / "uploads")
+
+
+def _resolve_max_queued_jobs() -> int | None:
+    raw = os.environ.get("AI_ESTIMATOR_MAX_QUEUED_JOBS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return min(value, 100000)
+
+
+def _enforce_queued_job_limit() -> None:
+    max_queued = _resolve_max_queued_jobs()
+    if max_queued is None:
+        return
+    queued = _get_job_store().count_jobs(status="queued")
+    if queued >= max_queued:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Job queue is at capacity. "
+                f"queued={queued}, max_queued={max_queued}. "
+                "Retry later or increase AI_ESTIMATOR_MAX_QUEUED_JOBS."
+            ),
+        )
 
 
 def _resolve_job_worker_limit() -> int:

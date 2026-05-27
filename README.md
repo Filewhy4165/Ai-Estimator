@@ -270,6 +270,7 @@ Environment variables:
 - `AI_ESTIMATOR_DB_PATH` override SQLite path
 - `AI_ESTIMATOR_UPLOAD_DIR` override uploads directory
 - `AI_ESTIMATOR_JOB_WORKERS` max concurrent async job executions (default `4`, clamped `1..32`)
+- `AI_ESTIMATOR_MAX_QUEUED_JOBS` optional queue backlog cap; when reached, new async submissions return `429` (unset = no cap)
 - `AI_ESTIMATOR_API_KEY` when set, all endpoints except `/health` require header `x-api-key: <value>`
 - `AI_ESTIMATOR_CLEANUP_UPLOADS` set global cleanup `true|false` for both sync/async
 - `AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS` set cleanup for `/v1/analyze` uploads (default `true`)
