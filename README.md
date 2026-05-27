@@ -281,6 +281,10 @@ Environment variables:
 - `AI_ESTIMATOR_UPLOAD_DIR` override uploads directory
 - `AI_ESTIMATOR_JOB_WORKERS` max concurrent async job executions (default `4`, clamped `1..32`)
 - `AI_ESTIMATOR_MAX_QUEUED_JOBS` optional queue backlog cap; when reached, new async submissions return `429` (unset = no cap)
+- `AI_ESTIMATOR_PRUNE_ON_SUBMIT` when `true`, run terminal-job prune before async submission/rerun
+- `AI_ESTIMATOR_PRUNE_OLDER_THAN_HOURS` optional age filter for auto-prune (unset = no age filter)
+- `AI_ESTIMATOR_PRUNE_LIMIT` max jobs pruned per auto-prune run (default `200`, clamped `1..1000`)
+- `AI_ESTIMATOR_PRUNE_CLEANUP_UPLOADS` when `true`, auto-prune also removes safe upload directories
 - `AI_ESTIMATOR_API_KEY` when set, all endpoints except `/health` require header `x-api-key: <value>`
 - `AI_ESTIMATOR_CLEANUP_UPLOADS` set global cleanup `true|false` for both sync/async
 - `AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS` set cleanup for `/v1/analyze` uploads (default `true`)
