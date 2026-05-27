@@ -35,14 +35,17 @@ def build_review_queue(
 
     items: list[dict[str, Any]] = []
     reasons_counter: Counter[str] = Counter()
+    source_counter: Counter[str] = Counter()
 
     for sheet in sheets:
         if not isinstance(sheet, dict):
             continue
         sheet_id = str(sheet.get("sheet_id", "")).strip()
+        sheet_id_source = _resolve_sheet_id_source(sheet=sheet, inferred_sheet_ids=inferred_sheet_ids)
         title = str(sheet.get("title", "")).strip()
         confidence = float(sheet.get("confidence", 0.0) or 0.0)
         source_page_index = sheet.get("source_page_index")
+        source_counter[sheet_id_source] += 1
 
         reasons: list[dict[str, str]] = []
         if sheet_id.startswith("UNMAPPED_"):
@@ -133,6 +136,7 @@ def build_review_queue(
 
         item = {
             "sheet_id": sheet_id,
+            "sheet_id_source": sheet_id_source,
             "title": title,
             "confidence": round(confidence, 3),
             "source_page_index": source_page_index,
@@ -152,6 +156,7 @@ def build_review_queue(
             "total_sheets": len(sheets),
             "flagged_sheets": len([x for x in items if x["flags"]]),
             "reason_counts": dict(reasons_counter),
+            "sheet_id_source_counts": dict(source_counter),
         },
         "items": items,
     }
@@ -170,18 +175,24 @@ def build_sheet_overrides_template(
 
     items: list[dict[str, Any]] = []
     inferred_sheet_ids = _collect_inferred_sheet_ids(result)
+    source_counter: Counter[str] = Counter()
     for sheet in sheets:
         if not isinstance(sheet, dict):
             continue
 
         current_sheet_id = str(sheet.get("sheet_id", "")).strip()
+        current_sheet_id_source = _resolve_sheet_id_source(
+            sheet=sheet,
+            inferred_sheet_ids=inferred_sheet_ids,
+        )
         title = str(sheet.get("title", "")).strip()
         source_page_index = _parse_positive_int(sheet.get("source_page_index"))
+        source_counter[current_sheet_id_source] += 1
 
         is_unmapped = current_sheet_id.startswith("UNMAPPED_")
         invalid_sheet_id = not _is_reasonable_sheet_id(current_sheet_id)
         title_missing = title in {"", "Untitled Sheet"}
-        inferred_sheet_id = current_sheet_id in inferred_sheet_ids
+        inferred_sheet_id = current_sheet_id_source == "inferred_facility_short"
         needs_override = is_unmapped or invalid_sheet_id or title_missing or inferred_sheet_id
         if not include_all and not needs_override:
             continue
@@ -200,6 +211,7 @@ def build_sheet_overrides_template(
             {
                 "source_page_index": source_page_index,
                 "current_sheet_id": current_sheet_id,
+                "current_sheet_id_source": current_sheet_id_source,
                 "sheet_id": "" if needs_override else current_sheet_id,
                 "title": "" if title_missing else title,
                 "reason": reason,
@@ -216,6 +228,7 @@ def build_sheet_overrides_template(
             "inferred_sheet_id_count": len(
                 [x for x in items if x.get("reason") == "inferred_sheet_id_requires_review"]
             ),
+            "sheet_id_source_counts": dict(source_counter),
         },
         "items": items,
     }
@@ -528,3 +541,18 @@ def _collect_inferred_sheet_ids(result: dict[str, Any]) -> set[str]:
         if source == "inferred_facility_short":
             inferred_sheet_ids.add(sheet_id)
     return inferred_sheet_ids
+
+
+def _resolve_sheet_id_source(*, sheet: dict[str, Any], inferred_sheet_ids: set[str]) -> str:
+    raw_source = str(sheet.get("sheet_id_source", "")).strip().lower()
+    if raw_source in {"detected", "override", "inferred_facility_short", "unmapped"}:
+        return raw_source
+
+    sheet_id = str(sheet.get("sheet_id", "")).strip()
+    if sheet_id.startswith("UNMAPPED_"):
+        return "unmapped"
+    if sheet_id in inferred_sheet_ids:
+        return "inferred_facility_short"
+    if raw_source:
+        return raw_source
+    return "detected"
