@@ -76,3 +76,46 @@ def test_jobs_metrics_endpoint_clamps_window(monkeypatch, tmp_path):
     payload = response.model_dump()
     assert payload["window_requested"] == 999999
     assert payload["window_applied"] == 5000
+
+
+def test_jobs_metrics_gate_endpoint_returns_pass_fail(monkeypatch, tmp_path):
+    store = JobStore(str(tmp_path / "jobs.db"))
+    store.create_job(
+        _record(
+            "job-1",
+            status="completed",
+            started_at="2026-05-27T00:00:01+00:00",
+            completed_at="2026-05-27T00:00:10+00:00",
+        )
+    )
+    store.create_job(
+        _record(
+            "job-2",
+            status="failed",
+            started_at="2026-05-27T00:00:01+00:00",
+            completed_at="2026-05-27T00:00:10+00:00",
+        )
+    )
+    monkeypatch.setattr(service_app, "_job_store", store)
+
+    fail_payload = service_app.get_job_metrics_gate(
+        window=500,
+        max_failure_rate=0.1,
+        max_active_jobs=0,
+        max_missing_scale_rate=0.1,
+        max_unmapped_sheet_rate=0.1,
+        min_jobs_per_hour_24h=0.2,
+    ).model_dump()
+    assert fail_payload["passed"] is False
+    assert len(fail_payload["failures"]) >= 1
+
+    pass_payload = service_app.get_job_metrics_gate(
+        window=500,
+        max_failure_rate=0.8,
+        max_active_jobs=10,
+        max_missing_scale_rate=1.0,
+        max_unmapped_sheet_rate=1.0,
+        min_jobs_per_hour_24h=0.0,
+    ).model_dump()
+    assert pass_payload["passed"] is True
+    assert pass_payload["failures"] == []
