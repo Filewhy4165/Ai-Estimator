@@ -138,10 +138,29 @@ Start the API automatically if needed:
 .\scripts\smoke-job.ps1 -PdfPath "C:\path\to\drawing.pdf" -StartApi
 ```
 
+Run benchmark quality gate against the latest two benchmark reports in `benchmarks\results`:
+
+```powershell
+.\scripts\benchmark-gate.ps1 -ResultsDir ".\benchmarks\results"
+```
+
+Require a minimum candidate score and fail on regression:
+
+```powershell
+.\scripts\benchmark-gate.ps1 -ResultsDir ".\benchmarks\results" -MinCandidateScore 0.85 -RequireNonRegression:$true
+```
+
+Run against the API endpoint instead (useful for CI or shared result folders):
+
+```powershell
+.\scripts\benchmark-gate.ps1 -UseApi -ApiBase "http://127.0.0.1:8000" -ResultsDir ".\benchmarks\results"
+```
+
 CMD fallback:
 
 ```cmd
 .\scripts\smoke-job.bat "C:\path\to\drawing.pdf" -StartApi
+.\scripts\benchmark-gate.bat -ResultsDir ".\benchmarks\results"
 ```
 
 Run only API:
