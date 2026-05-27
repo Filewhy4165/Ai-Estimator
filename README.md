@@ -171,6 +171,7 @@ Benchmark manifest shape:
 - `POST /v1/jobs/{job_id}/rerun-recommended` async rerun using AI-recommended trade scope from the source job
 - `POST /v1/jobs/{job_id}/cancel` cancel a queued/running job (`canceled` terminal status)
 - `DELETE /v1/jobs/{job_id}` delete a terminal job record (`cleanup_uploads=true` optionally removes owned upload folders)
+- `POST /v1/jobs/prune` bulk prune terminal jobs with filters (`statuses`, `older_than_hours`, `limit`, `dry_run`, optional upload cleanup)
 - `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status` including `canceled`)
 - `GET /v1/jobs/capacity` live async queue/worker capacity snapshot
 - `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, active queue depth, failure rate, 24h throughput, latency distributions, and extraction quality signals)
@@ -251,6 +252,7 @@ Cancel notes:
 - Queued jobs are canceled immediately.
 - Running jobs are marked `canceled` immediately; in-process computation is best-effort and completion updates are ignored.
 - `DELETE /v1/jobs/{job_id}` only deletes terminal jobs (`completed`, `failed`, `canceled`) and returns `409` for active jobs.
+- `POST /v1/jobs/prune` defaults to dry-run and terminal statuses only; active statuses are rejected.
 
 Benchmark report compare endpoint examples:
 

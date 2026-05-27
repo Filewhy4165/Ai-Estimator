@@ -183,3 +183,43 @@ def test_delete_job_removes_record(tmp_path: Path):
 
     deleted_again = store.delete_job("job-delete")
     assert deleted_again is False
+
+
+def test_list_jobs_for_prune_filters_by_status_and_cutoff(tmp_path: Path):
+    db_path = tmp_path / "jobs_prune.db"
+    store = JobStore(str(db_path))
+    store.create_job(
+        JobRecord(
+            job_id="job-old-completed",
+            status="completed",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T01:00:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+    store.create_job(
+        JobRecord(
+            job_id="job-new-completed",
+            status="completed",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T03:00:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+    store.create_job(
+        JobRecord(
+            job_id="job-old-running",
+            status="running",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T01:00:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+
+    candidates = store.list_jobs_for_prune(
+        statuses=["completed", "failed", "canceled"],
+        updated_before="2026-05-24T02:00:00+00:00",
+        limit=10,
+    )
+    ids = [row.job_id for row in candidates]
+    assert ids == ["job-old-completed"]

@@ -230,6 +230,31 @@ class JobStore:
             return 0
         return int(row["total"])
 
+    def list_jobs_for_prune(
+        self,
+        *,
+        statuses: list[str],
+        updated_before: str | None,
+        limit: int,
+    ) -> list[JobRecord]:
+        if not statuses:
+            return []
+        limit = max(1, min(limit, 1000))
+        placeholders = ", ".join("?" for _ in statuses)
+        params: list[object] = list(statuses)
+        query = f"""
+            SELECT * FROM jobs
+            WHERE status IN ({placeholders})
+        """
+        if updated_before:
+            query += " AND updated_at <= ?"
+            params.append(updated_before)
+        query += " ORDER BY updated_at ASC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [_row_to_job_record(row) for row in rows]
+
     def delete_job(self, job_id: str) -> bool:
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
