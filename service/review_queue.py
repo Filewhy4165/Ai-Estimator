@@ -6,6 +6,10 @@ from typing import Any
 
 
 SHEET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_.]{0,79}$")
+INFERRED_SHEET_ID_ISSUE_HINT_RE = re.compile(
+    r"\binferred from building number \+ short sheet token\b",
+    re.IGNORECASE,
+)
 
 
 def build_review_queue(
@@ -27,6 +31,7 @@ def build_review_queue(
     )
     unknown_counts = _count_unknown_symbols_by_sheet(unknown_symbols)
     scale_status = _sheet_scale_status(result.get("scale_analysis", {}))
+    inferred_sheet_ids = _collect_inferred_sheet_ids_from_issues(result.get("issues_or_ambiguities", []))
 
     items: list[dict[str, Any]] = []
     reasons_counter: Counter[str] = Counter()
@@ -111,6 +116,18 @@ def build_review_queue(
                 )
             )
 
+        if sheet_id in inferred_sheet_ids:
+            reasons.append(
+                _reason(
+                    code="inferred_sheet_id_requires_review",
+                    severity="medium",
+                    message=(
+                        "Sheet ID was inferred from building number + short token; "
+                        "verify sheet numbering before final takeoff."
+                    ),
+                )
+            )
+
         for r in reasons:
             reasons_counter[r["code"]] += 1
 
@@ -152,6 +169,7 @@ def build_sheet_overrides_template(
         sheets = []
 
     items: list[dict[str, Any]] = []
+    inferred_sheet_ids = _collect_inferred_sheet_ids_from_issues(result.get("issues_or_ambiguities", []))
     for sheet in sheets:
         if not isinstance(sheet, dict):
             continue
@@ -163,7 +181,8 @@ def build_sheet_overrides_template(
         is_unmapped = current_sheet_id.startswith("UNMAPPED_")
         invalid_sheet_id = not _is_reasonable_sheet_id(current_sheet_id)
         title_missing = title in {"", "Untitled Sheet"}
-        needs_override = is_unmapped or invalid_sheet_id or title_missing
+        inferred_sheet_id = current_sheet_id in inferred_sheet_ids
+        needs_override = is_unmapped or invalid_sheet_id or title_missing or inferred_sheet_id
         if not include_all and not needs_override:
             continue
 
@@ -174,6 +193,8 @@ def build_sheet_overrides_template(
             reason = "invalid_sheet_id_format"
         elif title_missing:
             reason = "missing_sheet_title"
+        elif inferred_sheet_id:
+            reason = "inferred_sheet_id_requires_review"
 
         items.append(
             {
@@ -192,6 +213,9 @@ def build_sheet_overrides_template(
             "total_sheets": len(sheets),
             "rows_returned": len(items),
             "unmapped_count": len([x for x in items if x.get("reason") == "unmapped_sheet_id"]),
+            "inferred_sheet_id_count": len(
+                [x for x in items if x.get("reason") == "inferred_sheet_id_requires_review"]
+            ),
         },
         "items": items,
     }
@@ -463,3 +487,25 @@ def _extract_total_count(result: dict[str, Any]) -> int:
             if token.isdigit():
                 total += int(token)
     return total
+
+
+def _collect_inferred_sheet_ids_from_issues(issues: object) -> set[str]:
+    inferred_sheet_ids: set[str] = set()
+    if not isinstance(issues, list):
+        return inferred_sheet_ids
+
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        message = str(issue.get("message", "")).strip()
+        if not message or not INFERRED_SHEET_ID_ISSUE_HINT_RE.search(message):
+            continue
+
+        source_sheets = issue.get("source_sheets")
+        if not isinstance(source_sheets, list):
+            continue
+        for value in source_sheets:
+            sheet_id = str(value).strip()
+            if sheet_id:
+                inferred_sheet_ids.add(sheet_id)
+    return inferred_sheet_ids

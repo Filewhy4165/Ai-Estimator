@@ -196,6 +196,7 @@ Review queue endpoint query params:
 Sheet overrides template endpoint query params:
 
 - `include_all` (default `false`) include all sheets instead of only sheets needing manual correction
+- default problem rows include unmapped IDs, invalid ID format, missing title, and low-confidence inferred sheet IDs
 
 Example:
 
