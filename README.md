@@ -79,6 +79,7 @@ Desktop async workflow:
 18. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
 19. Use `Job Ops Snapshot` to view queue depth, failure rate, 24h throughput, latency percentiles, and extraction quality signals for recent jobs
 20. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
+21. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
 
 ## Run CLI directly
 
@@ -163,6 +164,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, active queue depth, failure rate, 24h throughput, latency distributions, and extraction quality signals)
 - `GET /v1/jobs/metrics/gate` pass/fail gate over job metrics with configurable thresholds
 - `GET /v1/jobs/{job_id}` job status/result
+- `GET /v1/jobs/{job_id}/trade-recommendation` recommendation for `selected` vs `all` trade scope with confidence and rationale
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
