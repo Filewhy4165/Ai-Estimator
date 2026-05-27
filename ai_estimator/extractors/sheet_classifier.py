@@ -12,6 +12,7 @@ SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})[-\s]?(\d{1,4}(?:\.\d{1,2})?[A-Z]?)\b")
 COMPLEX_SHEET_ID_RE = re.compile(r"\b([A-Z0-9]{2,}(?:-[A-Z0-9]{1,12}){2,})\b")
 SHORT_SHEET_ID_RE = re.compile(r"\b([A-Z]{1,2})(\d{1,2})\b")
 BUILDING_CODE_RE = re.compile(r"\bBUILDING\s+(\d{4})\b", re.IGNORECASE)
+FACILITY_SHORT_INFERRED_ID_RE = re.compile(r"^FAC-\d{4}-[A-Z]{1,2}\d{1,2}$")
 SHEET_ID_LINE_HINTS_RE = re.compile(
     r"\b(sheet|drawing|title|plan|elevation|section|detail|schedule)\b", re.IGNORECASE
 )
@@ -123,6 +124,8 @@ def classify_sheets(
             discipline, sequence = _split_sheet_id(sheet_id)
             trade_from_prefix = DISCIPLINE_PREFIX_TO_TRADE.get(discipline, "other")
             prefix_conf = 0.88 if trade_from_prefix != "other" else 0.2
+            if _is_facility_scoped_short_inferred_sheet_id(sheet_id):
+                prefix_conf = min(prefix_conf, 0.62)
             if sequence and sequence[0].isdigit():
                 sheet_type = SHEET_TYPE_MAP.get(sequence[0], "other")
 
@@ -133,6 +136,9 @@ def classify_sheets(
         else:
             final_trade = trade_from_keywords
             confidence = keyword_conf
+
+        if _is_facility_scoped_short_inferred_sheet_id(sheet_id):
+            confidence = min(confidence, 0.62)
 
         if not sheet_id:
             sheet_id = f"UNMAPPED_{Path(page.source_pdf).name}_{page.page_index + 1}"
@@ -319,6 +325,10 @@ def _short_sheet_id_score(token: str, line: str) -> int:
     elif len(compact_line) <= 40:
         score += 1
     return score
+
+
+def _is_facility_scoped_short_inferred_sheet_id(sheet_id: str) -> bool:
+    return bool(FACILITY_SHORT_INFERRED_ID_RE.fullmatch(sheet_id.upper()))
 
 
 def _looks_like_grid_label(line: str) -> bool:
