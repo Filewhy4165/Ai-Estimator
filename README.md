@@ -82,6 +82,7 @@ Desktop async workflow:
 21. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
 22. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
 23. Use `Trade Coverage` to validate per-trade detection, analysis, and quantity signal coverage before handoff
+24. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
 
 ## Run CLI directly
 
@@ -169,6 +170,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}` job status/result
 - `GET /v1/jobs/{job_id}/trade-recommendation` recommendation for `selected` vs `all` trade scope with confidence and rationale
 - `GET /v1/jobs/{job_id}/trade-coverage` coverage table by trade (detected/analyzed/signals/status)
+- `GET /v1/jobs/{job_id}/readiness-report` consolidated go/no-go handoff report
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
