@@ -549,7 +549,13 @@ def _run_job(
     notes: str | None,
     upload_dir: str | None,
 ) -> None:
-    _get_job_store().update_job(job_id, status="running", updated_at=_utc_now())
+    started_at = _utc_now()
+    _get_job_store().update_job(
+        job_id,
+        status="running",
+        updated_at=started_at,
+        started_at=started_at,
+    )
     try:
         result = run_pipeline(
             pdf_paths=pdf_paths,
