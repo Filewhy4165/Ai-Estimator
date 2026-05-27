@@ -31,7 +31,7 @@ def build_review_queue(
     )
     unknown_counts = _count_unknown_symbols_by_sheet(unknown_symbols)
     scale_status = _sheet_scale_status(result.get("scale_analysis", {}))
-    inferred_sheet_ids = _collect_inferred_sheet_ids_from_issues(result.get("issues_or_ambiguities", []))
+    inferred_sheet_ids = _collect_inferred_sheet_ids(result)
 
     items: list[dict[str, Any]] = []
     reasons_counter: Counter[str] = Counter()
@@ -169,7 +169,7 @@ def build_sheet_overrides_template(
         sheets = []
 
     items: list[dict[str, Any]] = []
-    inferred_sheet_ids = _collect_inferred_sheet_ids_from_issues(result.get("issues_or_ambiguities", []))
+    inferred_sheet_ids = _collect_inferred_sheet_ids(result)
     for sheet in sheets:
         if not isinstance(sheet, dict):
             continue
@@ -508,4 +508,23 @@ def _collect_inferred_sheet_ids_from_issues(issues: object) -> set[str]:
             sheet_id = str(value).strip()
             if sheet_id:
                 inferred_sheet_ids.add(sheet_id)
+    return inferred_sheet_ids
+
+
+def _collect_inferred_sheet_ids(result: dict[str, Any]) -> set[str]:
+    inferred_sheet_ids = _collect_inferred_sheet_ids_from_issues(result.get("issues_or_ambiguities", []))
+
+    sheets = result.get("sheets_detected", [])
+    if not isinstance(sheets, list):
+        return inferred_sheet_ids
+
+    for sheet in sheets:
+        if not isinstance(sheet, dict):
+            continue
+        sheet_id = str(sheet.get("sheet_id", "")).strip()
+        if not sheet_id:
+            continue
+        source = str(sheet.get("sheet_id_source", "")).strip().lower()
+        if source == "inferred_facility_short":
+            inferred_sheet_ids.add(sheet_id)
     return inferred_sheet_ids

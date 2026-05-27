@@ -75,6 +75,7 @@ def run_pipeline(
         "sheets_detected": [
             {
                 "sheet_id": sheet.sheet_id,
+                "sheet_id_source": sheet.sheet_id_source,
                 "title": sheet.title,
                 "sheet_type": sheet.sheet_type,
                 "discipline": sheet.trade,
@@ -269,7 +270,8 @@ def _collect_sheet_id_inference_issues(sheets: list) -> list[dict[str, object]]:
         {
             str(sheet.sheet_id)
             for sheet in sheets
-            if FACILITY_SHORT_INFERRED_ID_RE.fullmatch(str(sheet.sheet_id).upper())
+            if str(getattr(sheet, "sheet_id_source", "")).strip().lower() == "inferred_facility_short"
+            or FACILITY_SHORT_INFERRED_ID_RE.fullmatch(str(sheet.sheet_id).upper())
         }
     )
     if not inferred_ids:

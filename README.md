@@ -170,6 +170,10 @@ Benchmark manifest shape:
 - `GET /v1/benchmark-reports/gate` quality gate evaluation for latest benchmark run pair
 - `GET /v1/benchmark-reports/dashboard` combined benchmark history, timeline, trend, and gate payload
 
+Sheet detection metadata:
+
+- `sheets_detected[].sheet_id_source` indicates how a sheet ID was produced: `detected`, `override`, `inferred_facility_short`, or `unmapped`.
+
 Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 
 - `sheet_overrides_json` JSON array string such as:

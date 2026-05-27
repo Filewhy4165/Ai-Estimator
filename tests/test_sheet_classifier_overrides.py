@@ -14,6 +14,7 @@ def test_sheet_overrides_use_source_page_index():
     sheets = classify_sheets(pages, overrides)
     third = next(s for s in sheets if s.source_page_index == 2)
     assert third.sheet_id == "P401"
+    assert third.sheet_id_source == "override"
     assert third.title == "PLUMBING PLAN"
 
 
@@ -26,5 +27,5 @@ def test_sheet_overrides_fallback_order_when_page_index_missing():
     sheets = classify_sheets(pages, overrides)
     first = next(s for s in sheets if s.source_page_index == 0)
     assert first.sheet_id == "A100"
+    assert first.sheet_id_source == "override"
     assert first.title == "COVER SHEET"
-
