@@ -68,6 +68,41 @@ def test_review_queue_include_all_sheets():
     assert queue["items"][0]["flags"] == []
 
 
+def test_review_queue_flags_inferred_sheet_id_from_pipeline_issue():
+    result = {
+        "sheets_detected": [
+            {
+                "sheet_id": "FAC-4476-A1",
+                "title": "Floor Plan",
+                "confidence": 0.62,
+                "source_page_index": 2,
+                "discipline": "architectural",
+            }
+        ],
+        "scale_analysis": {"by_sheet": [{"sheet_id": "FAC-4476-A1", "detected_scale": "1/8\" = 1'-0\""}]},
+        "legend_and_symbols": {"unknown_symbols": []},
+        "issues_or_ambiguities": [
+            {
+                "message": (
+                    "Some sheet IDs were inferred from building number + short sheet token. "
+                    "Review these IDs before final estimate handoff."
+                ),
+                "severity": "warning",
+                "source_sheets": ["FAC-4476-A1"],
+            }
+        ],
+    }
+    queue = build_review_queue(
+        job_id="job-inferred", result=result, low_confidence_threshold=0.75, include_only_flagged=True
+    )
+
+    assert queue["summary"]["flagged_sheets"] == 1
+    assert queue["summary"]["reason_counts"]["inferred_sheet_id_requires_review"] == 1
+    assert len(queue["items"]) == 1
+    codes = {flag["code"] for flag in queue["items"][0]["flags"]}
+    assert "inferred_sheet_id_requires_review" in codes
+
+
 def test_sheet_overrides_template_returns_only_problem_rows_by_default():
     result = {
         "sheets_detected": [
@@ -98,6 +133,31 @@ def test_sheet_overrides_template_returns_only_problem_rows_by_default():
     assert payload["items"][0]["sheet_id"] == ""
     assert payload["items"][1]["reason"] == "unmapped_sheet_id"
     assert payload["items"][1]["title"] == ""
+
+
+def test_sheet_overrides_template_includes_inferred_sheet_ids_by_default():
+    result = {
+        "sheets_detected": [
+            {"sheet_id": "FAC-4476-A1", "title": "Floor Plan", "source_page_index": 2},
+            {"sheet_id": "A101", "title": "Floor Plan", "source_page_index": 1},
+        ],
+        "issues_or_ambiguities": [
+            {
+                "message": (
+                    "Some sheet IDs were inferred from building number + short sheet token. "
+                    "Review these IDs before final estimate handoff."
+                ),
+                "severity": "warning",
+                "source_sheets": ["FAC-4476-A1"],
+            }
+        ],
+    }
+    payload = build_sheet_overrides_template(job_id="job-3b", result=result, include_all=False)
+    assert payload["summary"]["rows_returned"] == 1
+    assert payload["summary"]["inferred_sheet_id_count"] == 1
+    assert payload["items"][0]["current_sheet_id"] == "FAC-4476-A1"
+    assert payload["items"][0]["reason"] == "inferred_sheet_id_requires_review"
+    assert payload["items"][0]["sheet_id"] == ""
 
 
 def test_sheet_overrides_template_include_all():
