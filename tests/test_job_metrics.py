@@ -70,6 +70,7 @@ def test_build_job_metrics_snapshot_with_terminal_jobs():
         "running": 1,
         "completed": 1,
         "failed": 1,
+        "canceled": 0,
     }
     assert payload["active_jobs"] == 1
     assert payload["terminal_jobs"] == 2
@@ -77,6 +78,7 @@ def test_build_job_metrics_snapshot_with_terminal_jobs():
     assert payload["throughput_last_24h"]["terminal_jobs"] == 2
     assert payload["throughput_last_24h"]["completed_jobs"] == 1
     assert payload["throughput_last_24h"]["failed_jobs"] == 1
+    assert payload["throughput_last_24h"]["canceled_jobs"] == 0
     assert payload["throughput_last_24h"]["jobs_per_hour"] == 0.083
     assert payload["queue_wait_seconds"]["count"] == 2
     assert payload["queue_wait_seconds"]["average"] == 2.5

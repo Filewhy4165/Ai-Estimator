@@ -41,6 +41,13 @@ class JobCreateResponse(BaseModel):
     status: str
 
 
+class JobCancelResponse(BaseModel):
+    job_id: str
+    status: str
+    previous_status: str
+    message: str
+
+
 class TradeCatalogItem(BaseModel):
     trade: str
     label: str
@@ -91,6 +98,11 @@ class JobCapacityResponse(BaseModel):
     running_slots_available: int
     max_queued_jobs: int | None
     queue_capacity_remaining: int | None
+
+
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
+_ACTIVE_JOB_STATUSES = {"queued", "running"}
+_LISTABLE_JOB_STATUSES = _ACTIVE_JOB_STATUSES | _TERMINAL_JOB_STATUSES
 
 
 class TradeRecommendationResponse(BaseModel):
@@ -417,6 +429,85 @@ async def rerun_job(
         extra_input={},
     )
     return JobCreateResponse(job_id=rerun_job_id, status="queued")
+
+
+@app.post("/v1/jobs/{job_id}/cancel", response_model=JobCancelResponse)
+def cancel_job(job_id: str) -> JobCancelResponse:
+    store = _get_job_store()
+    record = store.get_job(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    current_status = str(record.status).strip().lower()
+    if current_status == "canceled":
+        return JobCancelResponse(
+            job_id=job_id,
+            status="canceled",
+            previous_status="canceled",
+            message="Job is already canceled.",
+        )
+    if current_status in {"completed", "failed"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is already terminal ({current_status}) and cannot be canceled.",
+        )
+
+    now = _utc_now()
+    if current_status == "queued":
+        updated = store.transition_job_if_current(
+            job_id,
+            current_status="queued",
+            status="canceled",
+            updated_at=now,
+            completed_at=now,
+            error="Job canceled by user before execution.",
+        )
+        message = "Queued job canceled."
+    elif current_status == "running":
+        updated = store.transition_job_if_current(
+            job_id,
+            current_status="running",
+            status="canceled",
+            updated_at=now,
+            completed_at=now,
+            error=(
+                "Job canceled by user while running. "
+                "Worker completion updates will be ignored."
+            ),
+        )
+        message = "Running job marked canceled."
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job status '{current_status}' does not support cancellation.",
+        )
+
+    if updated:
+        return JobCancelResponse(
+            job_id=job_id,
+            status="canceled",
+            previous_status=current_status,
+            message=message,
+        )
+
+    latest = store.get_job(job_id)
+    latest_status = str(latest.status).strip().lower() if latest else "unknown"
+    if latest_status == "canceled":
+        return JobCancelResponse(
+            job_id=job_id,
+            status="canceled",
+            previous_status=current_status,
+            message="Job is already canceled.",
+        )
+    if latest_status in {"completed", "failed"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job reached terminal state '{latest_status}' before cancellation applied.",
+        )
+    raise HTTPException(
+        status_code=409,
+        detail=f"Job status changed to '{latest_status}' before cancellation could be applied.",
+    )
 
 
 @app.post(
@@ -845,10 +936,10 @@ def list_jobs(
     offset: int = 0,
     status: str | None = None,
 ) -> JobListResponse:
-    if status and status not in {"queued", "running", "completed", "failed"}:
+    if status and status not in _LISTABLE_JOB_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail="status filter must be one of: queued, running, completed, failed",
+            detail="status filter must be one of: queued, running, completed, failed, canceled",
         )
     items = _get_job_store().list_jobs(limit=limit, offset=offset, status=status)
     return JobListResponse(
@@ -871,13 +962,17 @@ def _run_job(
     run_semaphore = _get_job_run_semaphore()
     run_semaphore.acquire()
     try:
+        store = _get_job_store()
         started_at = _utc_now()
-        _get_job_store().update_job(
+        claimed = store.transition_job_if_current(
             job_id,
+            current_status="queued",
             status="running",
             updated_at=started_at,
             started_at=started_at,
         )
+        if not claimed:
+            return
         try:
             result = run_pipeline(
                 pdf_paths=pdf_paths,
@@ -888,8 +983,9 @@ def _run_job(
                 validate_schema=True,
             )
             now = _utc_now()
-            _get_job_store().update_job(
+            store.transition_job_if_current(
                 job_id,
+                current_status="running",
                 status="completed",
                 updated_at=now,
                 completed_at=now,
@@ -898,8 +994,9 @@ def _run_job(
             )
         except Exception as exc:  # pragma: no cover - defensive
             now = _utc_now()
-            _get_job_store().update_job(
+            store.transition_job_if_current(
                 job_id,
+                current_status="running",
                 status="failed",
                 updated_at=now,
                 completed_at=now,

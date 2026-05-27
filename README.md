@@ -169,7 +169,8 @@ Benchmark manifest shape:
 - `POST /v1/jobs` async job submission
 - `POST /v1/jobs/{job_id}/rerun` async rerun using files from an existing job
 - `POST /v1/jobs/{job_id}/rerun-recommended` async rerun using AI-recommended trade scope from the source job
-- `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status`)
+- `POST /v1/jobs/{job_id}/cancel` cancel a queued/running job (`canceled` terminal status)
+- `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status` including `canceled`)
 - `GET /v1/jobs/capacity` live async queue/worker capacity snapshot
 - `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, active queue depth, failure rate, 24h throughput, latency distributions, and extraction quality signals)
 - `GET /v1/jobs/metrics/gate` pass/fail gate over job metrics with configurable thresholds
@@ -244,6 +245,10 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/benchmark-template"
 The response includes `manifest`, which you can save directly as a benchmark manifest JSON and then refine expected labels.
 The generated `quantity_sanity.min_total_count` is seeded from the source job's current total count baseline.
 The rerun endpoint reuses files from the source job and returns `409` if those files were cleaned up or moved.
+Cancel notes:
+
+- Queued jobs are canceled immediately.
+- Running jobs are marked `canceled` immediately; in-process computation is best-effort and completion updates are ignored.
 
 Benchmark report compare endpoint examples:
 
