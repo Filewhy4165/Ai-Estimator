@@ -80,6 +80,10 @@ class DesktopEstimatorApp:
         self.include_all_template = BooleanVar(value=False)
         self.include_unmapped_benchmark = BooleanVar(value=True)
         self.auto_poll_enabled = BooleanVar(value=False)
+        self.prune_statuses = StringVar(value="completed,failed,canceled")
+        self.prune_older_than_hours = StringVar(value="168")
+        self.prune_limit = StringVar(value="200")
+        self.prune_cleanup_uploads = BooleanVar(value=False)
         self.auto_poll_interval_ms = 2000
         self.auto_poll_handle: str | None = None
         self.benchmark_task_running = False
@@ -256,16 +260,39 @@ class DesktopEstimatorApp:
             row=0, column=20, sticky="w", padx=(8, 0)
         )
 
-        self.files_label = ttk.Label(frame, text="No files selected.")
-        self.files_label.grid(row=9, column=0, columnspan=2, sticky="w")
+        prune_row = ttk.Frame(frame)
+        prune_row.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        prune_row.columnconfigure(10, weight=1)
+        ttk.Label(prune_row, text="Prune Statuses").grid(row=0, column=0, sticky="w")
+        ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(prune_row, text="Older Than (h)").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8).grid(
+            row=0, column=3, sticky="w", padx=(6, 0)
+        )
+        ttk.Label(prune_row, text="Limit").grid(row=0, column=4, sticky="w", padx=(12, 0))
+        ttk.Entry(prune_row, textvariable=self.prune_limit, width=8).grid(row=0, column=5, sticky="w", padx=(6, 0))
+        ttk.Checkbutton(
+            prune_row,
+            text="Cleanup Uploads",
+            variable=self.prune_cleanup_uploads,
+        ).grid(row=0, column=6, sticky="w", padx=(12, 0))
+        ttk.Button(prune_row, text="Prune Dry Run", command=self._prune_jobs_dry_run).grid(
+            row=0, column=7, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(prune_row, text="Prune Apply", command=self._prune_jobs_apply).grid(
+            row=0, column=8, sticky="w", padx=(8, 0)
+        )
 
-        ttk.Label(frame, textvariable=self.status_text).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        self.files_label = ttk.Label(frame, text="No files selected.")
+        self.files_label.grid(row=10, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(frame, textvariable=self.status_text).grid(row=11, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         self.output = Text(frame, wrap="none")
-        self.output.grid(row=11, column=0, columnspan=2, sticky="nsew")
+        self.output.grid(row=12, column=0, columnspan=2, sticky="nsew")
 
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(11, weight=1)
+        frame.rowconfigure(12, weight=1)
 
     def _choose_pdfs(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -494,6 +521,56 @@ class DesktopEstimatorApp:
             self.status_text.set(f"Job ops gate {status}. Failures: {failure_count}")
         except Exception as exc:
             self._set_output_text(f"Failed to evaluate job ops gate:\n{exc}")
+
+    def _prune_jobs_dry_run(self) -> None:
+        self._prune_jobs(dry_run=True)
+
+    def _prune_jobs_apply(self) -> None:
+        self._prune_jobs(dry_run=False)
+
+    def _prune_jobs(self, *, dry_run: bool) -> None:
+        try:
+            statuses = self.prune_statuses.get().strip()
+            older_than_hours_raw = self.prune_older_than_hours.get().strip()
+            limit_raw = self.prune_limit.get().strip()
+
+            older_than_hours: int | None = None
+            if older_than_hours_raw:
+                older_than_hours = int(older_than_hours_raw)
+                if older_than_hours < 1:
+                    raise ValueError("Older Than (h) must be at least 1.")
+
+            limit = 100
+            if limit_raw:
+                limit = int(limit_raw)
+            if limit < 1:
+                raise ValueError("Limit must be at least 1.")
+
+            params: dict[str, object] = {
+                "statuses": statuses,
+                "limit": limit,
+                "dry_run": dry_run,
+                "cleanup_uploads": bool(self.prune_cleanup_uploads.get()),
+            }
+            if older_than_hours is not None:
+                params["older_than_hours"] = older_than_hours
+
+            payload = self._request_json(
+                "POST",
+                "/v1/jobs/prune",
+                timeout=120,
+                params=params,
+            )
+            self._set_output_json(payload)
+            total_eligible = payload.get("total_eligible", "n/a")
+            total_deleted = payload.get("total_deleted", "n/a")
+            mode = "dry-run" if dry_run else "apply"
+            self.status_text.set(
+                f"Job prune {mode} complete: eligible={total_eligible}, deleted={total_deleted}"
+            )
+            self._save_settings()
+        except Exception as exc:
+            self._set_output_text(f"Failed to prune jobs:\n{exc}")
 
     def _get_trade_recommendation(self) -> None:
         job_id = self.current_job_id.get().strip()
@@ -1135,6 +1212,22 @@ class DesktopEstimatorApp:
         if isinstance(auto_poll_enabled, bool):
             self.auto_poll_enabled.set(auto_poll_enabled)
 
+        prune_statuses = loaded.get("prune_statuses")
+        if isinstance(prune_statuses, str):
+            self.prune_statuses.set(prune_statuses)
+
+        prune_older_than_hours = loaded.get("prune_older_than_hours")
+        if isinstance(prune_older_than_hours, str):
+            self.prune_older_than_hours.set(prune_older_than_hours)
+
+        prune_limit = loaded.get("prune_limit")
+        if isinstance(prune_limit, str):
+            self.prune_limit.set(prune_limit)
+
+        prune_cleanup_uploads = loaded.get("prune_cleanup_uploads")
+        if isinstance(prune_cleanup_uploads, bool):
+            self.prune_cleanup_uploads.set(prune_cleanup_uploads)
+
         file_list = loaded.get("files")
         if isinstance(file_list, list):
             restored: list[str] = []
@@ -1159,6 +1252,10 @@ class DesktopEstimatorApp:
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
             "auto_poll_enabled": bool(self.auto_poll_enabled.get()),
+            "prune_statuses": self.prune_statuses.get().strip(),
+            "prune_older_than_hours": self.prune_older_than_hours.get().strip(),
+            "prune_limit": self.prune_limit.get().strip(),
+            "prune_cleanup_uploads": bool(self.prune_cleanup_uploads.get()),
             "files": self.files,
         }
         try:
