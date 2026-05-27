@@ -50,12 +50,15 @@ class JobMetricsResponse(BaseModel):
     window_applied: int
     jobs_considered: int
     status_counts: dict[str, int]
+    active_jobs: int
     terminal_jobs: int
     failure_rate: float | None
+    throughput_last_24h: dict[str, float | int | None]
     queue_wait_seconds: dict[str, float | int | None]
     run_duration_seconds: dict[str, float | int | None]
     result_sheet_count: dict[str, float | int | None]
     result_issue_count: dict[str, float | int | None]
+    quality: dict[str, float | int | None]
 
 
 class ReviewQueueResponse(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from service.job_store import JobRecord
@@ -21,6 +22,17 @@ def build_job_metrics_snapshot(
     run_durations: list[float] = []
     sheet_counts: list[int] = []
     issue_counts: list[int] = []
+    completed_jobs_with_result = 0
+    sheets_detected_total = 0
+    unmapped_sheet_id_count = 0
+    scale_rows_total = 0
+    missing_scale_count = 0
+    nts_scale_count = 0
+    unknown_symbols_total = 0
+    completed_24h = 0
+    failed_24h = 0
+    generated_dt = _parse_iso_datetime(generated_at) or datetime.now(timezone.utc)
+    throughput_start = generated_dt - timedelta(hours=24)
 
     for record in records:
         status = str(record.status).strip().lower()
@@ -36,8 +48,54 @@ def build_job_metrics_snapshot(
         if isinstance(record.result_issue_count, int) and record.result_issue_count >= 0:
             issue_counts.append(record.result_issue_count)
 
+        if status in {"completed", "failed"}:
+            terminal_at = _parse_iso_datetime(record.completed_at) or _parse_iso_datetime(record.updated_at)
+            if terminal_at and throughput_start <= terminal_at <= generated_dt:
+                if status == "completed":
+                    completed_24h += 1
+                else:
+                    failed_24h += 1
+
+        result_payload = record.result if isinstance(record.result, dict) else None
+        if status != "completed" or result_payload is None:
+            continue
+        completed_jobs_with_result += 1
+
+        sheets = result_payload.get("sheets_detected", [])
+        if isinstance(sheets, list):
+            sheets_detected_total += len(sheets)
+            for row in sheets:
+                if not isinstance(row, dict):
+                    continue
+                sheet_id = str(row.get("sheet_id", "")).strip()
+                if sheet_id.startswith("UNMAPPED_"):
+                    unmapped_sheet_id_count += 1
+
+        scale_analysis = result_payload.get("scale_analysis", {})
+        if isinstance(scale_analysis, dict):
+            scale_rows = scale_analysis.get("by_sheet", [])
+            if isinstance(scale_rows, list):
+                scale_rows_total += len(scale_rows)
+                for row in scale_rows:
+                    if not isinstance(row, dict):
+                        missing_scale_count += 1
+                        continue
+                    raw_scale = row.get("detected_scale")
+                    if raw_scale is None or not str(raw_scale).strip():
+                        missing_scale_count += 1
+                        continue
+                    if str(raw_scale).strip().upper() == "NTS":
+                        nts_scale_count += 1
+
+        legend = result_payload.get("legend_and_symbols", {})
+        if isinstance(legend, dict):
+            unknown_symbols = legend.get("unknown_symbols", [])
+            if isinstance(unknown_symbols, list):
+                unknown_symbols_total += len(unknown_symbols)
+
     terminal = status_counts["completed"] + status_counts["failed"]
     failure_rate = round(status_counts["failed"] / terminal, 4) if terminal > 0 else None
+    terminal_24h = completed_24h + failed_24h
 
     return {
         "generated_at": generated_at,
@@ -45,12 +103,34 @@ def build_job_metrics_snapshot(
         "window_applied": window_applied,
         "jobs_considered": len(records),
         "status_counts": status_counts,
+        "active_jobs": status_counts["queued"] + status_counts["running"],
         "terminal_jobs": terminal,
         "failure_rate": failure_rate,
+        "throughput_last_24h": {
+            "terminal_jobs": terminal_24h,
+            "completed_jobs": completed_24h,
+            "failed_jobs": failed_24h,
+            "jobs_per_hour": round(terminal_24h / 24.0, 3),
+        },
         "queue_wait_seconds": _distribution(queue_waits),
         "run_duration_seconds": _distribution(run_durations),
         "result_sheet_count": _distribution([float(value) for value in sheet_counts]),
         "result_issue_count": _distribution([float(value) for value in issue_counts]),
+        "quality": {
+            "completed_jobs_with_result": completed_jobs_with_result,
+            "sheets_detected_total": sheets_detected_total,
+            "unmapped_sheet_id_count": unmapped_sheet_id_count,
+            "unmapped_sheet_id_rate": _ratio(unmapped_sheet_id_count, sheets_detected_total),
+            "scale_rows_total": scale_rows_total,
+            "missing_scale_count": missing_scale_count,
+            "missing_scale_rate": _ratio(missing_scale_count, scale_rows_total),
+            "nts_scale_count": nts_scale_count,
+            "nts_scale_rate": _ratio(nts_scale_count, scale_rows_total),
+            "unknown_symbols_total": unknown_symbols_total,
+            "unknown_symbols_per_completed_job": _ratio(
+                unknown_symbols_total, completed_jobs_with_result
+            ),
+        },
     }
 
 
@@ -95,3 +175,24 @@ def _percentile(values_sorted: list[float], percentile: int) -> float | None:
     weight = rank - low_index
     blended = (low_value * (1.0 - weight)) + (high_value * weight)
     return round(blended, 3)
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    token = str(value).strip()
+    if not token:
+        return None
+    try:
+        parsed = datetime.fromisoformat(token)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _ratio(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator, 4)
