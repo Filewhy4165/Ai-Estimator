@@ -42,8 +42,10 @@ def test_review_queue_flags_unmapped_low_confidence_and_missing_scale():
 
     assert queue["summary"]["total_sheets"] == 2
     assert queue["summary"]["flagged_sheets"] == 1
+    assert queue["summary"]["sheet_id_source_counts"] == {"detected": 1, "unmapped": 1}
     assert len(queue["items"]) == 1
     item = queue["items"][0]
+    assert item["sheet_id_source"] == "unmapped"
     codes = {flag["code"] for flag in item["flags"]}
     assert "unmapped_sheet_id" in codes
     assert "low_confidence_classification" in codes
@@ -65,6 +67,7 @@ def test_review_queue_include_all_sheets():
     assert queue["summary"]["total_sheets"] == 1
     assert len(queue["items"]) == 1
     assert queue["items"][0]["sheet_id"] == "A101"
+    assert queue["items"][0]["sheet_id_source"] == "detected"
     assert queue["items"][0]["flags"] == []
 
 
@@ -98,7 +101,9 @@ def test_review_queue_flags_inferred_sheet_id_from_pipeline_issue():
 
     assert queue["summary"]["flagged_sheets"] == 1
     assert queue["summary"]["reason_counts"]["inferred_sheet_id_requires_review"] == 1
+    assert queue["summary"]["sheet_id_source_counts"] == {"inferred_facility_short": 1}
     assert len(queue["items"]) == 1
+    assert queue["items"][0]["sheet_id_source"] == "inferred_facility_short"
     codes = {flag["code"] for flag in queue["items"][0]["flags"]}
     assert "inferred_sheet_id_requires_review" in codes
 
@@ -123,6 +128,7 @@ def test_review_queue_flags_inferred_sheet_id_from_sheet_source_field():
         job_id="job-inferred-source", result=result, low_confidence_threshold=0.75, include_only_flagged=True
     )
     assert len(queue["items"]) == 1
+    assert queue["items"][0]["sheet_id_source"] == "inferred_facility_short"
     codes = {flag["code"] for flag in queue["items"][0]["flags"]}
     assert "inferred_sheet_id_requires_review" in codes
 
@@ -152,9 +158,12 @@ def test_sheet_overrides_template_returns_only_problem_rows_by_default():
     assert payload["summary"]["total_sheets"] == 3
     assert payload["summary"]["rows_returned"] == 2
     assert payload["summary"]["unmapped_count"] == 1
+    assert payload["summary"]["sheet_id_source_counts"] == {"detected": 2, "unmapped": 1}
     assert [row["source_page_index"] for row in payload["items"]] == [2, 3]
+    assert payload["items"][0]["current_sheet_id_source"] == "detected"
     assert payload["items"][0]["reason"] == "invalid_sheet_id_format"
     assert payload["items"][0]["sheet_id"] == ""
+    assert payload["items"][1]["current_sheet_id_source"] == "unmapped"
     assert payload["items"][1]["reason"] == "unmapped_sheet_id"
     assert payload["items"][1]["title"] == ""
 
@@ -179,7 +188,9 @@ def test_sheet_overrides_template_includes_inferred_sheet_ids_by_default():
     payload = build_sheet_overrides_template(job_id="job-3b", result=result, include_all=False)
     assert payload["summary"]["rows_returned"] == 1
     assert payload["summary"]["inferred_sheet_id_count"] == 1
+    assert payload["summary"]["sheet_id_source_counts"] == {"detected": 1, "inferred_facility_short": 1}
     assert payload["items"][0]["current_sheet_id"] == "FAC-4476-A1"
+    assert payload["items"][0]["current_sheet_id_source"] == "inferred_facility_short"
     assert payload["items"][0]["reason"] == "inferred_sheet_id_requires_review"
     assert payload["items"][0]["sheet_id"] == ""
 
@@ -200,7 +211,9 @@ def test_sheet_overrides_template_includes_inferred_sheet_ids_from_source_field(
     payload = build_sheet_overrides_template(job_id="job-3c", result=result, include_all=False)
     assert payload["summary"]["rows_returned"] == 1
     assert payload["summary"]["inferred_sheet_id_count"] == 1
+    assert payload["summary"]["sheet_id_source_counts"] == {"detected": 1, "inferred_facility_short": 1}
     assert payload["items"][0]["current_sheet_id"] == "FAC-4476-A1"
+    assert payload["items"][0]["current_sheet_id_source"] == "inferred_facility_short"
     assert payload["items"][0]["reason"] == "inferred_sheet_id_requires_review"
 
 

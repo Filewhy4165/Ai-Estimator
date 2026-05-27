@@ -196,11 +196,13 @@ Review queue endpoint query params:
 
 - `low_confidence_threshold` (default `0.75`, range `0..1`)
 - `include_only_flagged` (default `true`)
+- each queue item includes `sheet_id_source` and summary includes `sheet_id_source_counts`
 
 Sheet overrides template endpoint query params:
 
 - `include_all` (default `false`) include all sheets instead of only sheets needing manual correction
 - default problem rows include unmapped IDs, invalid ID format, missing title, and low-confidence inferred sheet IDs
+- each row includes `current_sheet_id_source` and summary includes `sheet_id_source_counts`
 
 Example:
 
