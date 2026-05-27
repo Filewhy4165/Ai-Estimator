@@ -169,6 +169,28 @@ class JobStore:
             ).fetchall()
         return [_row_to_job_record(row) for row in rows]
 
+    def count_jobs(self, *, status: str | None = None) -> int:
+        with self._connect() as conn:
+            if status:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM jobs
+                    WHERE status = ?
+                    """,
+                    (status,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM jobs
+                    """
+                ).fetchone()
+        if row is None:
+            return 0
+        return int(row["total"])
+
 
 def _row_to_job_record(row: sqlite3.Row) -> JobRecord:
     raw_input = row["input_json"]

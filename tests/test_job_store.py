@@ -66,6 +66,9 @@ def test_job_store_create_update_get_and_list(tmp_path: Path):
     listed = store.list_jobs(limit=10, offset=0)
     assert len(listed) == 1
     assert listed[0].job_id == "job-1"
+    assert store.count_jobs() == 1
+    assert store.count_jobs(status="completed") == 1
+    assert store.count_jobs(status="queued") == 0
 
 
 def test_job_store_migrates_legacy_db_without_started_at(tmp_path: Path):
