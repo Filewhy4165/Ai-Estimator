@@ -67,19 +67,20 @@ Desktop async workflow:
 6. Edit the template file, then load it in `Sheet Overrides JSON` and submit a new job
 7. Use `Notes` for project-specific constraints before running
 8. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
-9. Use `Export Benchmark Template` to create a prefilled benchmark manifest from a completed job
-10. Use `Run Baseline Benchmark` to export a manifest and produce a scored benchmark report in one action
-11. Use `Run End-to-End Benchmark` to submit selected PDFs, wait for completion, then auto-generate and score a benchmark report
-12. Use `Show Benchmark History` to review recent benchmark reports (via API when available; local fallback otherwise) and `Open Results Folder` to access saved outputs
-13. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric (via API when available; local fallback otherwise)
-14. Use `Compare Latest Reports` to automatically compare the two most recent benchmark reports (via API when available; local fallback otherwise)
-15. Use `Latest Trend Snapshot` to get a compact benchmark trend summary (trend, delta, baseline/candidate scores)
-16. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
-17. Use `Evaluate Gate` to run a benchmark quality gate (default: non-regression required)
-18. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
-19. Use `Job Ops Snapshot` to view queue depth, failure rate, 24h throughput, latency percentiles, and extraction quality signals for recent jobs
-20. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
-21. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
+9. Use `Rerun Recommended` to auto-queue a rerun using AI-recommended trade scope (`selected` vs `all`)
+10. Use `Export Benchmark Template` to create a prefilled benchmark manifest from a completed job
+11. Use `Run Baseline Benchmark` to export a manifest and produce a scored benchmark report in one action
+12. Use `Run End-to-End Benchmark` to submit selected PDFs, wait for completion, then auto-generate and score a benchmark report
+13. Use `Show Benchmark History` to review recent benchmark reports (via API when available; local fallback otherwise) and `Open Results Folder` to access saved outputs
+14. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric (via API when available; local fallback otherwise)
+15. Use `Compare Latest Reports` to automatically compare the two most recent benchmark reports (via API when available; local fallback otherwise)
+16. Use `Latest Trend Snapshot` to get a compact benchmark trend summary (trend, delta, baseline/candidate scores)
+17. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
+18. Use `Evaluate Gate` to run a benchmark quality gate (default: non-regression required)
+19. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
+20. Use `Job Ops Snapshot` to view queue depth, failure rate, 24h throughput, latency percentiles, and extraction quality signals for recent jobs
+21. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
+22. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
 
 ## Run CLI directly
 
@@ -160,6 +161,7 @@ Benchmark manifest shape:
 - `POST /v1/analyze` synchronous analysis
 - `POST /v1/jobs` async job submission
 - `POST /v1/jobs/{job_id}/rerun` async rerun using files from an existing job
+- `POST /v1/jobs/{job_id}/rerun-recommended` async rerun using AI-recommended trade scope from the source job
 - `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status`)
 - `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, active queue depth, failure rate, 24h throughput, latency distributions, and extraction quality signals)
 - `GET /v1/jobs/metrics/gate` pass/fail gate over job metrics with configurable thresholds

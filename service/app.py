@@ -83,6 +83,13 @@ class TradeRecommendationResponse(BaseModel):
     trade_scores: list[dict[str, Any]]
 
 
+class JobRerunRecommendationResponse(JobCreateResponse):
+    source_job_id: str
+    recommended_mode: str
+    recommended_trades: list[str]
+    recommendation_confidence: float | None
+
+
 class ReviewQueueResponse(BaseModel):
     job_id: str
     low_confidence_threshold: float
@@ -320,45 +327,102 @@ async def rerun_job(
             },
         )
 
-    rerun_job_id = str(uuid.uuid4())
-    now = _utc_now()
-    record = JobRecord(
+    rerun_job_id = _queue_rerun_job(
+        source_job_id=job_id,
+        pdf_paths=pdf_paths,
+        analysis_mode=resolved_mode,
+        selected_trades=resolved_trades,
+        sheet_overrides=resolved_overrides,
+        notes=resolved_notes,
+        extra_input={},
+    )
+    return JobCreateResponse(job_id=rerun_job_id, status="queued")
+
+
+@app.post(
+    "/v1/jobs/{job_id}/rerun-recommended",
+    status_code=202,
+    response_model=JobRerunRecommendationResponse,
+)
+def rerun_job_with_recommendation(job_id: str) -> JobRerunRecommendationResponse:
+    source_record = _get_job_store().get_job(job_id)
+    if not source_record:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    source_input = source_record.input if isinstance(source_record.input, dict) else {}
+    pdf_paths, missing_paths = _resolve_uploaded_pdf_paths(source_input)
+    if not pdf_paths:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No reusable uploaded files were found for this job. "
+                "Submit a new job with files, or disable async upload cleanup."
+            ),
+        )
+    if missing_paths:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Some uploaded files from the source job are missing. "
+                    "Disable async upload cleanup or submit a new job with files."
+                ),
+                "missing_paths": missing_paths[:20],
+            },
+        )
+
+    recommendation = build_trade_recommendation(
+        job_id=job_id,
+        result=source_record.result if isinstance(source_record.result, dict) else None,
+    )
+    recommended_mode = str(recommendation.get("recommended_mode", "all")).strip().lower()
+    if recommended_mode not in {"selected", "all"}:
+        recommended_mode = "all"
+    recommended_trades_raw = recommendation.get("recommended_trades", [])
+    recommended_trades = (
+        [str(trade).strip() for trade in recommended_trades_raw if str(trade).strip()]
+        if isinstance(recommended_trades_raw, list)
+        else []
+    )
+    if recommended_mode != "selected":
+        recommended_trades = []
+
+    resolved_notes = normalize_notes(
+        _append_note(
+            source_notes=source_input.get("notes") if isinstance(source_input.get("notes"), str) else None,
+            marker=(
+                "Auto rerun using trade recommendation: "
+                f"mode={recommended_mode}, confidence={recommendation.get('confidence')}."
+            ),
+        )
+    )
+    resolved_overrides = _normalize_sheet_overrides_from_input(source_input.get("sheet_overrides"))
+
+    rerun_job_id = _queue_rerun_job(
+        source_job_id=job_id,
+        pdf_paths=pdf_paths,
+        analysis_mode=recommended_mode,
+        selected_trades=recommended_trades,
+        sheet_overrides=resolved_overrides,
+        notes=resolved_notes,
+        extra_input={
+            "trade_recommendation": {
+                "recommended_mode": recommended_mode,
+                "recommended_trades": recommended_trades,
+                "confidence": recommendation.get("confidence"),
+            }
+        },
+    )
+    confidence_raw = recommendation.get("confidence")
+    confidence = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
+    return JobRerunRecommendationResponse(
         job_id=rerun_job_id,
         status="queued",
-        created_at=now,
-        updated_at=now,
-        input={
-            "analysis_mode": resolved_mode,
-            "selected_trades": resolved_trades,
-            "sheet_overrides": resolved_overrides or [],
-            "notes": resolved_notes,
-            "uploaded_files": [
-                {
-                    "file_name": Path(path).name,
-                    "path": str(path),
-                }
-                for path in pdf_paths
-            ],
-            "rerun_of_job_id": job_id,
-        },
+        source_job_id=job_id,
+        recommended_mode=recommended_mode,
+        recommended_trades=recommended_trades,
+        recommendation_confidence=confidence,
     )
-    _get_job_store().create_job(record)
-
-    thread = Thread(
-        target=_run_job,
-        kwargs={
-            "job_id": rerun_job_id,
-            "pdf_paths": pdf_paths,
-            "analysis_mode": resolved_mode,
-            "selected_trades": resolved_trades,
-            "sheet_overrides": resolved_overrides,
-            "notes": resolved_notes,
-            "upload_dir": None,
-        },
-        daemon=True,
-    )
-    thread.start()
-    return JobCreateResponse(job_id=rerun_job_id, status="queued")
 
 
 @app.get("/v1/jobs/metrics", response_model=JobMetricsResponse)
@@ -758,6 +822,70 @@ def _resolve_uploaded_pdf_paths(source_input: dict[str, Any]) -> tuple[list[str]
         else:
             missing.append(path)
     return paths, missing
+
+
+def _queue_rerun_job(
+    *,
+    source_job_id: str,
+    pdf_paths: list[str],
+    analysis_mode: str,
+    selected_trades: list[str],
+    sheet_overrides: list[dict[str, Any]] | None,
+    notes: str | None,
+    extra_input: dict[str, Any],
+) -> str:
+    rerun_job_id = str(uuid.uuid4())
+    now = _utc_now()
+    payload_input: dict[str, Any] = {
+        "analysis_mode": analysis_mode,
+        "selected_trades": selected_trades,
+        "sheet_overrides": sheet_overrides or [],
+        "notes": notes,
+        "uploaded_files": [
+            {
+                "file_name": Path(path).name,
+                "path": str(path),
+            }
+            for path in pdf_paths
+        ],
+        "rerun_of_job_id": source_job_id,
+    }
+    payload_input.update(extra_input)
+
+    record = JobRecord(
+        job_id=rerun_job_id,
+        status="queued",
+        created_at=now,
+        updated_at=now,
+        input=payload_input,
+    )
+    _get_job_store().create_job(record)
+
+    thread = Thread(
+        target=_run_job,
+        kwargs={
+            "job_id": rerun_job_id,
+            "pdf_paths": pdf_paths,
+            "analysis_mode": analysis_mode,
+            "selected_trades": selected_trades,
+            "sheet_overrides": sheet_overrides,
+            "notes": notes,
+            "upload_dir": None,
+        },
+        daemon=True,
+    )
+    thread.start()
+    return rerun_job_id
+
+
+def _append_note(*, source_notes: str | None, marker: str) -> str:
+    base = source_notes.strip() if isinstance(source_notes, str) else ""
+    marker_clean = marker.strip()
+    if not base:
+        return marker_clean
+    if marker_clean.lower() in base.lower():
+        return base
+    return f"{base}\n{marker_clean}"
 
 
 def _resolve_rerun_inputs(
