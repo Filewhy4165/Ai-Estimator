@@ -56,6 +56,7 @@ ai-estimator-desktop
 The desktop app supports both synchronous analysis and async job workflows.
 It also remembers your last API URL, selected PDFs, overrides file, and current job ID between launches.
 When API URL points to `127.0.0.1` or `localhost`, the app can auto-start the local API if the connection is refused.
+If API key auth is enabled on the service, populate `API Key (optional)` in the desktop app so it sends `x-api-key`.
 
 Desktop async workflow:
 
@@ -263,6 +264,7 @@ Environment variables:
 
 - `AI_ESTIMATOR_DB_PATH` override SQLite path
 - `AI_ESTIMATOR_UPLOAD_DIR` override uploads directory
+- `AI_ESTIMATOR_API_KEY` when set, all endpoints except `/health` require header `x-api-key: <value>`
 - `AI_ESTIMATOR_CLEANUP_UPLOADS` set global cleanup `true|false` for both sync/async
 - `AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS` set cleanup for `/v1/analyze` uploads (default `true`)
 - `AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS` set cleanup for async job uploads (default `false`)
@@ -272,6 +274,7 @@ Example (PowerShell):
 ```powershell
 $env:AI_ESTIMATOR_DB_PATH = "C:\data\ai-estimator\jobs.db"
 $env:AI_ESTIMATOR_UPLOAD_DIR = "C:\data\ai-estimator\uploads"
+$env:AI_ESTIMATOR_API_KEY = "replace-with-strong-token"
 $env:AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS = "true"
 $env:AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS = "false"
 ai-estimator-api

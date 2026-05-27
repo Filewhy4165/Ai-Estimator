@@ -34,6 +34,7 @@ class DesktopEstimatorApp:
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
+        self.api_key = StringVar(value="")
         self.analysis_mode = StringVar(value="auto")
         self.selected_trades = StringVar(value="")
         self.sheet_overrides_path = StringVar(value="")
@@ -67,35 +68,38 @@ class DesktopEstimatorApp:
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
-        ttk.Label(frame, text="Analysis Mode").grid(row=1, column=0, sticky="w")
+        ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.api_key, width=68, show="*").grid(row=1, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Analysis Mode").grid(row=2, column=0, sticky="w")
         ttk.Combobox(
             frame,
             values=["auto", "selected", "all"],
             textvariable=self.analysis_mode,
             state="readonly",
             width=20,
-        ).grid(row=1, column=1, sticky="w")
+        ).grid(row=2, column=1, sticky="w")
 
-        ttk.Label(frame, text="Selected Trades (CSV)").grid(row=2, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.selected_trades, width=68).grid(row=2, column=1, sticky="ew")
+        ttk.Label(frame, text="Selected Trades (CSV)").grid(row=3, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.selected_trades, width=68).grid(row=3, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Sheet Overrides JSON").grid(row=3, column=0, sticky="w")
+        ttk.Label(frame, text="Sheet Overrides JSON").grid(row=4, column=0, sticky="w")
         overrides_row = ttk.Frame(frame)
-        overrides_row.grid(row=3, column=1, sticky="ew")
+        overrides_row.grid(row=4, column=1, sticky="ew")
         overrides_row.columnconfigure(0, weight=1)
         ttk.Entry(overrides_row, textvariable=self.sheet_overrides_path, width=58).grid(row=0, column=0, sticky="ew")
         ttk.Button(overrides_row, text="Browse", command=self._choose_overrides_file).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
-        ttk.Label(frame, text="Current Job ID").grid(row=4, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.current_job_id, width=68).grid(row=4, column=1, sticky="ew")
+        ttk.Label(frame, text="Current Job ID").grid(row=5, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.current_job_id, width=68).grid(row=5, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Notes").grid(row=5, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.notes, width=68).grid(row=5, column=1, sticky="ew")
+        ttk.Label(frame, text="Notes").grid(row=6, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=self.notes, width=68).grid(row=6, column=1, sticky="ew")
 
         actions1 = ttk.Frame(frame)
-        actions1.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        actions1.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 4))
         actions1.columnconfigure(8, weight=1)
         ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
         ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
@@ -123,7 +127,7 @@ class DesktopEstimatorApp:
         ).grid(row=0, column=7, sticky="w", padx=(8, 0))
 
         actions2 = ttk.Frame(frame)
-        actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        actions2.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         actions2.columnconfigure(21, weight=1)
         ttk.Checkbutton(
             actions2,
@@ -197,15 +201,15 @@ class DesktopEstimatorApp:
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
-        self.files_label.grid(row=8, column=0, columnspan=2, sticky="w")
+        self.files_label.grid(row=9, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(frame, textvariable=self.status_text).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        ttk.Label(frame, textvariable=self.status_text).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         self.output = Text(frame, wrap="none")
-        self.output.grid(row=10, column=0, columnspan=2, sticky="nsew")
+        self.output.grid(row=11, column=0, columnspan=2, sticky="nsew")
 
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(10, weight=1)
+        frame.rowconfigure(11, weight=1)
 
     def _choose_pdfs(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -905,6 +909,9 @@ class DesktopEstimatorApp:
         if not base:
             raise RuntimeError("API URL is required.")
         url = f"{base}{path}"
+        kwargs = dict(kwargs)
+        headers = self._request_headers(extra=kwargs.get("headers"))
+        kwargs["headers"] = headers
         try:
             response = requests.request(method, url, timeout=timeout, **kwargs)
         except requests.exceptions.ConnectionError as exc:
@@ -954,6 +961,10 @@ class DesktopEstimatorApp:
         if isinstance(api_url, str) and api_url.strip():
             self.api_url.set(api_url.strip())
 
+        api_key = loaded.get("api_key")
+        if isinstance(api_key, str):
+            self.api_key.set(api_key)
+
         analysis_mode = loaded.get("analysis_mode")
         if isinstance(analysis_mode, str) and analysis_mode in {"auto", "selected", "all"}:
             self.analysis_mode.set(analysis_mode)
@@ -1002,6 +1013,7 @@ class DesktopEstimatorApp:
     def _save_settings(self) -> None:
         payload = {
             "api_url": self.api_url.get().strip(),
+            "api_key": self.api_key.get(),
             "analysis_mode": self.analysis_mode.get().strip(),
             "selected_trades": self.selected_trades.get(),
             "notes": self.notes.get(),
@@ -1017,6 +1029,18 @@ class DesktopEstimatorApp:
         except Exception:
             # Non-fatal: app should continue even if settings write fails.
             return
+
+    def _request_headers(self, *, extra: object = None) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if isinstance(extra, dict):
+            for key, value in extra.items():
+                if not isinstance(key, str):
+                    continue
+                headers[key] = str(value)
+        api_key = self.api_key.get().strip()
+        if api_key:
+            headers["x-api-key"] = api_key
+        return headers
 
     def _on_close(self) -> None:
         self._save_settings()
