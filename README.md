@@ -45,6 +45,24 @@ pip install -r requirements/dev.lock.txt
 ai-estimator-api
 ```
 
+PowerShell fallback:
+
+```powershell
+.\.venv\Scripts\ai-estimator-api.exe
+```
+
+Or use the repo helper:
+
+```powershell
+.\scripts\run-api.ps1
+```
+
+CMD fallback:
+
+```cmd
+.\scripts\run-api.bat
+```
+
 Default URL: `http://127.0.0.1:8000`
 
 ## Run desktop app
@@ -53,11 +71,106 @@ Default URL: `http://127.0.0.1:8000`
 ai-estimator-desktop
 ```
 
+PowerShell fallback:
+
+```powershell
+.\.venv\Scripts\ai-estimator-desktop.exe
+```
+
+Or use the repo helper:
+
+```powershell
+.\scripts\run-desktop.ps1
+```
+
+CMD fallback:
+
+```cmd
+.\scripts\run-desktop.bat
+```
+
+Run both services in one command:
+
+```powershell
+.\scripts\run-full-stack.ps1
+```
+
+Run full stack and one smoke PDF automatically (desktop optional):
+
+```powershell
+.\scripts\quickstart.ps1 -PdfPath "C:\path\to\drawing.pdf"
+```
+
+Quickstart defaults:
+
+- auto-starts API when needed
+- starts desktop unless `-SkipDesktop`
+- waits for desktop/API startup sequencing
+- runs smoke by default when `PdfPath` is set
+
+CMD fallback:
+
+```cmd
+.\scripts\run-full-stack.bat
+```
+
+Quickstart CMD fallback:
+
+```cmd
+.\scripts\quickstart.bat -PdfPath "C:\path\to\drawing.pdf"
+```
+
+Run without a smoke job:
+
+```powershell
+.\scripts\quickstart.ps1 -SkipSmoke -PdfPath "C:\path\to\drawing.pdf"
+```
+
+Run a one-pdf smoke test from CLI:
+
+```powershell
+.\scripts\smoke-job.ps1 -PdfPath "C:\path\to\drawing.pdf"
+```
+
+Start the API automatically if needed:
+
+```powershell
+.\scripts\smoke-job.ps1 -PdfPath "C:\path\to\drawing.pdf" -StartApi
+```
+
+CMD fallback:
+
+```cmd
+.\scripts\smoke-job.bat "C:\path\to\drawing.pdf" -StartApi
+```
+
+Run only API:
+
+```powershell
+.\scripts\run-full-stack.ps1 -SkipDesktop
+```
+
+Run only desktop:
+
+```powershell
+.\scripts\run-full-stack.ps1 -SkipApi
+```
+
 The desktop app supports both synchronous analysis and async job workflows.
 It also remembers your last API URL, selected PDFs, overrides file, and current job ID between launches.
 When API URL points to `127.0.0.1` or `localhost`, the app can auto-start the local API if the connection is refused.
 If API key auth is enabled on the service, populate `API Key (optional)` in the desktop app so it sends `x-api-key`.
 For security, the desktop app does not persist API keys to disk; set `AI_ESTIMATOR_API_KEY` in your shell to prefill each session.
+
+Common startup issues:
+
+- If PowerShell says `ai-estimator-desktop : The term ... was not recognized`, use:
+  - `.\.venv\Scripts\ai-estimator-desktop.exe`
+- If desktop reports API connection errors, start the API first with:
+  - `.\scripts\run-api.ps1`
+  - then retry desktop, or use `.\scripts\run-full-stack.ps1` to start both.
+- If the desktop can not auto-start the API due to policy/security prompts, run in a fresh terminal and use:
+  - `Set-ExecutionPolicy -Scope Process Bypass`
 
 Desktop async workflow:
 
