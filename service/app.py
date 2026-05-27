@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import BoundedSemaphore, Lock, Thread
 from typing import Any
@@ -52,6 +52,21 @@ class JobDeleteResponse(BaseModel):
     job_id: str
     deleted: bool
     previous_status: str
+    removed_upload_dirs: list[str]
+    skipped_upload_dirs: list[str]
+
+
+class JobPruneResponse(BaseModel):
+    dry_run: bool
+    statuses: list[str]
+    older_than_hours: int | None
+    cutoff_updated_at: str | None
+    limit: int
+    total_eligible: int
+    total_deleted: int
+    eligible_job_ids: list[str]
+    deleted_job_ids: list[str]
+    skipped_jobs: list[dict[str, str]]
     removed_upload_dirs: list[str]
     skipped_upload_dirs: list[str]
 
@@ -553,6 +568,105 @@ def delete_job(job_id: str, cleanup_uploads: bool = False) -> JobDeleteResponse:
         previous_status=current_status,
         removed_upload_dirs=removed_dirs,
         skipped_upload_dirs=skipped_dirs,
+    )
+
+
+@app.post("/v1/jobs/prune", response_model=JobPruneResponse)
+def prune_jobs(
+    statuses: str = "completed,failed,canceled",
+    older_than_hours: int | None = None,
+    limit: int = 100,
+    dry_run: bool = True,
+    cleanup_uploads: bool = False,
+) -> JobPruneResponse:
+    status_tokens = _parse_prune_statuses_csv(statuses)
+    if older_than_hours is not None and older_than_hours < 1:
+        raise HTTPException(status_code=400, detail="older_than_hours must be at least 1 when provided.")
+
+    cutoff_updated_at: str | None = None
+    if older_than_hours is not None:
+        cutoff_updated_at = (datetime.now(timezone.utc) - timedelta(hours=older_than_hours)).isoformat()
+
+    limit_applied = max(1, min(limit, 1000))
+    store = _get_job_store()
+    candidates = store.list_jobs_for_prune(
+        statuses=status_tokens,
+        updated_before=cutoff_updated_at,
+        limit=limit_applied,
+    )
+    eligible_job_ids = [record.job_id for record in candidates]
+    if dry_run:
+        return JobPruneResponse(
+            dry_run=True,
+            statuses=status_tokens,
+            older_than_hours=older_than_hours,
+            cutoff_updated_at=cutoff_updated_at,
+            limit=limit_applied,
+            total_eligible=len(eligible_job_ids),
+            total_deleted=0,
+            eligible_job_ids=eligible_job_ids,
+            deleted_job_ids=[],
+            skipped_jobs=[],
+            removed_upload_dirs=[],
+            skipped_upload_dirs=[],
+        )
+
+    deleted_job_ids: list[str] = []
+    skipped_jobs: list[dict[str, str]] = []
+    removed_upload_dirs: list[str] = []
+    skipped_upload_dirs: list[str] = []
+    removed_seen: set[str] = set()
+    skipped_seen: set[str] = set()
+
+    for candidate in candidates:
+        latest = store.get_job(candidate.job_id)
+        if not latest:
+            skipped_jobs.append({"job_id": candidate.job_id, "reason": "Job not found during prune."})
+            continue
+        latest_status = str(latest.status).strip().lower()
+        if latest_status not in _TERMINAL_JOB_STATUSES:
+            skipped_jobs.append(
+                {
+                    "job_id": latest.job_id,
+                    "reason": f"Status changed to active state '{latest_status}'.",
+                }
+            )
+            continue
+
+        if cleanup_uploads:
+            removed_batch, skipped_batch = _cleanup_upload_dirs_for_job(latest)
+            for path in removed_batch:
+                key = path.lower()
+                if key in removed_seen:
+                    continue
+                removed_seen.add(key)
+                removed_upload_dirs.append(path)
+            for path in skipped_batch:
+                key = path.lower()
+                if key in skipped_seen:
+                    continue
+                skipped_seen.add(key)
+                skipped_upload_dirs.append(path)
+
+        deleted = store.delete_job(latest.job_id)
+        if deleted:
+            deleted_job_ids.append(latest.job_id)
+        else:
+            skipped_jobs.append({"job_id": latest.job_id, "reason": "Delete operation was not applied."})
+
+    return JobPruneResponse(
+        dry_run=False,
+        statuses=status_tokens,
+        older_than_hours=older_than_hours,
+        cutoff_updated_at=cutoff_updated_at,
+        limit=limit_applied,
+        total_eligible=len(eligible_job_ids),
+        total_deleted=len(deleted_job_ids),
+        eligible_job_ids=eligible_job_ids,
+        deleted_job_ids=deleted_job_ids,
+        skipped_jobs=skipped_jobs,
+        removed_upload_dirs=removed_upload_dirs,
+        skipped_upload_dirs=skipped_upload_dirs,
     )
 
 
@@ -1390,6 +1504,40 @@ def _format_trade_label(trade: str) -> str:
         lower = token.lower()
         words.append(token_map.get(lower, token.capitalize()))
     return " ".join(words)
+
+
+def _parse_prune_statuses_csv(raw: str) -> list[str]:
+    token_map: list[str] = []
+    seen: set[str] = set()
+    for token in str(raw).split(","):
+        normalized = token.strip().lower()
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        token_map.append(normalized)
+    if not token_map:
+        token_map = sorted(_TERMINAL_JOB_STATUSES)
+
+    invalid = [token for token in token_map if token not in _LISTABLE_JOB_STATUSES]
+    if invalid:
+        allowed = ", ".join(sorted(_LISTABLE_JOB_STATUSES))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid prune statuses: {', '.join(invalid)}. Allowed: {allowed}.",
+        )
+
+    active = [token for token in token_map if token in _ACTIVE_JOB_STATUSES]
+    if active:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Prune supports terminal statuses only. "
+                f"Remove active statuses: {', '.join(active)}."
+            ),
+        )
+    return token_map
 
 
 def _normalize_sheet_overrides_from_input(raw: object) -> list[dict[str, Any]] | None:
