@@ -30,6 +30,7 @@ from service.review_queue import (
     build_review_queue,
     build_sheet_overrides_template,
 )
+from service.trade_recommendation import build_trade_recommendation
 
 
 class JobCreateResponse(BaseModel):
@@ -67,6 +68,19 @@ class JobMetricsGateResponse(BaseModel):
     actual: dict[str, float | int | None]
     failures: list[dict[str, Any]]
     snapshot: dict[str, Any]
+
+
+class TradeRecommendationResponse(BaseModel):
+    job_id: str
+    requested_mode: str
+    requested_trades: list[str]
+    detected_trades: list[str]
+    recommended_mode: str
+    recommended_trades: list[str]
+    confidence: float
+    needs_user_review: bool
+    decision_rationale: list[str]
+    trade_scores: list[dict[str, Any]]
 
 
 class ReviewQueueResponse(BaseModel):
@@ -430,6 +444,18 @@ def get_sheet_overrides_template(
         include_all=include_all,
     )
     return SheetOverridesTemplateResponse(**payload)
+
+
+@app.get("/v1/jobs/{job_id}/trade-recommendation", response_model=TradeRecommendationResponse)
+def get_trade_recommendation(job_id: str) -> TradeRecommendationResponse:
+    record = _get_job_store().get_job(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = build_trade_recommendation(
+        job_id=job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+    )
+    return TradeRecommendationResponse(**payload)
 
 
 @app.get("/v1/jobs/{job_id}/benchmark-template", response_model=BenchmarkTemplateResponse)

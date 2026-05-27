@@ -119,7 +119,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(18, weight=1)
+        actions2.columnconfigure(19, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -180,6 +180,9 @@ class DesktopEstimatorApp:
         )
         ttk.Button(actions2, text="Job Ops Gate", command=self._evaluate_job_ops_gate).grid(
             row=0, column=17, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions2, text="Trade Recommendation", command=self._get_trade_recommendation).grid(
+            row=0, column=18, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -356,6 +359,28 @@ class DesktopEstimatorApp:
             self.status_text.set(f"Job ops gate {status}. Failures: {failure_count}")
         except Exception as exc:
             self._set_output_text(f"Failed to evaluate job ops gate:\n{exc}")
+
+    def _get_trade_recommendation(self) -> None:
+        job_id = self.current_job_id.get().strip()
+        if not job_id:
+            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+            return
+        try:
+            payload = self._request_json(
+                "GET",
+                f"/v1/jobs/{job_id}/trade-recommendation",
+                timeout=30,
+            )
+            self._set_output_json(payload)
+            mode = payload.get("recommended_mode", "unknown")
+            trades = payload.get("recommended_trades", [])
+            confidence = payload.get("confidence", "n/a")
+            trade_count = len(trades) if isinstance(trades, list) else "n/a"
+            self.status_text.set(
+                f"Trade recommendation: mode={mode}, trades={trade_count}, confidence={confidence}"
+            )
+        except Exception as exc:
+            self._set_output_text(f"Failed to load trade recommendation:\n{exc}")
 
     def _get_review_queue(self) -> None:
         job_id = self.current_job_id.get().strip()
