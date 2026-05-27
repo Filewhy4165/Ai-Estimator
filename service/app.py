@@ -91,6 +91,16 @@ class TradeCoverageResponse(BaseModel):
     trades: list[dict[str, Any]]
 
 
+class JobReadinessReportResponse(BaseModel):
+    job_id: str
+    generated_at: str
+    review_queue_summary: dict[str, Any]
+    trade_recommendation: dict[str, Any]
+    trade_coverage: dict[str, Any]
+    ops_gate: dict[str, Any]
+    handoff_recommendation: dict[str, Any]
+
+
 class JobRerunRecommendationResponse(JobCreateResponse):
     source_job_id: str
     recommended_mode: str
@@ -542,6 +552,55 @@ def get_trade_coverage(job_id: str) -> TradeCoverageResponse:
     return TradeCoverageResponse(**payload)
 
 
+@app.get("/v1/jobs/{job_id}/readiness-report", response_model=JobReadinessReportResponse)
+def get_job_readiness_report(job_id: str) -> JobReadinessReportResponse:
+    record = _get_job_store().get_job(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result_payload = record.result if isinstance(record.result, dict) else None
+    review_queue = build_review_queue(
+        job_id=job_id,
+        result=result_payload,
+        low_confidence_threshold=0.75,
+        include_only_flagged=True,
+    )
+    trade_recommendation = build_trade_recommendation(job_id=job_id, result=result_payload)
+    trade_coverage = build_trade_coverage_report(job_id=job_id, result=result_payload)
+
+    recent_records = _get_job_store().list_recent_jobs(limit=500)
+    snapshot = build_job_metrics_snapshot(
+        recent_records,
+        window_requested=500,
+        window_applied=500,
+        generated_at=_utc_now(),
+    )
+    ops_gate = evaluate_job_metrics_gate(
+        snapshot,
+        max_failure_rate=0.2,
+        max_active_jobs=25,
+        max_missing_scale_rate=0.4,
+        max_unmapped_sheet_rate=0.25,
+        min_jobs_per_hour_24h=0.05,
+    )
+    handoff = _build_handoff_recommendation(
+        review_queue_summary=review_queue.get("summary", {}),
+        trade_recommendation=trade_recommendation,
+        trade_coverage=trade_coverage,
+        ops_gate=ops_gate,
+    )
+
+    return JobReadinessReportResponse(
+        job_id=job_id,
+        generated_at=_utc_now(),
+        review_queue_summary=review_queue.get("summary", {}),
+        trade_recommendation=trade_recommendation,
+        trade_coverage=trade_coverage,
+        ops_gate=ops_gate,
+        handoff_recommendation=handoff,
+    )
+
+
 @app.get("/v1/jobs/{job_id}/benchmark-template", response_model=BenchmarkTemplateResponse)
 def get_benchmark_template(
     job_id: str,
@@ -906,6 +965,49 @@ def _append_note(*, source_notes: str | None, marker: str) -> str:
     if marker_clean.lower() in base.lower():
         return base
     return f"{base}\n{marker_clean}"
+
+
+def _build_handoff_recommendation(
+    *,
+    review_queue_summary: dict[str, Any],
+    trade_recommendation: dict[str, Any],
+    trade_coverage: dict[str, Any],
+    ops_gate: dict[str, Any],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    flagged_sheets = int(review_queue_summary.get("flagged_sheets", 0))
+    if flagged_sheets > 0:
+        reasons.append(f"{flagged_sheets} sheet(s) remain flagged in review queue.")
+
+    needs_review_count = 0
+    coverage_summary = trade_coverage.get("summary", {})
+    if isinstance(coverage_summary, dict):
+        raw_needs_review = coverage_summary.get("needs_review_count", 0)
+        if isinstance(raw_needs_review, int):
+            needs_review_count = raw_needs_review
+    if needs_review_count > 0:
+        reasons.append(f"{needs_review_count} trade(s) need coverage review.")
+
+    if not bool(ops_gate.get("passed", False)):
+        failure_count = len(ops_gate.get("failures", [])) if isinstance(ops_gate.get("failures"), list) else "n/a"
+        reasons.append(f"Operations gate failed ({failure_count} failure(s)).")
+
+    if trade_recommendation.get("needs_user_review") is True:
+        reasons.append("Trade recommendation indicates elevated uncertainty.")
+
+    if reasons:
+        status = "blocked"
+    elif trade_recommendation.get("recommended_mode") == "all":
+        status = "review_required"
+        reasons.append("Recommended mode is 'all'; verify scope before handoff.")
+    else:
+        status = "ready"
+        reasons.append("No blocking findings in queue, coverage, or ops gate.")
+
+    return {
+        "status": status,
+        "reasons": reasons,
+    }
 
 
 def _resolve_rerun_inputs(

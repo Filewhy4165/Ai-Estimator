@@ -124,7 +124,7 @@ class DesktopEstimatorApp:
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(20, weight=1)
+        actions2.columnconfigure(21, weight=1)
         ttk.Checkbutton(
             actions2,
             text="Template Include All Sheets",
@@ -191,6 +191,9 @@ class DesktopEstimatorApp:
         )
         ttk.Button(actions2, text="Trade Coverage", command=self._get_trade_coverage).grid(
             row=0, column=19, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions2, text="Readiness Report", command=self._get_readiness_report).grid(
+            row=0, column=20, sticky="w", padx=(8, 0)
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
@@ -438,6 +441,24 @@ class DesktopEstimatorApp:
             )
         except Exception as exc:
             self._set_output_text(f"Failed to load trade coverage:\n{exc}")
+
+    def _get_readiness_report(self) -> None:
+        job_id = self.current_job_id.get().strip()
+        if not job_id:
+            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+            return
+        try:
+            payload = self._request_json(
+                "GET",
+                f"/v1/jobs/{job_id}/readiness-report",
+                timeout=45,
+            )
+            self._set_output_json(payload)
+            handoff = payload.get("handoff_recommendation", {})
+            status = handoff.get("status", "unknown") if isinstance(handoff, dict) else "unknown"
+            self.status_text.set(f"Readiness report loaded: handoff_status={status}")
+        except Exception as exc:
+            self._set_output_text(f"Failed to load readiness report:\n{exc}")
 
     def _get_review_queue(self) -> None:
         job_id = self.current_job_id.get().strip()
