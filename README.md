@@ -162,6 +162,7 @@ Benchmark manifest shape:
 ## API endpoints
 
 - `GET /health`
+- `GET /v1/meta/trades` supported `analysis_mode` values and valid trade catalog (with CSI defaults)
 - `POST /v1/analyze` synchronous analysis
 - `POST /v1/jobs` async job submission
 - `POST /v1/jobs/{job_id}/rerun` async rerun using files from an existing job
@@ -193,6 +194,7 @@ Optional form fields for `POST /v1/analyze` and `POST /v1/jobs`:
 - `sheet_overrides_json` JSON array string such as:
   `[{"source_page_index":12,"sheet_id":"A101","title":"First Floor Plan"}]`
 - `notes` free-text notes/constraints (trimmed to 2000 chars)
+- when `analysis_mode=selected`, `selected_trades` must include at least one valid trade token
 
 Optional form fields for `POST /v1/jobs/{job_id}/rerun`:
 
