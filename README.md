@@ -57,6 +57,7 @@ The desktop app supports both synchronous analysis and async job workflows.
 It also remembers your last API URL, selected PDFs, overrides file, and current job ID between launches.
 When API URL points to `127.0.0.1` or `localhost`, the app can auto-start the local API if the connection is refused.
 If API key auth is enabled on the service, populate `API Key (optional)` in the desktop app so it sends `x-api-key`.
+For security, the desktop app does not persist API keys to disk; set `AI_ESTIMATOR_API_KEY` in your shell to prefill each session.
 
 Desktop async workflow:
 

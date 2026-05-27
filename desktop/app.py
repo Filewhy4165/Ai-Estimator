@@ -34,7 +34,7 @@ class DesktopEstimatorApp:
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
-        self.api_key = StringVar(value="")
+        self.api_key = StringVar(value=os.environ.get("AI_ESTIMATOR_API_KEY", ""))
         self.analysis_mode = StringVar(value="auto")
         self.selected_trades = StringVar(value="")
         self.sheet_overrides_path = StringVar(value="")
@@ -961,10 +961,6 @@ class DesktopEstimatorApp:
         if isinstance(api_url, str) and api_url.strip():
             self.api_url.set(api_url.strip())
 
-        api_key = loaded.get("api_key")
-        if isinstance(api_key, str):
-            self.api_key.set(api_key)
-
         analysis_mode = loaded.get("analysis_mode")
         if isinstance(analysis_mode, str) and analysis_mode in {"auto", "selected", "all"}:
             self.analysis_mode.set(analysis_mode)
@@ -1013,7 +1009,6 @@ class DesktopEstimatorApp:
     def _save_settings(self) -> None:
         payload = {
             "api_url": self.api_url.get().strip(),
-            "api_key": self.api_key.get(),
             "analysis_mode": self.analysis_mode.get().strip(),
             "selected_trades": self.selected_trades.get(),
             "notes": self.notes.get(),
