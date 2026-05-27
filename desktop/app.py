@@ -96,7 +96,7 @@ class DesktopEstimatorApp:
 
         actions1 = ttk.Frame(frame)
         actions1.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        actions1.columnconfigure(7, weight=1)
+        actions1.columnconfigure(8, weight=1)
         ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
         ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
@@ -116,6 +116,11 @@ class DesktopEstimatorApp:
         ttk.Button(actions1, text="Run End-to-End Benchmark", command=self._run_end_to_end_benchmark).grid(
             row=0, column=6, sticky="w", padx=(8, 0)
         )
+        ttk.Button(
+            actions1,
+            text="Rerun Recommended",
+            command=self._rerun_job_with_recommendation,
+        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
 
         actions2 = ttk.Frame(frame)
         actions2.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -272,6 +277,34 @@ class DesktopEstimatorApp:
                 self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to rerun job:\n{exc}")
+
+    def _rerun_job_with_recommendation(self) -> None:
+        source_job_id = self.current_job_id.get().strip()
+        if not source_job_id:
+            self._set_output_text("Enter a Job ID or click 'Load Latest Job'.")
+            return
+
+        try:
+            payload = self._request_json(
+                "POST",
+                f"/v1/jobs/{source_job_id}/rerun-recommended",
+                timeout=120,
+            )
+            new_job_id = str(payload.get("job_id", "")).strip()
+            if not new_job_id:
+                raise RuntimeError("API response did not include rerun job_id.")
+            self.current_job_id.set(new_job_id)
+            self._set_output_json(payload)
+            mode = payload.get("recommended_mode", "unknown")
+            confidence = payload.get("recommendation_confidence", "n/a")
+            self.status_text.set(
+                f"Recommended rerun submitted: {new_job_id} (mode={mode}, confidence={confidence})"
+            )
+            self._save_settings()
+            if self.auto_poll_enabled.get():
+                self._start_auto_poll()
+        except Exception as exc:
+            self._set_output_text(f"Failed to submit recommended rerun:\n{exc}")
 
     def _refresh_job(self) -> None:
         job_id = self.current_job_id.get().strip()
