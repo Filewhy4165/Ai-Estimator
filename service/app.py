@@ -338,6 +338,7 @@ async def create_job(
         _validate_analysis_scope(analysis_mode=analysis_mode, selected_trades=selected_trade_list)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _maybe_auto_prune_jobs()
     _enforce_queued_job_limit()
 
     job_id = str(uuid.uuid4())
@@ -399,6 +400,7 @@ async def rerun_job(
     sheet_overrides_json: str | None = Form(None),
     notes: str | None = Form(None),
 ) -> JobCreateResponse:
+    _maybe_auto_prune_jobs()
     _enforce_queued_job_limit()
     source_record = _get_job_store().get_job(job_id)
     if not source_record:
@@ -676,6 +678,7 @@ def prune_jobs(
     response_model=JobRerunRecommendationResponse,
 )
 def rerun_job_with_recommendation(job_id: str) -> JobRerunRecommendationResponse:
+    _maybe_auto_prune_jobs()
     _enforce_queued_job_limit()
     source_record = _get_job_store().get_job(job_id)
     if not source_record:
@@ -1211,6 +1214,57 @@ def _resolve_max_queued_jobs() -> int | None:
     if value <= 0:
         return None
     return min(value, 100000)
+
+
+def _resolve_auto_prune_on_submit() -> bool:
+    raw = os.environ.get("AI_ESTIMATOR_PRUNE_ON_SUBMIT", "")
+    return _parse_bool_env(raw)
+
+
+def _resolve_auto_prune_older_than_hours() -> int | None:
+    raw = os.environ.get("AI_ESTIMATOR_PRUNE_OLDER_THAN_HOURS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value < 1:
+        return None
+    return min(value, 24 * 365 * 20)
+
+
+def _resolve_auto_prune_limit() -> int:
+    raw = os.environ.get("AI_ESTIMATOR_PRUNE_LIMIT", "").strip()
+    if not raw:
+        return 200
+    try:
+        value = int(raw)
+    except ValueError:
+        return 200
+    return max(1, min(value, 1000))
+
+
+def _resolve_auto_prune_cleanup_uploads() -> bool:
+    raw = os.environ.get("AI_ESTIMATOR_PRUNE_CLEANUP_UPLOADS", "")
+    return _parse_bool_env(raw)
+
+
+def _maybe_auto_prune_jobs() -> dict[str, Any] | None:
+    if not _resolve_auto_prune_on_submit():
+        return None
+    try:
+        payload = prune_jobs(
+            statuses="completed,failed,canceled",
+            older_than_hours=_resolve_auto_prune_older_than_hours(),
+            limit=_resolve_auto_prune_limit(),
+            dry_run=False,
+            cleanup_uploads=_resolve_auto_prune_cleanup_uploads(),
+        )
+        return payload.model_dump()
+    except Exception:
+        # Auto-prune should never block the primary job submission path.
+        return None
 
 
 def _enforce_queued_job_limit() -> None:
