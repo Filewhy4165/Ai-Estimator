@@ -84,7 +84,9 @@ Desktop async workflow:
 21. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
 22. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
 23. Use `Trade Coverage` to validate per-trade detection, analysis, and quantity signal coverage before handoff
-24. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
+24. Use `Load Trades` to fetch canonical analysis modes and valid trade tokens from the API
+25. Use `Validate Trades` to pre-check selected trade input before submit/rerun
+26. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
 
 ## Run CLI directly
 
