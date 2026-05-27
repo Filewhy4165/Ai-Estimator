@@ -155,6 +155,20 @@ class JobStore:
                 ).fetchall()
         return [_row_to_job_record(row) for row in rows]
 
+    def list_recent_jobs(self, *, limit: int = 200) -> list[JobRecord]:
+        # Internal analytics path can inspect a wider window than list endpoint pagination.
+        limit = max(1, min(limit, 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM jobs
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_row_to_job_record(row) for row in rows]
+
 
 def _row_to_job_record(row: sqlite3.Row) -> JobRecord:
     raw_input = row["input_json"]
