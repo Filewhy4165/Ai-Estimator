@@ -134,6 +134,110 @@ def build_job_metrics_snapshot(
     }
 
 
+def evaluate_job_metrics_gate(
+    snapshot: dict[str, Any],
+    *,
+    max_failure_rate: float | None = None,
+    max_active_jobs: int | None = None,
+    max_missing_scale_rate: float | None = None,
+    max_unmapped_sheet_rate: float | None = None,
+    min_jobs_per_hour_24h: float | None = None,
+) -> dict[str, Any]:
+    thresholds = {
+        "max_failure_rate": max_failure_rate,
+        "max_active_jobs": max_active_jobs,
+        "max_missing_scale_rate": max_missing_scale_rate,
+        "max_unmapped_sheet_rate": max_unmapped_sheet_rate,
+        "min_jobs_per_hour_24h": min_jobs_per_hour_24h,
+    }
+    failures: list[dict[str, Any]] = []
+
+    actual_failure_rate = _safe_float(snapshot.get("failure_rate"))
+    if max_failure_rate is not None and actual_failure_rate is not None and actual_failure_rate > max_failure_rate:
+        failures.append(
+            {
+                "code": "failure_rate_exceeded",
+                "message": "Failure rate is above threshold.",
+                "actual": actual_failure_rate,
+                "threshold": max_failure_rate,
+            }
+        )
+
+    actual_active_jobs = _safe_int(snapshot.get("active_jobs"))
+    if max_active_jobs is not None and actual_active_jobs is not None and actual_active_jobs > max_active_jobs:
+        failures.append(
+            {
+                "code": "active_jobs_exceeded",
+                "message": "Active jobs exceed threshold.",
+                "actual": actual_active_jobs,
+                "threshold": max_active_jobs,
+            }
+        )
+
+    quality = snapshot.get("quality", {})
+    actual_missing_scale_rate = _safe_float(quality.get("missing_scale_rate")) if isinstance(quality, dict) else None
+    if (
+        max_missing_scale_rate is not None
+        and actual_missing_scale_rate is not None
+        and actual_missing_scale_rate > max_missing_scale_rate
+    ):
+        failures.append(
+            {
+                "code": "missing_scale_rate_exceeded",
+                "message": "Missing-scale rate is above threshold.",
+                "actual": actual_missing_scale_rate,
+                "threshold": max_missing_scale_rate,
+            }
+        )
+
+    actual_unmapped_sheet_rate = (
+        _safe_float(quality.get("unmapped_sheet_id_rate")) if isinstance(quality, dict) else None
+    )
+    if (
+        max_unmapped_sheet_rate is not None
+        and actual_unmapped_sheet_rate is not None
+        and actual_unmapped_sheet_rate > max_unmapped_sheet_rate
+    ):
+        failures.append(
+            {
+                "code": "unmapped_sheet_rate_exceeded",
+                "message": "Unmapped-sheet rate is above threshold.",
+                "actual": actual_unmapped_sheet_rate,
+                "threshold": max_unmapped_sheet_rate,
+            }
+        )
+
+    throughput = snapshot.get("throughput_last_24h", {})
+    actual_jobs_per_hour = _safe_float(throughput.get("jobs_per_hour")) if isinstance(throughput, dict) else None
+    if (
+        min_jobs_per_hour_24h is not None
+        and actual_jobs_per_hour is not None
+        and actual_jobs_per_hour < min_jobs_per_hour_24h
+    ):
+        failures.append(
+            {
+                "code": "throughput_below_minimum",
+                "message": "24h throughput is below minimum threshold.",
+                "actual": actual_jobs_per_hour,
+                "threshold": min_jobs_per_hour_24h,
+            }
+        )
+
+    return {
+        "passed": len(failures) == 0,
+        "thresholds": thresholds,
+        "actual": {
+            "failure_rate": actual_failure_rate,
+            "active_jobs": actual_active_jobs,
+            "missing_scale_rate": actual_missing_scale_rate,
+            "unmapped_sheet_rate": actual_unmapped_sheet_rate,
+            "jobs_per_hour_24h": actual_jobs_per_hour,
+        },
+        "failures": failures,
+        "snapshot": snapshot,
+    }
+
+
 def _distribution(values: list[float]) -> dict[str, float | int | None]:
     if not values:
         return {
@@ -196,3 +300,15 @@ def _ratio(numerator: int, denominator: int) -> float | None:
     if denominator <= 0:
         return None
     return round(numerator / denominator, 4)
+
+
+def _safe_float(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _safe_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    return None

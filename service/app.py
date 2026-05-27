@@ -22,7 +22,7 @@ from ai_estimator.benchmark_compare import (
     compare_reports_from_paths,
 )
 from ai_estimator.pipeline import run_pipeline, sanitize_selected_trades
-from service.job_metrics import build_job_metrics_snapshot
+from service.job_metrics import build_job_metrics_snapshot, evaluate_job_metrics_gate
 from service.job_store import JobRecord, JobStore
 from service.request_parsing import normalize_notes, parse_sheet_overrides_json
 from service.review_queue import (
@@ -59,6 +59,14 @@ class JobMetricsResponse(BaseModel):
     result_sheet_count: dict[str, float | int | None]
     result_issue_count: dict[str, float | int | None]
     quality: dict[str, float | int | None]
+
+
+class JobMetricsGateResponse(BaseModel):
+    passed: bool
+    thresholds: dict[str, float | int | None]
+    actual: dict[str, float | int | None]
+    failures: list[dict[str, Any]]
+    snapshot: dict[str, Any]
 
 
 class ReviewQueueResponse(BaseModel):
@@ -350,6 +358,34 @@ def get_job_metrics(window: int = 200) -> JobMetricsResponse:
         generated_at=_utc_now(),
     )
     return JobMetricsResponse(**payload)
+
+
+@app.get("/v1/jobs/metrics/gate", response_model=JobMetricsGateResponse)
+def get_job_metrics_gate(
+    window: int = 200,
+    max_failure_rate: float | None = None,
+    max_active_jobs: int | None = None,
+    max_missing_scale_rate: float | None = None,
+    max_unmapped_sheet_rate: float | None = None,
+    min_jobs_per_hour_24h: float | None = None,
+) -> JobMetricsGateResponse:
+    window_applied = max(1, min(window, 5000))
+    records = _get_job_store().list_recent_jobs(limit=window_applied)
+    snapshot = build_job_metrics_snapshot(
+        records,
+        window_requested=window,
+        window_applied=window_applied,
+        generated_at=_utc_now(),
+    )
+    payload = evaluate_job_metrics_gate(
+        snapshot,
+        max_failure_rate=max_failure_rate,
+        max_active_jobs=max_active_jobs,
+        max_missing_scale_rate=max_missing_scale_rate,
+        max_unmapped_sheet_rate=max_unmapped_sheet_rate,
+        min_jobs_per_hour_24h=min_jobs_per_hour_24h,
+    )
+    return JobMetricsGateResponse(**payload)
 
 
 @app.get("/v1/jobs/{job_id}")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from service.job_metrics import build_job_metrics_snapshot
+from service.job_metrics import build_job_metrics_snapshot, evaluate_job_metrics_gate
 from service.job_store import JobRecord
 
 
@@ -110,3 +110,54 @@ def test_build_job_metrics_snapshot_without_terminal_jobs():
     assert payload["queue_wait_seconds"]["count"] == 0
     assert payload["run_duration_seconds"]["count"] == 0
     assert payload["quality"]["completed_jobs_with_result"] == 0
+
+
+def test_evaluate_job_metrics_gate_passes():
+    snapshot = {
+        "failure_rate": 0.1,
+        "active_jobs": 3,
+        "throughput_last_24h": {"jobs_per_hour": 0.2},
+        "quality": {
+            "missing_scale_rate": 0.2,
+            "unmapped_sheet_id_rate": 0.1,
+        },
+    }
+    payload = evaluate_job_metrics_gate(
+        snapshot,
+        max_failure_rate=0.2,
+        max_active_jobs=10,
+        max_missing_scale_rate=0.3,
+        max_unmapped_sheet_rate=0.2,
+        min_jobs_per_hour_24h=0.1,
+    )
+
+    assert payload["passed"] is True
+    assert payload["failures"] == []
+
+
+def test_evaluate_job_metrics_gate_fails():
+    snapshot = {
+        "failure_rate": 0.4,
+        "active_jobs": 35,
+        "throughput_last_24h": {"jobs_per_hour": 0.01},
+        "quality": {
+            "missing_scale_rate": 0.7,
+            "unmapped_sheet_id_rate": 0.5,
+        },
+    }
+    payload = evaluate_job_metrics_gate(
+        snapshot,
+        max_failure_rate=0.2,
+        max_active_jobs=10,
+        max_missing_scale_rate=0.3,
+        max_unmapped_sheet_rate=0.2,
+        min_jobs_per_hour_24h=0.1,
+    )
+
+    assert payload["passed"] is False
+    codes = [row.get("code") for row in payload["failures"]]
+    assert "failure_rate_exceeded" in codes
+    assert "active_jobs_exceeded" in codes
+    assert "missing_scale_rate_exceeded" in codes
+    assert "unmapped_sheet_rate_exceeded" in codes
+    assert "throughput_below_minimum" in codes
