@@ -5,7 +5,7 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock, Thread
+from threading import BoundedSemaphore, Lock, Thread
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -200,6 +200,8 @@ app.add_middleware(
 _job_store: JobStore | None = None
 _upload_root: Path | None = None
 _resource_lock = Lock()
+_job_run_semaphore: BoundedSemaphore | None = None
+_job_run_semaphore_limit: int | None = None
 
 
 @app.middleware("http")
@@ -834,42 +836,46 @@ def _run_job(
     notes: str | None,
     upload_dir: str | None,
 ) -> None:
-    started_at = _utc_now()
-    _get_job_store().update_job(
-        job_id,
-        status="running",
-        updated_at=started_at,
-        started_at=started_at,
-    )
+    run_semaphore = _get_job_run_semaphore()
+    run_semaphore.acquire()
     try:
-        result = run_pipeline(
-            pdf_paths=pdf_paths,
-            analysis_mode=analysis_mode,
-            selected_trades=selected_trades,
-            sheet_overrides=sheet_overrides,
-            notes=notes,
-            validate_schema=True,
-        )
-        now = _utc_now()
+        started_at = _utc_now()
         _get_job_store().update_job(
             job_id,
-            status="completed",
-            updated_at=now,
-            completed_at=now,
-            result=result,
-            error=None,
+            status="running",
+            updated_at=started_at,
+            started_at=started_at,
         )
-    except Exception as exc:  # pragma: no cover - defensive
-        now = _utc_now()
-        _get_job_store().update_job(
-            job_id,
-            status="failed",
-            updated_at=now,
-            completed_at=now,
-            result=None,
-            error=str(exc),
-        )
+        try:
+            result = run_pipeline(
+                pdf_paths=pdf_paths,
+                analysis_mode=analysis_mode,
+                selected_trades=selected_trades,
+                sheet_overrides=sheet_overrides,
+                notes=notes,
+                validate_schema=True,
+            )
+            now = _utc_now()
+            _get_job_store().update_job(
+                job_id,
+                status="completed",
+                updated_at=now,
+                completed_at=now,
+                result=result,
+                error=None,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            now = _utc_now()
+            _get_job_store().update_job(
+                job_id,
+                status="failed",
+                updated_at=now,
+                completed_at=now,
+                result=None,
+                error=str(exc),
+            )
     finally:
+        run_semaphore.release()
         if upload_dir and _should_cleanup_uploads(mode="async"):
             shutil.rmtree(upload_dir, ignore_errors=True)
 
@@ -903,6 +909,28 @@ def _resolve_upload_root() -> str:
     if override:
         return override
     return str(Path.cwd() / ".ai_estimator" / "uploads")
+
+
+def _resolve_job_worker_limit() -> int:
+    default_limit = 4
+    raw = os.environ.get("AI_ESTIMATOR_JOB_WORKERS", "").strip()
+    if not raw:
+        return default_limit
+    try:
+        value = int(raw)
+    except ValueError:
+        return default_limit
+    return max(1, min(32, value))
+
+
+def _get_job_run_semaphore() -> BoundedSemaphore:
+    global _job_run_semaphore, _job_run_semaphore_limit
+    with _resource_lock:
+        limit = _resolve_job_worker_limit()
+        if _job_run_semaphore is None or _job_run_semaphore_limit != limit:
+            _job_run_semaphore = BoundedSemaphore(limit)
+            _job_run_semaphore_limit = limit
+    return _job_run_semaphore
 
 
 def _should_cleanup_uploads(mode: str) -> bool:
