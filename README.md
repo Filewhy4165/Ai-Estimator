@@ -170,6 +170,7 @@ Benchmark manifest shape:
 - `POST /v1/jobs/{job_id}/rerun` async rerun using files from an existing job
 - `POST /v1/jobs/{job_id}/rerun-recommended` async rerun using AI-recommended trade scope from the source job
 - `GET /v1/jobs` list jobs (supports `limit`, `offset`, `status`)
+- `GET /v1/jobs/capacity` live async queue/worker capacity snapshot
 - `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, active queue depth, failure rate, 24h throughput, latency distributions, and extraction quality signals)
 - `GET /v1/jobs/metrics/gate` pass/fail gate over job metrics with configurable thresholds
 - `GET /v1/jobs/{job_id}` job status/result
