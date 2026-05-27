@@ -26,6 +26,41 @@ from ai_estimator.benchmark_compare import (
 from ai_estimator.sheet_overrides import parse_sheet_overrides_json
 
 
+def parse_selected_trade_tokens(selected_trades_csv: str) -> list[str]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for raw in selected_trades_csv.split(","):
+        token = raw.strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def validate_selected_trade_scope(
+    *,
+    analysis_mode: str,
+    selected_trades_csv: str,
+    valid_trades: list[str] | None,
+) -> list[str]:
+    mode = analysis_mode.strip()
+    if mode not in {"auto", "selected", "all"}:
+        raise ValueError("analysis_mode must be auto, selected, or all.")
+
+    selected_tokens = parse_selected_trade_tokens(selected_trades_csv)
+    if mode == "selected" and not selected_tokens:
+        raise ValueError("Selected mode requires at least one trade token.")
+
+    if valid_trades:
+        allowed = set(valid_trades)
+        unknown = [token for token in selected_tokens if token not in allowed]
+        if unknown:
+            raise ValueError(f"Unknown trade(s): {', '.join(unknown)}.")
+
+    return selected_tokens
+
+
 class DesktopEstimatorApp:
     def __init__(self) -> None:
         self.root = Tk()
@@ -48,6 +83,8 @@ class DesktopEstimatorApp:
         self.benchmark_task_running = False
         self.end_to_end_task_running = False
         self.status_text = StringVar(value="Ready.")
+        self.trade_catalog: list[str] = []
+        self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
 
         self._build_ui()
@@ -72,16 +109,30 @@ class DesktopEstimatorApp:
         ttk.Entry(frame, textvariable=self.api_key, width=68, show="*").grid(row=1, column=1, sticky="ew")
 
         ttk.Label(frame, text="Analysis Mode").grid(row=2, column=0, sticky="w")
-        ttk.Combobox(
+        self.analysis_mode_combo = ttk.Combobox(
             frame,
-            values=["auto", "selected", "all"],
+            values=self.analysis_mode_catalog,
             textvariable=self.analysis_mode,
             state="readonly",
             width=20,
-        ).grid(row=2, column=1, sticky="w")
+        )
+        self.analysis_mode_combo.grid(row=2, column=1, sticky="w")
 
         ttk.Label(frame, text="Selected Trades (CSV)").grid(row=3, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.selected_trades, width=68).grid(row=3, column=1, sticky="ew")
+        selected_trades_row = ttk.Frame(frame)
+        selected_trades_row.grid(row=3, column=1, sticky="ew")
+        selected_trades_row.columnconfigure(0, weight=1)
+        ttk.Entry(selected_trades_row, textvariable=self.selected_trades, width=52).grid(
+            row=0, column=0, sticky="ew"
+        )
+        ttk.Button(selected_trades_row, text="Load Trades", command=self._load_trade_catalog).grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(
+            selected_trades_row,
+            text="Validate Trades",
+            command=self._validate_selected_trades_clicked,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         ttk.Label(frame, text="Sheet Overrides JSON").grid(row=4, column=0, sticky="w")
         overrides_row = ttk.Frame(frame)
@@ -231,6 +282,24 @@ class DesktopEstimatorApp:
         self.sheet_overrides_path.set(selected)
         self.status_text.set("Overrides file selected.")
         self._save_settings()
+
+    def _load_trade_catalog(self) -> None:
+        try:
+            payload = self._refresh_trade_catalog_from_api(update_output=True)
+            trade_count = len(self.trade_catalog)
+            self.status_text.set(f"Loaded trade catalog: {trade_count} trade(s).")
+            self._set_output_json(payload)
+        except Exception as exc:
+            self._set_output_text(f"Failed to load trade catalog:\n{exc}")
+
+    def _validate_selected_trades_clicked(self) -> None:
+        try:
+            normalized_csv = self._validate_scope_inputs_before_submit()
+            self.selected_trades.set(normalized_csv)
+            self.status_text.set("Trade scope input is valid.")
+            self._save_settings()
+        except Exception as exc:
+            self._set_output_text(f"Trade validation failed:\n{exc}")
 
     def _run_analysis(self) -> None:
         self.output.delete("1.0", END)
@@ -798,10 +867,60 @@ class DesktopEstimatorApp:
 
         self.auto_poll_handle = self.root.after(self.auto_poll_interval_ms, self._auto_poll_tick)
 
+    def _refresh_trade_catalog_from_api(self, *, update_output: bool) -> dict:
+        payload = self._request_json("GET", "/v1/meta/trades", timeout=30)
+        analysis_modes = payload.get("analysis_modes", [])
+        trades = payload.get("trades", [])
+        if not isinstance(analysis_modes, list) or not isinstance(trades, list):
+            raise RuntimeError("Unexpected trade catalog format from API.")
+
+        parsed_modes: list[str] = []
+        for item in analysis_modes:
+            token = str(item).strip()
+            if token:
+                parsed_modes.append(token)
+
+        parsed_trades: list[str] = []
+        for item in trades:
+            if not isinstance(item, dict):
+                continue
+            token = str(item.get("trade", "")).strip()
+            if token:
+                parsed_trades.append(token)
+
+        if not parsed_modes or not parsed_trades:
+            raise RuntimeError("Trade catalog response did not include usable modes/trades.")
+
+        self.analysis_mode_catalog = parsed_modes
+        self.trade_catalog = parsed_trades
+        self.analysis_mode_combo["values"] = self.analysis_mode_catalog
+        if self.analysis_mode.get().strip() not in self.analysis_mode_catalog:
+            self.analysis_mode.set(self.analysis_mode_catalog[0])
+
+        if update_output:
+            self._set_output_json(payload)
+        return payload
+
+    def _validate_scope_inputs_before_submit(self) -> str:
+        if not self.trade_catalog:
+            try:
+                self._refresh_trade_catalog_from_api(update_output=False)
+            except Exception:
+                # Continue without catalog-backed unknown-trade checks when catalog is unreachable.
+                pass
+
+        tokens = validate_selected_trade_scope(
+            analysis_mode=self.analysis_mode.get(),
+            selected_trades_csv=self.selected_trades.get(),
+            valid_trades=self.trade_catalog if self.trade_catalog else None,
+        )
+        return ",".join(tokens)
+
     def _build_request_data(self) -> dict[str, str]:
+        selected_trades_csv = self._validate_scope_inputs_before_submit()
         data = {
             "analysis_mode": self.analysis_mode.get(),
-            "selected_trades": self.selected_trades.get(),
+            "selected_trades": selected_trades_csv,
         }
         notes = self.notes.get().strip()
         if notes:
