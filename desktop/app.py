@@ -186,9 +186,11 @@ class DesktopEstimatorApp:
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
         self._tooltips: list[HoverTooltip] = []
+        self._control_help_entries: dict[str, str] = {}
 
         self._configure_style()
         self._build_ui()
+        self._bind_shortcuts()
         self._load_settings()
         self._refresh_files_label()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -214,6 +216,9 @@ class DesktopEstimatorApp:
         api_url_entry.grid(row=0, column=0, sticky="ew")
         ttk.Button(api_row, text="Start Local API", command=self._start_local_api_clicked).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
+            row=0, column=2, sticky="w", padx=(8, 0)
         )
 
         ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
@@ -443,6 +448,7 @@ class DesktopEstimatorApp:
     ) -> None:
         button_tips = {
             "Start Local API": "Start the local backend service at the API URL if it is not already running.",
+            "Control Guide": "Show a complete action/shortcut guide in the output panel.",
             "Load Trades": "Fetch valid trade names from the API and refresh trade mode options.",
             "Validate Trades": "Check your selected trades against the active analysis mode and trade catalog.",
             "Browse": "Select a sheet-overrides JSON file to apply authoritative sheet IDs/titles.",
@@ -482,6 +488,7 @@ class DesktopEstimatorApp:
             "Auto Poll Job": "Automatically refresh the current job until it reaches a terminal status.",
             "Cleanup Uploads": "When pruning, also delete uploaded file folders tied to pruned jobs.",
         }
+        self._control_help_entries = {**button_tips, **toggle_tips}
         for widget in self._walk_widgets(frame):
             class_name = ""
             try:
@@ -525,6 +532,61 @@ class DesktopEstimatorApp:
         if not text.strip():
             return
         self._tooltips.append(HoverTooltip(widget, text))
+
+    def _bind_shortcuts(self) -> None:
+        self.root.bind("<F1>", self._shortcut_show_guide, add="+")
+        self.root.bind("<Control-o>", self._shortcut_choose_pdfs, add="+")
+        self.root.bind("<Control-Return>", self._shortcut_submit_job, add="+")
+        self.root.bind("<F5>", self._shortcut_refresh_job, add="+")
+        self.root.bind("<Control-l>", self._shortcut_load_latest_job, add="+")
+        self.root.bind("<Control-s>", self._shortcut_save_output, add="+")
+
+    def _shortcut_show_guide(self, _event: object = None) -> str:
+        self._show_control_guide()
+        return "break"
+
+    def _shortcut_choose_pdfs(self, _event: object = None) -> str:
+        self._choose_pdfs()
+        return "break"
+
+    def _shortcut_submit_job(self, _event: object = None) -> str:
+        self._submit_async_job()
+        return "break"
+
+    def _shortcut_refresh_job(self, _event: object = None) -> str:
+        self._refresh_job()
+        return "break"
+
+    def _shortcut_load_latest_job(self, _event: object = None) -> str:
+        self._load_latest_job()
+        return "break"
+
+    def _shortcut_save_output(self, _event: object = None) -> str:
+        self._save_output()
+        return "break"
+
+    def _show_control_guide(self) -> None:
+        lines = [
+            "AI Estimator Desktop - Control Guide",
+            "",
+            "Keyboard shortcuts:",
+            "- F1: Show this guide",
+            "- Ctrl+O: Choose PDFs",
+            "- Ctrl+Enter: Submit Async Job",
+            "- F5: Refresh Job",
+            "- Ctrl+L: Load Latest Job",
+            "- Ctrl+S: Save Output",
+            "",
+            "Controls:",
+        ]
+        if self._control_help_entries:
+            for name, description in self._control_help_entries.items():
+                lines.append(f"- {name}: {description}")
+        else:
+            lines.append("- No control descriptions were found.")
+
+        self._set_output_text("\n".join(lines))
+        self.status_text.set("Control guide loaded.")
 
     def _choose_pdfs(self) -> None:
         selected = filedialog.askopenfilenames(
