@@ -85,6 +85,10 @@ class HoverTooltip:
             bind("<Leave>", self._on_leave, add="+")
             bind("<ButtonPress>", self._on_leave, add="+")
 
+    def set_text(self, text: str) -> None:
+        self.text = text.strip()
+        self._hide()
+
     def _on_enter(self, _event: object = None) -> None:
         self._schedule_show()
 
@@ -172,6 +176,7 @@ class DesktopEstimatorApp:
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
         self.include_unmapped_benchmark = BooleanVar(value=True)
+        self.beginner_mode = BooleanVar(value=False)
         self.auto_poll_enabled = BooleanVar(value=False)
         self.prune_statuses = StringVar(value="completed,failed,canceled")
         self.prune_older_than_hours = StringVar(value="168")
@@ -187,6 +192,11 @@ class DesktopEstimatorApp:
         self.files: list[str] = []
         self._tooltips: list[HoverTooltip] = []
         self._control_help_entries: dict[str, str] = {}
+        self._control_specs: dict[str, dict[str, str]] = {}
+        self._control_widgets: dict[str, object] = {}
+        self._control_tooltips: dict[str, HoverTooltip] = {}
+        self._field_tooltip_specs: dict[str, dict[str, str]] = {}
+        self._field_tooltips: dict[str, HoverTooltip] = {}
 
         self._configure_style()
         self._build_ui()
@@ -220,6 +230,12 @@ class DesktopEstimatorApp:
         ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
+        ttk.Checkbutton(
+            api_row,
+            text="Beginner Mode",
+            variable=self.beginner_mode,
+            command=self._toggle_beginner_mode,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
 
         ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
         api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
@@ -446,49 +462,12 @@ class DesktopEstimatorApp:
         prune_older_than_entry: ttk.Entry,
         prune_limit_entry: ttk.Entry,
     ) -> None:
-        button_tips = {
-            "Start Local API": "Start the local backend service at the API URL if it is not already running.",
-            "Control Guide": "Show a complete action/shortcut guide in the output panel.",
-            "Load Trades": "Fetch valid trade names from the API and refresh trade mode options.",
-            "Validate Trades": "Check your selected trades against the active analysis mode and trade catalog.",
-            "Browse": "Select a sheet-overrides JSON file to apply authoritative sheet IDs/titles.",
-            "Choose PDFs": "Pick one or more drawing PDFs for analysis or async job submission.",
-            "Run Analysis": "Run synchronous analysis and return results directly in this window.",
-            "Submit Async Job": "Submit a background job and return a job ID for polling.",
-            "Refresh Job": "Fetch latest status and payload for the current job ID.",
-            "Load Latest Job": "Load the newest job from the API into the current job field.",
-            "Rerun Job": "Rerun a previous job using the current form inputs and stored uploads.",
-            "Run End-to-End Benchmark": "Build templates, execute benchmark runs, and return quality comparisons.",
-            "Rerun Recommended": "Create a rerun from automated trade recommendations for current job context.",
-            "Cancel Job": "Cancel the current queued or running job when possible.",
-            "Get Review Queue": "Show low-confidence sheet IDs and items needing human review.",
-            "Export Overrides Template": "Generate a sheet overrides template JSON for manual correction.",
-            "Export Benchmark Template": "Generate a benchmark manifest template from current/last completed job.",
-            "Run Baseline Benchmark": "Run a baseline benchmark using selected manifests and settings.",
-            "Show Benchmark History": "Show saved benchmark result history from API or local fallback.",
-            "Compare Reports": "Pick two benchmark JSON files and compare baseline vs candidate scores.",
-            "Compare Latest Reports": "Compare the two newest benchmark reports automatically.",
-            "Latest Trend Snapshot": "Show current benchmark trend and overall score delta.",
-            "Score Timeline": "Display benchmark score timeline points across saved runs.",
-            "Evaluate Gate": "Run quality-gate checks (non-regression/improvement thresholds).",
-            "Benchmark Dashboard": "Open consolidated history, timeline, trend, and gate summary payload.",
-            "Save Output": "Save the output panel content to a JSON file.",
-            "Open Results Folder": "Open local benchmarks/results folder in your file explorer.",
-            "Job Ops Snapshot": "Show operational metrics snapshot for queue, durations, and throughput.",
-            "Job Ops Gate": "Evaluate operational quality gate thresholds against recent job metrics.",
-            "Trade Recommendation": "Generate recommended trade scope for current job based on detected content.",
-            "Trade Coverage": "Show per-trade coverage and review-needed status for current job results.",
-            "Readiness Report": "Generate handoff/readiness report combining review, coverage, and ops gates.",
-            "Prune Dry Run": "Preview jobs that would be pruned using current prune filters.",
-            "Prune Apply": "Delete/prune matching completed/failed/canceled jobs using current filters.",
+        self._control_specs = self._control_specs_for_ui()
+        self._control_widgets = {}
+        self._control_tooltips = {}
+        pro_label_to_key = {
+            spec["pro_label"]: key for key, spec in self._control_specs.items()
         }
-        toggle_tips = {
-            "Template Include All Sheets": "Include all detected sheets when generating benchmark template output.",
-            "Benchmark Include Unmapped": "Include unmapped sheet IDs in benchmark template expectations.",
-            "Auto Poll Job": "Automatically refresh the current job until it reaches a terminal status.",
-            "Cleanup Uploads": "When pruning, also delete uploaded file folders tied to pruned jobs.",
-        }
-        self._control_help_entries = {**button_tips, **toggle_tips}
         for widget in self._walk_widgets(frame):
             class_name = ""
             try:
@@ -501,22 +480,361 @@ class DesktopEstimatorApp:
                 text = str(widget.cget("text"))
             except Exception:
                 continue
-            if class_name == "TButton" and text in button_tips:
-                self._add_tooltip(widget, button_tips[text])
-            if class_name == "TCheckbutton" and text in toggle_tips:
-                self._add_tooltip(widget, toggle_tips[text])
+            key = pro_label_to_key.get(text)
+            if not key:
+                continue
+            spec = self._control_specs.get(key)
+            if not spec:
+                continue
+            self._control_widgets[key] = widget
+            tooltip = self._add_tooltip(widget, spec["pro_tip"])
+            if tooltip:
+                self._control_tooltips[key] = tooltip
 
-        self._add_tooltip(api_url_entry, "Base API endpoint. Use local default unless pointing to a remote service.")
-        self._add_tooltip(api_key_entry, "Optional API key header value sent as x-api-key.")
-        self._add_tooltip(self.analysis_mode_combo, "auto=detect trades, selected=only selected trades, all=analyze all supported trades.")
-        self._add_tooltip(selected_trades_entry, "Comma-separated trade tokens. Required when Analysis Mode is set to selected.")
-        self._add_tooltip(overrides_entry, "Path to JSON that overrides inferred sheet IDs and titles.")
-        self._add_tooltip(current_job_entry, "Target job ID for refresh, rerun, cancel, and review workflows.")
-        self._add_tooltip(notes_entry, "Optional run context or assumptions saved with the request.")
-        self._add_tooltip(prune_statuses_entry, "Comma-separated terminal statuses to prune (completed, failed, canceled).")
-        self._add_tooltip(prune_older_than_entry, "Only prune jobs older than this many hours.")
-        self._add_tooltip(prune_limit_entry, "Maximum number of jobs to evaluate/prune in one operation.")
-        self._add_tooltip(self.output, "Output panel for API responses, reports, and run diagnostics.")
+        self._field_tooltip_specs = {
+            "api_url": {
+                "pro_tip": "Base API endpoint. Use local default unless pointing to a remote service.",
+                "beginner_tip": "Where this app sends requests. Leave this as the local address unless told otherwise.",
+            },
+            "api_key": {
+                "pro_tip": "Optional API key header value sent as x-api-key.",
+                "beginner_tip": "Optional password for protected API servers.",
+            },
+            "analysis_mode": {
+                "pro_tip": "auto=detect trades, selected=only selected trades, all=analyze all supported trades.",
+                "beginner_tip": "Choose how wide the takeoff should run: auto, selected types, or all types.",
+            },
+            "selected_trades": {
+                "pro_tip": "Comma-separated trade tokens. Required when Analysis Mode is set to selected.",
+                "beginner_tip": "Type work types separated by commas (example: plumbing,electrical) when using selected mode.",
+            },
+            "overrides_path": {
+                "pro_tip": "Path to JSON that overrides inferred sheet IDs and titles.",
+                "beginner_tip": "Optional fix file for sheet names if auto-detection is wrong.",
+            },
+            "current_job": {
+                "pro_tip": "Target job ID for refresh, rerun, cancel, and review workflows.",
+                "beginner_tip": "Job number used to check status, rerun, or stop a background run.",
+            },
+            "notes": {
+                "pro_tip": "Optional run context or assumptions saved with the request.",
+                "beginner_tip": "Optional notes for this run (scope, clarifications, assumptions).",
+            },
+            "prune_statuses": {
+                "pro_tip": "Comma-separated terminal statuses to prune (completed, failed, canceled).",
+                "beginner_tip": "Which finished job types can be cleaned up.",
+            },
+            "prune_older_than": {
+                "pro_tip": "Only prune jobs older than this many hours.",
+                "beginner_tip": "Only clean jobs older than this number of hours.",
+            },
+            "prune_limit": {
+                "pro_tip": "Maximum number of jobs to evaluate/prune in one operation.",
+                "beginner_tip": "Maximum jobs to check in one cleanup run.",
+            },
+            "output_panel": {
+                "pro_tip": "Output panel for API responses, reports, and run diagnostics.",
+                "beginner_tip": "Main results window. Job results and messages appear here.",
+            },
+        }
+        self._field_tooltips = {}
+        field_widgets: dict[str, object] = {
+            "api_url": api_url_entry,
+            "api_key": api_key_entry,
+            "analysis_mode": self.analysis_mode_combo,
+            "selected_trades": selected_trades_entry,
+            "overrides_path": overrides_entry,
+            "current_job": current_job_entry,
+            "notes": notes_entry,
+            "prune_statuses": prune_statuses_entry,
+            "prune_older_than": prune_older_than_entry,
+            "prune_limit": prune_limit_entry,
+            "output_panel": self.output,
+        }
+        for key, widget in field_widgets.items():
+            spec = self._field_tooltip_specs.get(key)
+            if not spec:
+                continue
+            tooltip = self._add_tooltip(widget, spec["pro_tip"])
+            if tooltip:
+                self._field_tooltips[key] = tooltip
+
+        self._apply_beginner_mode(update_status=False)
+
+    def _control_specs_for_ui(self) -> dict[str, dict[str, str]]:
+        return {
+            "start_local_api": {
+                "pro_label": "Start Local API",
+                "beginner_label": "Start Local Server",
+                "pro_tip": "Start the local backend service at the API URL if it is not already running.",
+                "beginner_tip": "Turn on the local engine so this app can run jobs.",
+            },
+            "control_guide": {
+                "pro_label": "Control Guide",
+                "beginner_label": "Help: Button Guide",
+                "pro_tip": "Show a complete action/shortcut guide in the output panel.",
+                "beginner_tip": "Show a plain-language list of what each button does.",
+            },
+            "beginner_mode_toggle": {
+                "pro_label": "Beginner Mode",
+                "beginner_label": "Beginner Mode",
+                "pro_tip": "Switch labels and tooltips to plain-language construction terms.",
+                "beginner_tip": "Use simpler button names and easier help text.",
+            },
+            "load_trades": {
+                "pro_label": "Load Trades",
+                "beginner_label": "Load Work Types",
+                "pro_tip": "Fetch valid trade names from the API and refresh trade mode options.",
+                "beginner_tip": "Load the list of work types this job can use.",
+            },
+            "validate_trades": {
+                "pro_label": "Validate Trades",
+                "beginner_label": "Check Work Types",
+                "pro_tip": "Check your selected trades against the active analysis mode and trade catalog.",
+                "beginner_tip": "Check that your chosen work types are valid.",
+            },
+            "browse_overrides": {
+                "pro_label": "Browse",
+                "beginner_label": "Pick JSON File",
+                "pro_tip": "Select a sheet-overrides JSON file to apply authoritative sheet IDs/titles.",
+                "beginner_tip": "Choose a fix file for sheet names and numbers.",
+            },
+            "choose_pdfs": {
+                "pro_label": "Choose PDFs",
+                "beginner_label": "Pick Drawing Files",
+                "pro_tip": "Pick one or more drawing PDFs for analysis or async job submission.",
+                "beginner_tip": "Choose the plan drawing files you want to run.",
+            },
+            "run_analysis": {
+                "pro_label": "Run Analysis",
+                "beginner_label": "Run Now (Wait)",
+                "pro_tip": "Run synchronous analysis and return results directly in this window.",
+                "beginner_tip": "Run now and wait here until results finish.",
+            },
+            "submit_async_job": {
+                "pro_label": "Submit Async Job",
+                "beginner_label": "Start Background Run",
+                "pro_tip": "Submit a background job and return a job ID for polling.",
+                "beginner_tip": "Start in background so you can keep working while it runs.",
+            },
+            "refresh_job": {
+                "pro_label": "Refresh Job",
+                "beginner_label": "Check Job Status",
+                "pro_tip": "Fetch latest status and payload for the current job ID.",
+                "beginner_tip": "Check progress for the current background run.",
+            },
+            "load_latest_job": {
+                "pro_label": "Load Latest Job",
+                "beginner_label": "Use Newest Job",
+                "pro_tip": "Load the newest job from the API into the current job field.",
+                "beginner_tip": "Auto-fill with the most recent job number.",
+            },
+            "rerun_job": {
+                "pro_label": "Rerun Job",
+                "beginner_label": "Run Job Again",
+                "pro_tip": "Rerun a previous job using the current form inputs and stored uploads.",
+                "beginner_tip": "Run the same job again with your current settings.",
+            },
+            "run_e2e_benchmark": {
+                "pro_label": "Run End-to-End Benchmark",
+                "beginner_label": "Run Full Test",
+                "pro_tip": "Build templates, execute benchmark runs, and return quality comparisons.",
+                "beginner_tip": "Run the full quality test flow from start to finish.",
+            },
+            "rerun_recommended": {
+                "pro_label": "Rerun Recommended",
+                "beginner_label": "Run Suggested Job",
+                "pro_tip": "Create a rerun from automated trade recommendations for current job context.",
+                "beginner_tip": "Run again using the tool's suggested work-type scope.",
+            },
+            "cancel_job": {
+                "pro_label": "Cancel Job",
+                "beginner_label": "Stop Job",
+                "pro_tip": "Cancel the current queued or running job when possible.",
+                "beginner_tip": "Stop the current background run if it is still active.",
+            },
+            "template_include_all_sheets": {
+                "pro_label": "Template Include All Sheets",
+                "beginner_label": "Use All Sheets in Template",
+                "pro_tip": "Include all detected sheets when generating benchmark template output.",
+                "beginner_tip": "Add every found sheet when creating the test template.",
+            },
+            "get_review_queue": {
+                "pro_label": "Get Review Queue",
+                "beginner_label": "Show Sheets to Review",
+                "pro_tip": "Show low-confidence sheet IDs and items needing human review.",
+                "beginner_tip": "Show places where the app is unsure and needs a quick check.",
+            },
+            "export_overrides_template": {
+                "pro_label": "Export Overrides Template",
+                "beginner_label": "Create Sheet Fix File",
+                "pro_tip": "Generate a sheet overrides template JSON for manual correction.",
+                "beginner_tip": "Create a file where you can correct sheet names/IDs.",
+            },
+            "export_benchmark_template": {
+                "pro_label": "Export Benchmark Template",
+                "beginner_label": "Create Test Template",
+                "pro_tip": "Generate a benchmark manifest template from current/last completed job.",
+                "beginner_tip": "Create a quality-test template from this job.",
+            },
+            "benchmark_include_unmapped": {
+                "pro_label": "Benchmark Include Unmapped",
+                "beginner_label": "Include Unnamed Sheets",
+                "pro_tip": "Include unmapped sheet IDs in benchmark template expectations.",
+                "beginner_tip": "Include sheets with missing IDs in the quality test.",
+            },
+            "run_baseline_benchmark": {
+                "pro_label": "Run Baseline Benchmark",
+                "beginner_label": "Run Baseline Test",
+                "pro_tip": "Run a baseline benchmark using selected manifests and settings.",
+                "beginner_tip": "Run a base test to compare future improvements.",
+            },
+            "show_benchmark_history": {
+                "pro_label": "Show Benchmark History",
+                "beginner_label": "Show Past Tests",
+                "pro_tip": "Show saved benchmark result history from API or local fallback.",
+                "beginner_tip": "Show previous quality-test runs.",
+            },
+            "compare_reports": {
+                "pro_label": "Compare Reports",
+                "beginner_label": "Compare Two Test Files",
+                "pro_tip": "Pick two benchmark JSON files and compare baseline vs candidate scores.",
+                "beginner_tip": "Compare two test files to see what improved or dropped.",
+            },
+            "compare_latest_reports": {
+                "pro_label": "Compare Latest Reports",
+                "beginner_label": "Compare Last Two Tests",
+                "pro_tip": "Compare the two newest benchmark reports automatically.",
+                "beginner_tip": "Auto-compare your two newest tests.",
+            },
+            "latest_trend_snapshot": {
+                "pro_label": "Latest Trend Snapshot",
+                "beginner_label": "Show Score Trend",
+                "pro_tip": "Show current benchmark trend and overall score delta.",
+                "beginner_tip": "Show whether quality is improving or getting worse.",
+            },
+            "score_timeline": {
+                "pro_label": "Score Timeline",
+                "beginner_label": "Show Score Over Time",
+                "pro_tip": "Display benchmark score timeline points across saved runs.",
+                "beginner_tip": "Show quality scores over time.",
+            },
+            "evaluate_gate": {
+                "pro_label": "Evaluate Gate",
+                "beginner_label": "Check Pass/Fail Rules",
+                "pro_tip": "Run quality-gate checks (non-regression/improvement thresholds).",
+                "beginner_tip": "Check if current quality passes required rules.",
+            },
+            "benchmark_dashboard": {
+                "pro_label": "Benchmark Dashboard",
+                "beginner_label": "Show Test Dashboard",
+                "pro_tip": "Open consolidated history, timeline, trend, and gate summary payload.",
+                "beginner_tip": "Show one view with all quality-test summaries.",
+            },
+            "auto_poll_job": {
+                "pro_label": "Auto Poll Job",
+                "beginner_label": "Auto-Refresh Job Status",
+                "pro_tip": "Automatically refresh the current job until it reaches a terminal status.",
+                "beginner_tip": "Auto-check job status until it is done.",
+            },
+            "save_output": {
+                "pro_label": "Save Output",
+                "beginner_label": "Save Results Text",
+                "pro_tip": "Save the output panel content to a JSON file.",
+                "beginner_tip": "Save what you see in the results panel.",
+            },
+            "open_results_folder": {
+                "pro_label": "Open Results Folder",
+                "beginner_label": "Open Results Folder",
+                "pro_tip": "Open local benchmarks/results folder in your file explorer.",
+                "beginner_tip": "Open the folder where test and result files are stored.",
+            },
+            "job_ops_snapshot": {
+                "pro_label": "Job Ops Snapshot",
+                "beginner_label": "Show System Snapshot",
+                "pro_tip": "Show operational metrics snapshot for queue, durations, and throughput.",
+                "beginner_tip": "Show system health numbers like queue size and speed.",
+            },
+            "job_ops_gate": {
+                "pro_label": "Job Ops Gate",
+                "beginner_label": "Check System Pass/Fail",
+                "pro_tip": "Evaluate operational quality gate thresholds against recent job metrics.",
+                "beginner_tip": "Check if system performance is inside allowed limits.",
+            },
+            "trade_recommendation": {
+                "pro_label": "Trade Recommendation",
+                "beginner_label": "Suggest Work Types",
+                "pro_tip": "Generate recommended trade scope for current job based on detected content.",
+                "beginner_tip": "Suggest which work types should be included for this job.",
+            },
+            "trade_coverage": {
+                "pro_label": "Trade Coverage",
+                "beginner_label": "Show Work Type Coverage",
+                "pro_tip": "Show per-trade coverage and review-needed status for current job results.",
+                "beginner_tip": "Show how complete each work type is in current results.",
+            },
+            "readiness_report": {
+                "pro_label": "Readiness Report",
+                "beginner_label": "Show Ready-to-Handoff Report",
+                "pro_tip": "Generate handoff/readiness report combining review, coverage, and ops gates.",
+                "beginner_tip": "Generate a report showing if this job is ready to hand off.",
+            },
+            "cleanup_uploads": {
+                "pro_label": "Cleanup Uploads",
+                "beginner_label": "Delete Uploaded Files Too",
+                "pro_tip": "When pruning, also delete uploaded file folders tied to pruned jobs.",
+                "beginner_tip": "Also delete uploaded source files during cleanup.",
+            },
+            "prune_dry_run": {
+                "pro_label": "Prune Dry Run",
+                "beginner_label": "Preview Cleanup",
+                "pro_tip": "Preview jobs that would be pruned using current prune filters.",
+                "beginner_tip": "Show what would be deleted without deleting anything.",
+            },
+            "prune_apply": {
+                "pro_label": "Prune Apply",
+                "beginner_label": "Run Cleanup",
+                "pro_tip": "Delete/prune matching completed/failed/canceled jobs using current filters.",
+                "beginner_tip": "Delete old finished jobs using your cleanup settings.",
+            },
+        }
+
+    def _toggle_beginner_mode(self) -> None:
+        self._apply_beginner_mode(update_status=True)
+        self._save_settings()
+
+    def _apply_beginner_mode(self, *, update_status: bool) -> None:
+        use_beginner = bool(self.beginner_mode.get())
+        for key, widget in self._control_widgets.items():
+            spec = self._control_specs.get(key)
+            if not spec:
+                continue
+            target_label = spec["beginner_label"] if use_beginner else spec["pro_label"]
+            try:
+                widget.configure(text=target_label)
+            except Exception:
+                pass
+            tip = self._control_tooltips.get(key)
+            if tip is not None:
+                tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+                tip.set_text(tip_text)
+
+        for key, tip in self._field_tooltips.items():
+            spec = self._field_tooltip_specs.get(key)
+            if not spec:
+                continue
+            tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+            tip.set_text(tip_text)
+
+        self._control_help_entries = {}
+        for key, spec in self._control_specs.items():
+            label = spec["beginner_label"] if use_beginner else spec["pro_label"]
+            description = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+            self._control_help_entries[label] = description
+
+        if update_status:
+            mode_text = "Beginner mode enabled." if use_beginner else "Beginner mode disabled."
+            self.status_text.set(mode_text)
 
     def _walk_widgets(self, parent: object) -> list[object]:
         children = []
@@ -528,10 +846,12 @@ class DesktopEstimatorApp:
             children.extend(self._walk_widgets(child))
         return children
 
-    def _add_tooltip(self, widget: object, text: str) -> None:
+    def _add_tooltip(self, widget: object, text: str) -> HoverTooltip | None:
         if not text.strip():
-            return
-        self._tooltips.append(HoverTooltip(widget, text))
+            return None
+        tooltip = HoverTooltip(widget, text)
+        self._tooltips.append(tooltip)
+        return tooltip
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<F1>", self._shortcut_show_guide, add="+")
@@ -540,6 +860,7 @@ class DesktopEstimatorApp:
         self.root.bind("<F5>", self._shortcut_refresh_job, add="+")
         self.root.bind("<Control-l>", self._shortcut_load_latest_job, add="+")
         self.root.bind("<Control-s>", self._shortcut_save_output, add="+")
+        self.root.bind("<Control-b>", self._shortcut_toggle_beginner_mode, add="+")
 
     def _shortcut_show_guide(self, _event: object = None) -> str:
         self._show_control_guide()
@@ -565,17 +886,32 @@ class DesktopEstimatorApp:
         self._save_output()
         return "break"
 
+    def _shortcut_toggle_beginner_mode(self, _event: object = None) -> str:
+        self.beginner_mode.set(not bool(self.beginner_mode.get()))
+        self._toggle_beginner_mode()
+        return "break"
+
     def _show_control_guide(self) -> None:
+        use_beginner = bool(self.beginner_mode.get())
+        heading = "AI Estimator Desktop - Beginner Guide" if use_beginner else "AI Estimator Desktop - Control Guide"
+        label_mode = "beginner_label" if use_beginner else "pro_label"
+        choose_pdfs_label = self._control_specs.get("choose_pdfs", {}).get(label_mode, "Choose PDFs")
+        submit_job_label = self._control_specs.get("submit_async_job", {}).get(label_mode, "Submit Async Job")
+        refresh_job_label = self._control_specs.get("refresh_job", {}).get(label_mode, "Refresh Job")
+        load_latest_label = self._control_specs.get("load_latest_job", {}).get(label_mode, "Load Latest Job")
+        save_output_label = self._control_specs.get("save_output", {}).get(label_mode, "Save Output")
+        beginner_mode_label = self._control_specs.get("beginner_mode_toggle", {}).get(label_mode, "Beginner Mode")
         lines = [
-            "AI Estimator Desktop - Control Guide",
+            heading,
             "",
             "Keyboard shortcuts:",
             "- F1: Show this guide",
-            "- Ctrl+O: Choose PDFs",
-            "- Ctrl+Enter: Submit Async Job",
-            "- F5: Refresh Job",
-            "- Ctrl+L: Load Latest Job",
-            "- Ctrl+S: Save Output",
+            f"- Ctrl+O: {choose_pdfs_label}",
+            f"- Ctrl+Enter: {submit_job_label}",
+            f"- F5: {refresh_job_label}",
+            f"- Ctrl+L: {load_latest_label}",
+            f"- Ctrl+S: {save_output_label}",
+            f"- Ctrl+B: Toggle {beginner_mode_label}",
             "",
             "Controls:",
         ]
@@ -586,7 +922,7 @@ class DesktopEstimatorApp:
             lines.append("- No control descriptions were found.")
 
         self._set_output_text("\n".join(lines))
-        self.status_text.set("Control guide loaded.")
+        self.status_text.set("Guide loaded.")
 
     def _choose_pdfs(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -1502,6 +1838,10 @@ class DesktopEstimatorApp:
         if isinstance(include_unmapped_benchmark, bool):
             self.include_unmapped_benchmark.set(include_unmapped_benchmark)
 
+        beginner_mode = loaded.get("beginner_mode")
+        if isinstance(beginner_mode, bool):
+            self.beginner_mode.set(beginner_mode)
+
         auto_poll_enabled = loaded.get("auto_poll_enabled")
         if isinstance(auto_poll_enabled, bool):
             self.auto_poll_enabled.set(auto_poll_enabled)
@@ -1532,6 +1872,8 @@ class DesktopEstimatorApp:
                         restored.append(str(path))
             self.files = restored
 
+        self._apply_beginner_mode(update_status=False)
+
         if self.auto_poll_enabled.get() and self.current_job_id.get().strip():
             self._start_auto_poll()
 
@@ -1545,6 +1887,7 @@ class DesktopEstimatorApp:
             "current_job_id": self.current_job_id.get().strip(),
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
+            "beginner_mode": bool(self.beginner_mode.get()),
             "auto_poll_enabled": bool(self.auto_poll_enabled.get()),
             "prune_statuses": self.prune_statuses.get().strip(),
             "prune_older_than_hours": self.prune_older_than_hours.get().strip(),
