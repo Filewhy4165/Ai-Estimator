@@ -186,6 +186,8 @@ class DesktopEstimatorApp:
         self.auto_poll_handle: str | None = None
         self.benchmark_task_running = False
         self.end_to_end_task_running = False
+        self.request_task_running = False
+        self.request_progress_text = StringVar(value="")
         self.status_text = StringVar(value="Ready.")
         self.trade_catalog: list[str] = []
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
@@ -422,6 +424,16 @@ class DesktopEstimatorApp:
 
         ttk.Label(frame, textvariable=self.status_text).grid(row=11, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
+        progress_row = ttk.Frame(frame)
+        progress_row.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        progress_row.columnconfigure(1, weight=1)
+        self.request_progress_label = ttk.Label(progress_row, textvariable=self.request_progress_text)
+        self.request_progress_label.grid(row=0, column=0, sticky="w")
+        self.request_progress_bar = ttk.Progressbar(progress_row, mode="indeterminate", length=260)
+        self.request_progress_bar.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.request_progress_label.grid_remove()
+        self.request_progress_bar.grid_remove()
+
         self.output = Text(
             frame,
             wrap="none",
@@ -431,10 +443,10 @@ class DesktopEstimatorApp:
             padx=8,
             pady=8,
         )
-        self.output.grid(row=12, column=0, columnspan=2, sticky="nsew")
+        self.output.grid(row=13, column=0, columnspan=2, sticky="nsew")
 
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(12, weight=1)
+        frame.rowconfigure(13, weight=1)
         self._install_tooltips(
             frame=frame,
             api_url_entry=api_url_entry,
@@ -965,38 +977,130 @@ class DesktopEstimatorApp:
 
     def _run_analysis(self) -> None:
         self.output.delete("1.0", END)
+        if self.request_task_running:
+            self.status_text.set("Another request is already running. Wait for it to finish.")
+            return
         if not self.files:
             self.output.insert(END, "Please select at least one PDF.")
             return
 
         try:
             data = self._build_request_data()
-            payload = self._post_files("/v1/analyze", data=data, timeout=600)
-            self._set_output_json(payload)
-            self.status_text.set("Synchronous analysis completed.")
+            api_base = self.api_url.get().strip().rstrip("/")
+            if not api_base:
+                raise RuntimeError("API URL is required.")
+            file_paths = list(self.files)
         except Exception as exc:
-            self._set_output_text(f"Failed to run analysis:\n{exc}")
+            self._set_output_text(f"Failed to start analysis:\n{exc}")
+            return
+
+        self._set_request_busy(
+            busy=True,
+            message=f"Running analysis on {len(file_paths)} file(s). Large PDFs may take several minutes...",
+        )
+        self.status_text.set("Uploading drawings and running analysis...")
+        worker = Thread(
+            target=self._run_analysis_worker,
+            args=(api_base, data, file_paths),
+            daemon=True,
+        )
+        worker.start()
 
     def _submit_async_job(self) -> None:
         self.output.delete("1.0", END)
+        if self.request_task_running:
+            self.status_text.set("Another request is already running. Wait for it to finish.")
+            return
         if not self.files:
             self.output.insert(END, "Please select at least one PDF.")
             return
 
         try:
             data = self._build_request_data()
-            payload = self._post_files("/v1/jobs", data=data, timeout=120)
-            job_id = str(payload.get("job_id", "")).strip()
-            if not job_id:
-                raise RuntimeError("API response did not include job_id.")
-            self.current_job_id.set(job_id)
-            self._set_output_json(payload)
-            self.status_text.set(f"Async job submitted: {job_id}")
-            self._save_settings()
-            if self.auto_poll_enabled.get():
-                self._start_auto_poll()
+            api_base = self.api_url.get().strip().rstrip("/")
+            if not api_base:
+                raise RuntimeError("API URL is required.")
+            file_paths = list(self.files)
         except Exception as exc:
-            self._set_output_text(f"Failed to submit async job:\n{exc}")
+            self._set_output_text(f"Failed to start async job:\n{exc}")
+            return
+
+        self._set_request_busy(
+            busy=True,
+            message=f"Submitting background job for {len(file_paths)} file(s). Uploading large PDFs...",
+        )
+        self.status_text.set("Uploading files and creating background job...")
+        worker = Thread(
+            target=self._submit_async_job_worker,
+            args=(api_base, data, file_paths),
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_analysis_worker(
+        self,
+        api_base: str,
+        request_data: dict[str, str],
+        file_paths: list[str],
+    ) -> None:
+        try:
+            payload = self._post_files_to_base(
+                api_base=api_base,
+                path="/v1/analyze",
+                data=request_data,
+                file_paths=file_paths,
+                timeout=1800,
+            )
+            self.root.after(0, lambda: self._on_run_analysis_success(payload))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_run_analysis_failure(exc))
+
+    def _submit_async_job_worker(
+        self,
+        api_base: str,
+        request_data: dict[str, str],
+        file_paths: list[str],
+    ) -> None:
+        try:
+            payload = self._post_files_to_base(
+                api_base=api_base,
+                path="/v1/jobs",
+                data=request_data,
+                file_paths=file_paths,
+                timeout=1800,
+            )
+            self.root.after(0, lambda: self._on_submit_async_job_success(payload))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_submit_async_job_failure(exc))
+
+    def _on_run_analysis_success(self, payload: dict) -> None:
+        self._set_request_busy(busy=False)
+        self._set_output_json(payload)
+        self.status_text.set("Synchronous analysis completed.")
+
+    def _on_run_analysis_failure(self, exc: Exception) -> None:
+        self._set_request_busy(busy=False)
+        self._set_output_text(f"Failed to run analysis:\n{exc}")
+        self.status_text.set("Analysis failed.")
+
+    def _on_submit_async_job_success(self, payload: dict) -> None:
+        self._set_request_busy(busy=False)
+        job_id = str(payload.get("job_id", "")).strip()
+        if not job_id:
+            self._set_output_text("Failed to submit async job:\nAPI response did not include job_id.")
+            self.status_text.set("Async job submission failed.")
+            return
+        self.current_job_id.set(job_id)
+        self._set_output_json(payload)
+        self.status_text.set(f"Async job submitted: {job_id}")
+        self._save_settings()
+        if self.auto_poll_enabled.get():
+            self._start_auto_poll()
+
+    def _on_submit_async_job_failure(self, exc: Exception) -> None:
+        self._set_request_busy(busy=False)
+        self._set_output_text(f"Failed to submit async job:\n{exc}")
+        self.status_text.set("Async job submission failed.")
 
     def _rerun_job(self) -> None:
         source_job_id = self.current_job_id.get().strip()
@@ -1789,11 +1893,56 @@ class DesktopEstimatorApp:
         self.output.delete("1.0", END)
         self.output.insert(END, text)
 
+    def _set_request_busy(self, *, busy: bool, message: str = "") -> None:
+        self.request_task_running = busy
+        if busy:
+            self.request_progress_text.set(message.strip() or "Working...")
+            self.request_progress_label.grid()
+            self.request_progress_bar.grid()
+            self.request_progress_bar.start(12)
+            return
+
+        self.request_progress_bar.stop()
+        self.request_progress_bar.grid_remove()
+        self.request_progress_label.grid_remove()
+        self.request_progress_text.set("")
+
+    def _format_size_label(self, byte_count: int) -> str:
+        if byte_count < 1024:
+            return f"{byte_count} B"
+        kib = byte_count / 1024.0
+        if kib < 1024:
+            return f"{kib:.1f} KB"
+        mib = kib / 1024.0
+        if mib < 1024:
+            return f"{mib:.1f} MB"
+        gib = mib / 1024.0
+        return f"{gib:.2f} GB"
+
+    def _selected_files_summary(self) -> str:
+        if not self.files:
+            return "No files selected."
+        names: list[str] = [Path(path).name for path in self.files]
+        total_bytes = 0
+        missing = 0
+        for path in self.files:
+            try:
+                total_bytes += Path(path).stat().st_size
+            except OSError:
+                missing += 1
+        shown = ", ".join(names[:3])
+        if len(names) > 3:
+            shown = f"{shown}, +{len(names) - 3} more"
+
+        size_text = self._format_size_label(total_bytes) if total_bytes > 0 else "size unknown"
+        if missing > 0:
+            return (
+                f"{len(names)} file(s) selected ({size_text}; {missing} unavailable): {shown}"
+            )
+        return f"{len(names)} file(s) selected ({size_text}): {shown}"
+
     def _refresh_files_label(self) -> None:
-        if self.files:
-            self.files_label.config(text=f"{len(self.files)} file(s) selected.")
-        else:
-            self.files_label.config(text="No files selected.")
+        self.files_label.config(text=self._selected_files_summary())
 
     def _load_settings(self) -> None:
         if not self.settings_path.exists():
