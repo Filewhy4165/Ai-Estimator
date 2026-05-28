@@ -176,7 +176,8 @@ class DesktopEstimatorApp:
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
         self.include_unmapped_benchmark = BooleanVar(value=True)
-        self.beginner_mode = BooleanVar(value=False)
+        self.beginner_mode = BooleanVar(value=True)
+        self.show_advanced_tools = BooleanVar(value=False)
         self.auto_poll_enabled = BooleanVar(value=False)
         self.prune_statuses = StringVar(value="completed,failed,canceled")
         self.prune_older_than_hours = StringVar(value="168")
@@ -199,6 +200,8 @@ class DesktopEstimatorApp:
         self._control_tooltips: dict[str, HoverTooltip] = {}
         self._field_tooltip_specs: dict[str, dict[str, str]] = {}
         self._field_tooltips: dict[str, HoverTooltip] = {}
+        self.actions_notebook: ttk.Notebook | None = None
+        self._advanced_tab_widgets: list[tuple[ttk.Frame, str]] = []
 
         self._configure_style()
         self._build_ui()
@@ -210,10 +213,20 @@ class DesktopEstimatorApp:
     def _configure_style(self) -> None:
         style = ttk.Style(self.root)
         available_themes = set(style.theme_names())
-        if "clam" in available_themes:
+        if "vista" in available_themes:
+            style.theme_use("vista")
+        elif "xpnative" in available_themes:
+            style.theme_use("xpnative")
+        elif "clam" in available_themes:
             style.theme_use("clam")
-        style.configure("TButton", padding=(8, 4))
-        style.configure("TCheckbutton", padding=(4, 2))
+        style.configure("TButton", padding=(10, 6), font=("Segoe UI", 9))
+        style.configure("Primary.TButton", padding=(12, 6), font=("Segoe UI Semibold", 9))
+        style.configure("TCheckbutton", padding=(4, 2), font=("Segoe UI", 9))
+        style.configure("TLabel", font=("Segoe UI", 9))
+        style.configure("TEntry", font=("Segoe UI", 9))
+        style.configure("TCombobox", font=("Segoe UI", 9))
+        style.configure("TNotebook", tabmargins=(8, 4, 8, 0))
+        style.configure("TNotebook.Tab", padding=(14, 7), font=("Segoe UI Semibold", 9))
         style.configure("Section.TLabel", font=("Segoe UI", 9, "bold"))
 
     def _build_ui(self) -> None:
@@ -238,6 +251,12 @@ class DesktopEstimatorApp:
             variable=self.beginner_mode,
             command=self._toggle_beginner_mode,
         ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Checkbutton(
+            api_row,
+            text="Advanced Tools",
+            variable=self.show_advanced_tools,
+            command=self._toggle_advanced_tools,
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
 
         ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
         api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
@@ -288,122 +307,145 @@ class DesktopEstimatorApp:
         notes_entry = ttk.Entry(frame, textvariable=self.notes, width=68)
         notes_entry.grid(row=6, column=1, sticky="ew")
 
-        actions1 = ttk.Frame(frame)
-        actions1.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        actions1.columnconfigure(9, weight=1)
-        ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
-        ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
-            row=0, column=1, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Submit Async Job", command=self._submit_async_job).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Refresh Job", command=self._refresh_job).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Load Latest Job", command=self._load_latest_job).grid(
-            row=0, column=4, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Rerun Job", command=self._rerun_job).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Run End-to-End Benchmark", command=self._run_end_to_end_benchmark).grid(
-            row=0, column=6, sticky="w", padx=(8, 0)
-        )
+        self.actions_notebook = ttk.Notebook(frame)
+        self.actions_notebook.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 8))
+        workflow_tab = ttk.Frame(self.actions_notebook, padding=8)
+        quality_tab = ttk.Frame(self.actions_notebook, padding=8)
+        operations_tab = ttk.Frame(self.actions_notebook, padding=8)
+        self.actions_notebook.add(workflow_tab, text="Workflow")
+        self.actions_notebook.add(quality_tab, text="Quality")
+        self.actions_notebook.add(operations_tab, text="Operations")
+        self._advanced_tab_widgets = [(quality_tab, "Quality"), (operations_tab, "Operations")]
+
+        workflow_run = ttk.LabelFrame(workflow_tab, text="Run Drawings", padding=8)
+        workflow_run.grid(row=0, column=0, sticky="ew")
+        for col in range(6):
+            workflow_run.columnconfigure(col, weight=1)
+        ttk.Button(workflow_run, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
         ttk.Button(
-            actions1,
+            workflow_run,
+            text="Quick Start",
+            style="Primary.TButton",
+            command=self._quick_start_run,
+        ).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(
+            workflow_run,
+            text="Submit Async Job",
+            style="Primary.TButton",
+            command=self._submit_async_job,
+        ).grid(row=0, column=2, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Run Analysis", command=self._run_analysis).grid(row=0, column=3, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Refresh Job", command=self._refresh_job).grid(row=0, column=4, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Load Latest Job", command=self._load_latest_job).grid(row=0, column=5, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Rerun Job", command=self._rerun_job).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Button(
+            workflow_run,
             text="Rerun Recommended",
             command=self._rerun_job_with_recommendation,
-        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
-        ttk.Button(actions1, text="Cancel Job", command=self._cancel_job).grid(
-            row=0, column=8, sticky="w", padx=(8, 0)
-        )
-
-        actions2 = ttk.Frame(frame)
-        actions2.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(21, weight=1)
+        ).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Cancel Job", command=self._cancel_job).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
         ttk.Checkbutton(
-            actions2,
-            text="Template Include All Sheets",
-            variable=self.include_all_template,
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Button(actions2, text="Get Review Queue", command=self._get_review_queue).grid(
-            row=0, column=1, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Export Overrides Template", command=self._export_overrides_template).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Export Benchmark Template", command=self._export_benchmark_template).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
-        )
-        ttk.Checkbutton(
-            actions2,
-            text="Benchmark Include Unmapped",
-            variable=self.include_unmapped_benchmark,
-        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
-        ttk.Button(actions2, text="Run Baseline Benchmark", command=self._run_baseline_benchmark).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Show Benchmark History", command=self._show_benchmark_history).grid(
-            row=0, column=6, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Compare Reports", command=self._compare_benchmark_reports).grid(
-            row=0, column=7, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Compare Latest Reports", command=self._compare_latest_benchmark_reports).grid(
-            row=0, column=8, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Latest Trend Snapshot", command=self._show_benchmark_trend_snapshot).grid(
-            row=0, column=9, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Score Timeline", command=self._show_benchmark_score_timeline).grid(
-            row=0, column=10, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Evaluate Gate", command=self._evaluate_benchmark_quality_gate).grid(
-            row=0, column=11, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Benchmark Dashboard", command=self._show_benchmark_dashboard).grid(
-            row=0, column=12, sticky="w", padx=(8, 0)
-        )
-        ttk.Checkbutton(
-            actions2,
+            workflow_run,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=13, sticky="w", padx=(8, 0))
-        ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=14, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
-            row=0, column=15, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Job Ops Snapshot", command=self._show_job_ops_snapshot).grid(
-            row=0, column=16, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Job Ops Gate", command=self._evaluate_job_ops_gate).grid(
-            row=0, column=17, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Trade Recommendation", command=self._get_trade_recommendation).grid(
-            row=0, column=18, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Trade Coverage", command=self._get_trade_coverage).grid(
-            row=0, column=19, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Readiness Report", command=self._get_readiness_report).grid(
-            row=0, column=20, sticky="w", padx=(8, 0)
+        ).grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Save Output", command=self._save_output).grid(row=1, column=4, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Open Results Folder", command=self._open_results_folder).grid(
+            row=1, column=5, sticky="ew", padx=4, pady=4
         )
 
-        prune_row = ttk.Frame(frame)
-        prune_row.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        prune_row.columnconfigure(10, weight=1)
+        workflow_benchmark = ttk.LabelFrame(workflow_tab, text="Full Quality Flow", padding=8)
+        workflow_benchmark.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        workflow_benchmark.columnconfigure(0, weight=1)
+        ttk.Button(
+            workflow_benchmark,
+            text="Run End-to-End Benchmark",
+            command=self._run_end_to_end_benchmark,
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+
+        quality_templates = ttk.LabelFrame(quality_tab, text="Templates & Review", padding=8)
+        quality_templates.grid(row=0, column=0, sticky="ew")
+        for col in range(4):
+            quality_templates.columnconfigure(col, weight=1)
+        ttk.Checkbutton(
+            quality_templates,
+            text="Template Include All Sheets",
+            variable=self.include_all_template,
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Button(quality_templates, text="Get Review Queue", command=self._get_review_queue).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_templates, text="Export Overrides Template", command=self._export_overrides_template).grid(
+            row=0, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_templates, text="Export Benchmark Template", command=self._export_benchmark_template).grid(
+            row=0, column=3, sticky="ew", padx=4, pady=4
+        )
+
+        quality_compare = ttk.LabelFrame(quality_tab, text="Benchmarks", padding=8)
+        quality_compare.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        for col in range(5):
+            quality_compare.columnconfigure(col, weight=1)
+        ttk.Checkbutton(
+            quality_compare,
+            text="Benchmark Include Unmapped",
+            variable=self.include_unmapped_benchmark,
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Button(quality_compare, text="Run Baseline Benchmark", command=self._run_baseline_benchmark).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Show Benchmark History", command=self._show_benchmark_history).grid(
+            row=0, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Compare Reports", command=self._compare_benchmark_reports).grid(
+            row=0, column=3, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Compare Latest Reports", command=self._compare_latest_benchmark_reports).grid(
+            row=0, column=4, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Latest Trend Snapshot", command=self._show_benchmark_trend_snapshot).grid(
+            row=1, column=0, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Score Timeline", command=self._show_benchmark_score_timeline).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Evaluate Gate", command=self._evaluate_benchmark_quality_gate).grid(
+            row=1, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Benchmark Dashboard", command=self._show_benchmark_dashboard).grid(
+            row=1, column=3, sticky="ew", padx=4, pady=4
+        )
+
+        operations_jobs = ttk.LabelFrame(operations_tab, text="Operations", padding=8)
+        operations_jobs.grid(row=0, column=0, sticky="ew")
+        for col in range(3):
+            operations_jobs.columnconfigure(col, weight=1)
+        ttk.Button(operations_jobs, text="Job Ops Snapshot", command=self._show_job_ops_snapshot).grid(
+            row=0, column=0, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Job Ops Gate", command=self._evaluate_job_ops_gate).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Readiness Report", command=self._get_readiness_report).grid(
+            row=0, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Trade Recommendation", command=self._get_trade_recommendation).grid(
+            row=1, column=0, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Trade Coverage", command=self._get_trade_coverage).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=4
+        )
+
+        prune_row = ttk.LabelFrame(operations_tab, text="Data Cleanup", padding=8)
+        prune_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        prune_row.columnconfigure(12, weight=1)
         ttk.Label(prune_row, text="Prune Statuses").grid(row=0, column=0, sticky="w")
         prune_statuses_entry = ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28)
         prune_statuses_entry.grid(row=0, column=1, sticky="w", padx=(6, 0))
         ttk.Label(prune_row, text="Older Than (h)").grid(row=0, column=2, sticky="w", padx=(12, 0))
         prune_older_than_entry = ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8)
-        prune_older_than_entry.grid(
-            row=0, column=3, sticky="w", padx=(6, 0)
-        )
+        prune_older_than_entry.grid(row=0, column=3, sticky="w", padx=(6, 0))
         ttk.Label(prune_row, text="Limit").grid(row=0, column=4, sticky="w", padx=(12, 0))
         prune_limit_entry = ttk.Entry(prune_row, textvariable=self.prune_limit, width=8)
         prune_limit_entry.grid(row=0, column=5, sticky="w", padx=(6, 0))
@@ -420,12 +462,12 @@ class DesktopEstimatorApp:
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
-        self.files_label.grid(row=10, column=0, columnspan=2, sticky="w")
+        self.files_label.grid(row=8, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(frame, textvariable=self.status_text).grid(row=11, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        ttk.Label(frame, textvariable=self.status_text).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         progress_row = ttk.Frame(frame)
-        progress_row.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        progress_row.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         progress_row.columnconfigure(1, weight=1)
         self.request_progress_label = ttk.Label(progress_row, textvariable=self.request_progress_text)
         self.request_progress_label.grid(row=0, column=0, sticky="w")
@@ -437,16 +479,16 @@ class DesktopEstimatorApp:
         self.output = Text(
             frame,
             wrap="none",
-            background="#0B1220",
-            foreground="#E5E7EB",
-            insertbackground="#E5E7EB",
+            background="#FFFFFF",
+            foreground="#111827",
+            insertbackground="#111827",
             padx=8,
             pady=8,
         )
-        self.output.grid(row=13, column=0, columnspan=2, sticky="nsew")
+        self.output.grid(row=11, column=0, columnspan=2, sticky="nsew")
 
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(13, weight=1)
+        frame.rowconfigure(11, weight=1)
         self._install_tooltips(
             frame=frame,
             api_url_entry=api_url_entry,
@@ -459,6 +501,7 @@ class DesktopEstimatorApp:
             prune_older_than_entry=prune_older_than_entry,
             prune_limit_entry=prune_limit_entry,
         )
+        self._apply_advanced_tools_visibility(update_status=False)
 
     def _install_tooltips(
         self,
@@ -593,6 +636,12 @@ class DesktopEstimatorApp:
                 "pro_tip": "Switch labels and tooltips to plain-language construction terms.",
                 "beginner_tip": "Use simpler button names and easier help text.",
             },
+            "advanced_tools_toggle": {
+                "pro_label": "Advanced Tools",
+                "beginner_label": "Show Advanced Tabs",
+                "pro_tip": "Show advanced quality and operations tabs in the ribbon area.",
+                "beginner_tip": "Turn on extra tabs with technical tools and maintenance actions.",
+            },
             "load_trades": {
                 "pro_label": "Load Trades",
                 "beginner_label": "Load Work Types",
@@ -616,6 +665,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Pick Drawing Files",
                 "pro_tip": "Pick one or more drawing PDFs for analysis or async job submission.",
                 "beginner_tip": "Choose the plan drawing files you want to run.",
+            },
+            "quick_start": {
+                "pro_label": "Quick Start",
+                "beginner_label": "Start Estimate",
+                "pro_tip": "Recommended one-click flow: ensure files are selected, submit async job, and auto-poll status.",
+                "beginner_tip": "Main button to start estimating in the background and watch progress automatically.",
             },
             "run_analysis": {
                 "pro_label": "Run Analysis",
@@ -815,8 +870,30 @@ class DesktopEstimatorApp:
         self._apply_beginner_mode(update_status=True)
         self._save_settings()
 
+    def _toggle_advanced_tools(self) -> None:
+        self._apply_advanced_tools_visibility(update_status=True)
+        self._save_settings()
+
+    def _apply_advanced_tools_visibility(self, *, update_status: bool) -> None:
+        if self.actions_notebook is None:
+            return
+        show_advanced = bool(self.show_advanced_tools.get())
+        for tab_widget, tab_text in self._advanced_tab_widgets:
+            current_state = str(self.actions_notebook.tab(tab_widget, "state"))
+            desired_state = "normal" if show_advanced else "hidden"
+            if current_state != desired_state:
+                self.actions_notebook.tab(tab_widget, state=desired_state)
+        if not show_advanced:
+            self.actions_notebook.select(0)
+        if update_status:
+            message = "Advanced tabs shown." if show_advanced else "Advanced tabs hidden."
+            self.status_text.set(message)
+
     def _apply_beginner_mode(self, *, update_status: bool) -> None:
         use_beginner = bool(self.beginner_mode.get())
+        if use_beginner and self.show_advanced_tools.get():
+            self.show_advanced_tools.set(False)
+            self._apply_advanced_tools_visibility(update_status=False)
         for key, widget in self._control_widgets.items():
             spec = self._control_specs.get(key)
             if not spec:
@@ -956,6 +1033,20 @@ class DesktopEstimatorApp:
         self.sheet_overrides_path.set(selected)
         self.status_text.set("Overrides file selected.")
         self._save_settings()
+
+    def _quick_start_run(self) -> None:
+        if self.request_task_running:
+            self.status_text.set("Another request is already running. Wait for it to finish.")
+            return
+        if not self.files:
+            self._choose_pdfs()
+            if not self.files:
+                self.status_text.set("Quick start canceled: no drawing files selected.")
+                return
+        if not self.auto_poll_enabled.get():
+            self.auto_poll_enabled.set(True)
+        self.status_text.set("Quick start: submitting background job with auto-poll.")
+        self._submit_async_job()
 
     def _load_trade_catalog(self) -> None:
         try:
@@ -1991,6 +2082,10 @@ class DesktopEstimatorApp:
         if isinstance(beginner_mode, bool):
             self.beginner_mode.set(beginner_mode)
 
+        show_advanced_tools = loaded.get("show_advanced_tools")
+        if isinstance(show_advanced_tools, bool):
+            self.show_advanced_tools.set(show_advanced_tools)
+
         auto_poll_enabled = loaded.get("auto_poll_enabled")
         if isinstance(auto_poll_enabled, bool):
             self.auto_poll_enabled.set(auto_poll_enabled)
@@ -2022,6 +2117,7 @@ class DesktopEstimatorApp:
             self.files = restored
 
         self._apply_beginner_mode(update_status=False)
+        self._apply_advanced_tools_visibility(update_status=False)
 
         if self.auto_poll_enabled.get() and self.current_job_id.get().strip():
             self._start_auto_poll()
@@ -2037,6 +2133,7 @@ class DesktopEstimatorApp:
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
             "beginner_mode": bool(self.beginner_mode.get()),
+            "show_advanced_tools": bool(self.show_advanced_tools.get()),
             "auto_poll_enabled": bool(self.auto_poll_enabled.get()),
             "prune_statuses": self.prune_statuses.get().strip(),
             "prune_older_than_hours": self.prune_older_than_hours.get().strip(),
