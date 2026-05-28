@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Thread
-from tkinter import END, BooleanVar, StringVar, Text, Tk, filedialog, ttk
+from tkinter import END, BooleanVar, Label, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
 import time
 
@@ -63,11 +63,104 @@ def validate_selected_trade_scope(
     return selected_tokens
 
 
+class HoverTooltip:
+    def __init__(
+        self,
+        widget: object,
+        text: str,
+        *,
+        delay_ms: int = 450,
+        wrap_length: int = 360,
+    ) -> None:
+        self.widget = widget
+        self.text = text.strip()
+        self.delay_ms = delay_ms
+        self.wrap_length = wrap_length
+        self._after_id: str | None = None
+        self._tip_window: Toplevel | None = None
+
+        bind = getattr(widget, "bind", None)
+        if callable(bind):
+            bind("<Enter>", self._on_enter, add="+")
+            bind("<Leave>", self._on_leave, add="+")
+            bind("<ButtonPress>", self._on_leave, add="+")
+
+    def _on_enter(self, _event: object = None) -> None:
+        self._schedule_show()
+
+    def _on_leave(self, _event: object = None) -> None:
+        self._cancel_show()
+        self._hide()
+
+    def _schedule_show(self) -> None:
+        if not self.text:
+            return
+        after = getattr(self.widget, "after", None)
+        if not callable(after):
+            return
+        self._cancel_show()
+        self._after_id = after(self.delay_ms, self._show)
+
+    def _cancel_show(self) -> None:
+        if not self._after_id:
+            return
+        after_cancel = getattr(self.widget, "after_cancel", None)
+        if callable(after_cancel):
+            try:
+                after_cancel(self._after_id)
+            except Exception:
+                pass
+        self._after_id = None
+
+    def _show(self) -> None:
+        self._after_id = None
+        if self._tip_window is not None or not self.text:
+            return
+        try:
+            pointer_x = int(getattr(self.widget, "winfo_pointerx")())
+            pointer_y = int(getattr(self.widget, "winfo_pointery")())
+        except Exception:
+            return
+
+        tip = Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        tip.geometry(f"+{pointer_x + 14}+{pointer_y + 16}")
+
+        label = Label(
+            tip,
+            text=self.text,
+            justify="left",
+            wraplength=self.wrap_length,
+            background="#111827",
+            foreground="#E5E7EB",
+            relief="solid",
+            borderwidth=1,
+            padx=8,
+            pady=6,
+        )
+        label.pack()
+        self._tip_window = tip
+
+    def _hide(self) -> None:
+        if self._tip_window is None:
+            return
+        try:
+            self._tip_window.destroy()
+        except Exception:
+            pass
+        self._tip_window = None
+
+
 class DesktopEstimatorApp:
     def __init__(self) -> None:
         self.root = Tk()
         self.root.title("AI Estimator Desktop")
-        self.root.geometry("1080x760")
+        self.root.geometry("1320x820")
+        self.root.minsize(1180, 700)
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
@@ -92,27 +185,40 @@ class DesktopEstimatorApp:
         self.trade_catalog: list[str] = []
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
+        self._tooltips: list[HoverTooltip] = []
 
+        self._configure_style()
         self._build_ui()
         self._load_settings()
         self._refresh_files_label()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _configure_style(self) -> None:
+        style = ttk.Style(self.root)
+        available_themes = set(style.theme_names())
+        if "clam" in available_themes:
+            style.theme_use("clam")
+        style.configure("TButton", padding=(8, 4))
+        style.configure("TCheckbutton", padding=(4, 2))
+        style.configure("Section.TLabel", font=("Segoe UI", 9, "bold"))
+
     def _build_ui(self) -> None:
-        frame = ttk.Frame(self.root, padding=12)
+        frame = ttk.Frame(self.root, padding=14)
         frame.pack(fill="both", expand=True)
 
         ttk.Label(frame, text="API URL").grid(row=0, column=0, sticky="w")
         api_row = ttk.Frame(frame)
         api_row.grid(row=0, column=1, sticky="ew")
         api_row.columnconfigure(0, weight=1)
-        ttk.Entry(api_row, textvariable=self.api_url, width=58).grid(row=0, column=0, sticky="ew")
+        api_url_entry = ttk.Entry(api_row, textvariable=self.api_url, width=58)
+        api_url_entry.grid(row=0, column=0, sticky="ew")
         ttk.Button(api_row, text="Start Local API", command=self._start_local_api_clicked).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
         ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.api_key, width=68, show="*").grid(row=1, column=1, sticky="ew")
+        api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
+        api_key_entry.grid(row=1, column=1, sticky="ew")
 
         ttk.Label(frame, text="Analysis Mode").grid(row=2, column=0, sticky="w")
         self.analysis_mode_combo = ttk.Combobox(
@@ -128,7 +234,8 @@ class DesktopEstimatorApp:
         selected_trades_row = ttk.Frame(frame)
         selected_trades_row.grid(row=3, column=1, sticky="ew")
         selected_trades_row.columnconfigure(0, weight=1)
-        ttk.Entry(selected_trades_row, textvariable=self.selected_trades, width=52).grid(
+        selected_trades_entry = ttk.Entry(selected_trades_row, textvariable=self.selected_trades, width=52)
+        selected_trades_entry.grid(
             row=0, column=0, sticky="ew"
         )
         ttk.Button(selected_trades_row, text="Load Trades", command=self._load_trade_catalog).grid(
@@ -144,16 +251,19 @@ class DesktopEstimatorApp:
         overrides_row = ttk.Frame(frame)
         overrides_row.grid(row=4, column=1, sticky="ew")
         overrides_row.columnconfigure(0, weight=1)
-        ttk.Entry(overrides_row, textvariable=self.sheet_overrides_path, width=58).grid(row=0, column=0, sticky="ew")
+        overrides_entry = ttk.Entry(overrides_row, textvariable=self.sheet_overrides_path, width=58)
+        overrides_entry.grid(row=0, column=0, sticky="ew")
         ttk.Button(overrides_row, text="Browse", command=self._choose_overrides_file).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
         ttk.Label(frame, text="Current Job ID").grid(row=5, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.current_job_id, width=68).grid(row=5, column=1, sticky="ew")
+        current_job_entry = ttk.Entry(frame, textvariable=self.current_job_id, width=68)
+        current_job_entry.grid(row=5, column=1, sticky="ew")
 
         ttk.Label(frame, text="Notes").grid(row=6, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.notes, width=68).grid(row=6, column=1, sticky="ew")
+        notes_entry = ttk.Entry(frame, textvariable=self.notes, width=68)
+        notes_entry.grid(row=6, column=1, sticky="ew")
 
         actions1 = ttk.Frame(frame)
         actions1.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 4))
@@ -264,13 +374,16 @@ class DesktopEstimatorApp:
         prune_row.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         prune_row.columnconfigure(10, weight=1)
         ttk.Label(prune_row, text="Prune Statuses").grid(row=0, column=0, sticky="w")
-        ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        prune_statuses_entry = ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28)
+        prune_statuses_entry.grid(row=0, column=1, sticky="w", padx=(6, 0))
         ttk.Label(prune_row, text="Older Than (h)").grid(row=0, column=2, sticky="w", padx=(12, 0))
-        ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8).grid(
+        prune_older_than_entry = ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8)
+        prune_older_than_entry.grid(
             row=0, column=3, sticky="w", padx=(6, 0)
         )
         ttk.Label(prune_row, text="Limit").grid(row=0, column=4, sticky="w", padx=(12, 0))
-        ttk.Entry(prune_row, textvariable=self.prune_limit, width=8).grid(row=0, column=5, sticky="w", padx=(6, 0))
+        prune_limit_entry = ttk.Entry(prune_row, textvariable=self.prune_limit, width=8)
+        prune_limit_entry.grid(row=0, column=5, sticky="w", padx=(6, 0))
         ttk.Checkbutton(
             prune_row,
             text="Cleanup Uploads",
@@ -288,11 +401,130 @@ class DesktopEstimatorApp:
 
         ttk.Label(frame, textvariable=self.status_text).grid(row=11, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
-        self.output = Text(frame, wrap="none")
+        self.output = Text(
+            frame,
+            wrap="none",
+            background="#0B1220",
+            foreground="#E5E7EB",
+            insertbackground="#E5E7EB",
+            padx=8,
+            pady=8,
+        )
         self.output.grid(row=12, column=0, columnspan=2, sticky="nsew")
 
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(12, weight=1)
+        self._install_tooltips(
+            frame=frame,
+            api_url_entry=api_url_entry,
+            api_key_entry=api_key_entry,
+            selected_trades_entry=selected_trades_entry,
+            overrides_entry=overrides_entry,
+            current_job_entry=current_job_entry,
+            notes_entry=notes_entry,
+            prune_statuses_entry=prune_statuses_entry,
+            prune_older_than_entry=prune_older_than_entry,
+            prune_limit_entry=prune_limit_entry,
+        )
+
+    def _install_tooltips(
+        self,
+        *,
+        frame: ttk.Frame,
+        api_url_entry: ttk.Entry,
+        api_key_entry: ttk.Entry,
+        selected_trades_entry: ttk.Entry,
+        overrides_entry: ttk.Entry,
+        current_job_entry: ttk.Entry,
+        notes_entry: ttk.Entry,
+        prune_statuses_entry: ttk.Entry,
+        prune_older_than_entry: ttk.Entry,
+        prune_limit_entry: ttk.Entry,
+    ) -> None:
+        button_tips = {
+            "Start Local API": "Start the local backend service at the API URL if it is not already running.",
+            "Load Trades": "Fetch valid trade names from the API and refresh trade mode options.",
+            "Validate Trades": "Check your selected trades against the active analysis mode and trade catalog.",
+            "Browse": "Select a sheet-overrides JSON file to apply authoritative sheet IDs/titles.",
+            "Choose PDFs": "Pick one or more drawing PDFs for analysis or async job submission.",
+            "Run Analysis": "Run synchronous analysis and return results directly in this window.",
+            "Submit Async Job": "Submit a background job and return a job ID for polling.",
+            "Refresh Job": "Fetch latest status and payload for the current job ID.",
+            "Load Latest Job": "Load the newest job from the API into the current job field.",
+            "Rerun Job": "Rerun a previous job using the current form inputs and stored uploads.",
+            "Run End-to-End Benchmark": "Build templates, execute benchmark runs, and return quality comparisons.",
+            "Rerun Recommended": "Create a rerun from automated trade recommendations for current job context.",
+            "Cancel Job": "Cancel the current queued or running job when possible.",
+            "Get Review Queue": "Show low-confidence sheet IDs and items needing human review.",
+            "Export Overrides Template": "Generate a sheet overrides template JSON for manual correction.",
+            "Export Benchmark Template": "Generate a benchmark manifest template from current/last completed job.",
+            "Run Baseline Benchmark": "Run a baseline benchmark using selected manifests and settings.",
+            "Show Benchmark History": "Show saved benchmark result history from API or local fallback.",
+            "Compare Reports": "Pick two benchmark JSON files and compare baseline vs candidate scores.",
+            "Compare Latest Reports": "Compare the two newest benchmark reports automatically.",
+            "Latest Trend Snapshot": "Show current benchmark trend and overall score delta.",
+            "Score Timeline": "Display benchmark score timeline points across saved runs.",
+            "Evaluate Gate": "Run quality-gate checks (non-regression/improvement thresholds).",
+            "Benchmark Dashboard": "Open consolidated history, timeline, trend, and gate summary payload.",
+            "Save Output": "Save the output panel content to a JSON file.",
+            "Open Results Folder": "Open local benchmarks/results folder in your file explorer.",
+            "Job Ops Snapshot": "Show operational metrics snapshot for queue, durations, and throughput.",
+            "Job Ops Gate": "Evaluate operational quality gate thresholds against recent job metrics.",
+            "Trade Recommendation": "Generate recommended trade scope for current job based on detected content.",
+            "Trade Coverage": "Show per-trade coverage and review-needed status for current job results.",
+            "Readiness Report": "Generate handoff/readiness report combining review, coverage, and ops gates.",
+            "Prune Dry Run": "Preview jobs that would be pruned using current prune filters.",
+            "Prune Apply": "Delete/prune matching completed/failed/canceled jobs using current filters.",
+        }
+        toggle_tips = {
+            "Template Include All Sheets": "Include all detected sheets when generating benchmark template output.",
+            "Benchmark Include Unmapped": "Include unmapped sheet IDs in benchmark template expectations.",
+            "Auto Poll Job": "Automatically refresh the current job until it reaches a terminal status.",
+            "Cleanup Uploads": "When pruning, also delete uploaded file folders tied to pruned jobs.",
+        }
+        for widget in self._walk_widgets(frame):
+            class_name = ""
+            try:
+                class_name = str(widget.winfo_class())
+            except Exception:
+                continue
+            if class_name not in {"TButton", "TCheckbutton"}:
+                continue
+            try:
+                text = str(widget.cget("text"))
+            except Exception:
+                continue
+            if class_name == "TButton" and text in button_tips:
+                self._add_tooltip(widget, button_tips[text])
+            if class_name == "TCheckbutton" and text in toggle_tips:
+                self._add_tooltip(widget, toggle_tips[text])
+
+        self._add_tooltip(api_url_entry, "Base API endpoint. Use local default unless pointing to a remote service.")
+        self._add_tooltip(api_key_entry, "Optional API key header value sent as x-api-key.")
+        self._add_tooltip(self.analysis_mode_combo, "auto=detect trades, selected=only selected trades, all=analyze all supported trades.")
+        self._add_tooltip(selected_trades_entry, "Comma-separated trade tokens. Required when Analysis Mode is set to selected.")
+        self._add_tooltip(overrides_entry, "Path to JSON that overrides inferred sheet IDs and titles.")
+        self._add_tooltip(current_job_entry, "Target job ID for refresh, rerun, cancel, and review workflows.")
+        self._add_tooltip(notes_entry, "Optional run context or assumptions saved with the request.")
+        self._add_tooltip(prune_statuses_entry, "Comma-separated terminal statuses to prune (completed, failed, canceled).")
+        self._add_tooltip(prune_older_than_entry, "Only prune jobs older than this many hours.")
+        self._add_tooltip(prune_limit_entry, "Maximum number of jobs to evaluate/prune in one operation.")
+        self._add_tooltip(self.output, "Output panel for API responses, reports, and run diagnostics.")
+
+    def _walk_widgets(self, parent: object) -> list[object]:
+        children = []
+        winfo_children = getattr(parent, "winfo_children", None)
+        if not callable(winfo_children):
+            return children
+        for child in winfo_children():
+            children.append(child)
+            children.extend(self._walk_widgets(child))
+        return children
+
+    def _add_tooltip(self, widget: object, text: str) -> None:
+        if not text.strip():
+            return
+        self._tooltips.append(HoverTooltip(widget, text))
 
     def _choose_pdfs(self) -> None:
         selected = filedialog.askopenfilenames(
