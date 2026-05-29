@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Thread
-from tkinter import END, BooleanVar, Label, StringVar, Text, Tk, Toplevel, filedialog, ttk
+from tkinter import END, BooleanVar, Label, Menu, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
 import time
 
@@ -190,6 +190,9 @@ class DesktopEstimatorApp:
         self.request_task_running = False
         self.request_progress_text = StringVar(value="")
         self.status_text = StringVar(value="Ready.")
+        self.header_mode_text = StringVar(value="Mode: auto")
+        self.header_job_text = StringVar(value="Job: none")
+        self.header_files_text = StringVar(value="Files: none")
         self.trade_catalog: list[str] = []
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
@@ -202,6 +205,11 @@ class DesktopEstimatorApp:
         self._field_tooltips: dict[str, HoverTooltip] = {}
         self.actions_notebook: ttk.Notebook | None = None
         self._advanced_tab_widgets: list[tuple[ttk.Frame, str]] = []
+        self.output_y_scroll: ttk.Scrollbar | None = None
+        self.output_x_scroll: ttk.Scrollbar | None = None
+
+        self.analysis_mode.trace_add("write", lambda *_: self._refresh_header_summary())
+        self.current_job_id.trace_add("write", lambda *_: self._refresh_header_summary())
 
         self._configure_style()
         self._build_ui()
@@ -228,10 +236,94 @@ class DesktopEstimatorApp:
         style.configure("TNotebook", tabmargins=(8, 4, 8, 0))
         style.configure("TNotebook.Tab", padding=(14, 7), font=("Segoe UI Semibold", 9))
         style.configure("Section.TLabel", font=("Segoe UI", 9, "bold"))
+        style.configure("HeaderTitle.TLabel", font=("Segoe UI Semibold", 16))
+        style.configure("HeaderSub.TLabel", font=("Segoe UI", 9))
+        style.configure("SummaryChip.TLabel", font=("Segoe UI", 9, "bold"))
+
+    def _build_menu(self) -> None:
+        self.root.option_add("*tearOff", False)
+        menu = Menu(self.root)
+
+        file_menu = Menu(menu)
+        file_menu.add_command(label="Choose Drawing PDFs...", command=self._choose_pdfs)
+        file_menu.add_command(label="Pick Overrides JSON...", command=self._choose_overrides_file)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save Output...", command=self._save_output)
+        file_menu.add_command(label="Open Results Folder", command=self._open_results_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+        menu.add_cascade(label="File", menu=file_menu)
+
+        run_menu = Menu(menu)
+        run_menu.add_command(label="Quick Start", command=self._quick_start_run)
+        run_menu.add_command(label="Submit Async Job", command=self._submit_async_job)
+        run_menu.add_command(label="Run Analysis (sync)", command=self._run_analysis)
+        run_menu.add_separator()
+        run_menu.add_command(label="Refresh Job", command=self._refresh_job)
+        run_menu.add_command(label="Load Latest Job", command=self._load_latest_job)
+        run_menu.add_command(label="Cancel Job", command=self._cancel_job)
+        menu.add_cascade(label="Run", menu=run_menu)
+
+        view_menu = Menu(menu)
+        view_menu.add_checkbutton(
+            label="Beginner Mode",
+            variable=self.beginner_mode,
+            command=self._toggle_beginner_mode,
+        )
+        view_menu.add_checkbutton(
+            label="Advanced Tools",
+            variable=self.show_advanced_tools,
+            command=self._toggle_advanced_tools,
+        )
+        view_menu.add_checkbutton(
+            label="Auto Poll Job",
+            variable=self.auto_poll_enabled,
+            command=self._toggle_auto_poll,
+        )
+        menu.add_cascade(label="View", menu=view_menu)
+
+        help_menu = Menu(menu)
+        help_menu.add_command(label="Control Guide", command=self._show_control_guide)
+        menu.add_cascade(label="Help", menu=help_menu)
+
+        self.root.configure(menu=menu)
 
     def _build_ui(self) -> None:
-        frame = ttk.Frame(self.root, padding=14)
-        frame.pack(fill="both", expand=True)
+        container = ttk.Frame(self.root, padding=14)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(2, weight=1)
+
+        self._build_menu()
+
+        header = ttk.Frame(container)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="AI Estimator Desktop", style="HeaderTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            header,
+            text="Office-style workflow for construction estimate extraction, review, and handoff",
+            style="HeaderSub.TLabel",
+        ).grid(row=1, column=0, sticky="w")
+
+        summary_row = ttk.Frame(container)
+        summary_row.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        summary_row.columnconfigure(3, weight=1)
+        ttk.Label(summary_row, textvariable=self.header_mode_text, style="SummaryChip.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 12)
+        )
+        ttk.Label(summary_row, textvariable=self.header_job_text, style="SummaryChip.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(0, 12)
+        )
+        ttk.Label(summary_row, textvariable=self.header_files_text, style="SummaryChip.TLabel").grid(
+            row=0, column=2, sticky="w"
+        )
+
+        frame = ttk.Frame(container)
+        frame.grid(row=2, column=0, sticky="nsew")
+        frame.columnconfigure(1, weight=1)
 
         ttk.Label(frame, text="API URL").grid(row=0, column=0, sticky="w")
         api_row = ttk.Frame(frame)
@@ -464,7 +556,11 @@ class DesktopEstimatorApp:
         self.files_label = ttk.Label(frame, text="No files selected.")
         self.files_label.grid(row=8, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(frame, textvariable=self.status_text).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        status_strip = ttk.Frame(frame)
+        status_strip.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 8))
+        status_strip.columnconfigure(1, weight=1)
+        ttk.Label(status_strip, text="Status:").grid(row=0, column=0, sticky="w")
+        ttk.Label(status_strip, textvariable=self.status_text).grid(row=0, column=1, sticky="w")
 
         progress_row = ttk.Frame(frame)
         progress_row.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -476,16 +572,34 @@ class DesktopEstimatorApp:
         self.request_progress_label.grid_remove()
         self.request_progress_bar.grid_remove()
 
+        output_frame = ttk.Frame(frame)
+        output_frame.grid(row=11, column=0, columnspan=2, sticky="nsew")
+        output_frame.columnconfigure(0, weight=1)
+        output_frame.rowconfigure(0, weight=1)
+
         self.output = Text(
-            frame,
+            output_frame,
             wrap="none",
             background="#FFFFFF",
             foreground="#111827",
             insertbackground="#111827",
             padx=8,
             pady=8,
+            font=("Segoe UI", 10),
         )
-        self.output.grid(row=11, column=0, columnspan=2, sticky="nsew")
+        self.output.grid(row=0, column=0, sticky="nsew")
+        self.output_y_scroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.output.yview)
+        self.output_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.output_x_scroll = ttk.Scrollbar(output_frame, orient="horizontal", command=self.output.xview)
+        self.output_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.output.configure(yscrollcommand=self.output_y_scroll.set, xscrollcommand=self.output_x_scroll.set)
+
+        footer = ttk.Frame(frame)
+        footer.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        footer.columnconfigure(1, weight=1)
+        ttk.Separator(footer, orient="horizontal").grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        ttk.Label(footer, text="Ready").grid(row=1, column=0, sticky="w")
+        ttk.Label(footer, text="F1 Help | Ctrl+O Open PDFs | Ctrl+Enter Submit").grid(row=1, column=1, sticky="e")
 
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(11, weight=1)
@@ -946,6 +1060,7 @@ class DesktopEstimatorApp:
         self.root.bind("<F1>", self._shortcut_show_guide, add="+")
         self.root.bind("<Control-o>", self._shortcut_choose_pdfs, add="+")
         self.root.bind("<Control-Return>", self._shortcut_submit_job, add="+")
+        self.root.bind("<Control-Shift-Return>", self._shortcut_quick_start, add="+")
         self.root.bind("<F5>", self._shortcut_refresh_job, add="+")
         self.root.bind("<Control-l>", self._shortcut_load_latest_job, add="+")
         self.root.bind("<Control-s>", self._shortcut_save_output, add="+")
@@ -961,6 +1076,10 @@ class DesktopEstimatorApp:
 
     def _shortcut_submit_job(self, _event: object = None) -> str:
         self._submit_async_job()
+        return "break"
+
+    def _shortcut_quick_start(self, _event: object = None) -> str:
+        self._quick_start_run()
         return "break"
 
     def _shortcut_refresh_job(self, _event: object = None) -> str:
@@ -997,6 +1116,7 @@ class DesktopEstimatorApp:
             "- F1: Show this guide",
             f"- Ctrl+O: {choose_pdfs_label}",
             f"- Ctrl+Enter: {submit_job_label}",
+            "- Ctrl+Shift+Enter: Quick Start",
             f"- F5: {refresh_job_label}",
             f"- Ctrl+L: {load_latest_label}",
             f"- Ctrl+S: {save_output_label}",
@@ -2032,8 +2152,19 @@ class DesktopEstimatorApp:
             )
         return f"{len(names)} file(s) selected ({size_text}): {shown}"
 
+    def _refresh_header_summary(self) -> None:
+        mode = self.analysis_mode.get().strip() or "auto"
+        job_id = self.current_job_id.get().strip()
+        self.header_mode_text.set(f"Mode: {mode}")
+        self.header_job_text.set(f"Job: {job_id[:12]}..." if job_id else "Job: none")
+        if not self.files:
+            self.header_files_text.set("Files: none")
+        else:
+            self.header_files_text.set(f"Files: {len(self.files)} selected")
+
     def _refresh_files_label(self) -> None:
         self.files_label.config(text=self._selected_files_summary())
+        self._refresh_header_summary()
 
     def _load_settings(self) -> None:
         if not self.settings_path.exists():
