@@ -201,6 +201,8 @@ class DesktopEstimatorApp:
         self.trade_catalog: list[str] = []
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
+        self._file_scan_meta: dict[str, dict[str, object]] = {}
+        self._file_scan_token = 0
         self._tooltips: list[HoverTooltip] = []
         self._control_help_entries: dict[str, str] = {}
         self._control_specs: dict[str, dict[str, str]] = {}
@@ -1291,9 +1293,127 @@ class DesktopEstimatorApp:
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
         )
         self.files = list(selected)
+        self._file_scan_meta = {}
+        self._file_scan_token += 1
         self._refresh_files_label()
         self.status_text.set("PDFs selected." if self.files else "No PDFs selected.")
+        if self.files:
+            self._start_selected_file_scan(self.files)
         self._save_settings()
+
+    def _start_selected_file_scan(self, file_paths: list[str]) -> None:
+        if not file_paths:
+            return
+        paths = [str(Path(p).resolve()) for p in file_paths if str(p).strip()]
+        if not paths:
+            return
+
+        self._append_output_line(
+            f"Scanning {len(paths)} selected drawing file(s) for metadata (size and pages)..."
+        )
+        self._set_file_scan_message()
+        worker = Thread(
+            target=self._scan_selected_files_worker,
+            args=(paths, self._file_scan_token),
+            daemon=True,
+        )
+        worker.start()
+
+    def _scan_selected_files_worker(self, file_paths: list[str], token: int) -> None:
+        scanned_ok = 0
+        for index, raw_path in enumerate(file_paths, start=1):
+            if token != self._file_scan_token:
+                return
+            normalized = str(Path(raw_path).resolve())
+            try:
+                page_count = self._resolve_pdf_page_count(raw_path)
+                self.root.after(
+                    0,
+                    lambda p=normalized, pages=page_count, i=index, n=len(file_paths): self._record_file_scan_result(
+                        file_path=p,
+                        status="ok",
+                        page_count=pages,
+                        error=None,
+                        token=token,
+                        position=i,
+                        total=n,
+                    ),
+                )
+                scanned_ok += 1
+            except Exception as exc:
+                self.root.after(
+                    0,
+                    lambda p=normalized, err=str(exc), i=index, n=len(file_paths): self._record_file_scan_result(
+                        file_path=p,
+                        status="error",
+                        page_count=None,
+                        error=err,
+                        token=token,
+                        position=i,
+                        total=n,
+                    ),
+                )
+
+        self.root.after(
+            0,
+            lambda: self._finalize_file_scan(token=token, scanned=scanned_ok, total=len(file_paths)),
+        )
+
+    def _resolve_pdf_page_count(self, raw_path: str) -> int:
+        from pypdf import PdfReader  # local import to avoid import-time dependency on UI startup
+
+        path = Path(raw_path)
+        with path.open("rb") as handle:
+            reader = PdfReader(handle, strict=False)
+            return len(reader.pages)
+
+    def _record_file_scan_result(
+        self,
+        *,
+        file_path: str,
+        status: str,
+        page_count: int | None,
+        error: str | None,
+        token: int,
+        position: int,
+        total: int,
+    ) -> None:
+        if token != self._file_scan_token:
+            return
+        self._file_scan_meta[file_path] = {
+            "status": status,
+            "page_count": page_count if isinstance(page_count, int) else None,
+            "error": error,
+            "position": position,
+            "total": total,
+        }
+        if status == "ok":
+            status_message = (
+                f"[{position}/{total}] Ready: {Path(file_path).name} "
+                f"({page_count if page_count is not None else '??'} pages)"
+            )
+        else:
+            status_message = f"[{position}/{total}] Could not read pages: {Path(file_path).name} ({error})"
+        self._append_output_line(status_message)
+        self._refresh_files_list()
+
+    def _finalize_file_scan(self, *, token: int, scanned: int, total: int) -> None:
+        if token != self._file_scan_token:
+            return
+        if total <= 0:
+            self._set_file_scan_message()
+            return
+        self._set_file_scan_message(f"Scanned {scanned}/{total} drawing file(s).")
+
+    def _set_file_scan_message(self, message: str | None = None) -> None:
+        if message:
+            self.status_text.set(message)
+            return
+        if not self.files:
+            self.status_text.set("No files selected.")
+            return
+        total = len(self.files)
+        self.status_text.set(f"Selected {total} file(s). Scanning metadata...")
 
     def _choose_overrides_file(self) -> None:
         selected = filedialog.askopenfilename(
@@ -2459,9 +2579,20 @@ class DesktopEstimatorApp:
         names: list[str] = [Path(path).name for path in self.files]
         total_bytes = 0
         missing = 0
+        scanned_pages = 0
+        unknown_pages = 0
         for path in self.files:
             try:
-                total_bytes += Path(path).stat().st_size
+                stat = Path(path).stat()
+                total_bytes += stat.st_size
+                scan = self._file_scan_meta.get(str(Path(path).resolve()))
+                page_count = None
+                if scan:
+                    page_count = scan.get("page_count")
+                if page_count is None:
+                    unknown_pages += 1
+                else:
+                    scanned_pages += int(page_count)
             except OSError:
                 missing += 1
         shown = ", ".join(names[:3])
@@ -2469,11 +2600,18 @@ class DesktopEstimatorApp:
             shown = f"{shown}, +{len(names) - 3} more"
 
         size_text = self._format_size_label(total_bytes) if total_bytes > 0 else "size unknown"
+        page_text = (
+            f", {scanned_pages} pages total"
+            if unknown_pages == 0 and self.files and scanned_pages > 0
+            else f", {scanned_pages} pages identified"
+        )
+        if missing > 0:
+            page_text = ", pages unknown"
         if missing > 0:
             return (
-                f"{len(names)} file(s) selected ({size_text}; {missing} unavailable): {shown}"
+                f"{len(names)} file(s) selected ({size_text}; {missing} unavailable){page_text}: {shown}"
             )
-        return f"{len(names)} file(s) selected ({size_text}): {shown}"
+        return f"{len(names)} file(s) selected ({size_text}{page_text}): {shown}"
 
     def _refresh_header_summary(self) -> None:
         mode = self.analysis_mode.get().strip() or "auto"
@@ -2510,7 +2648,21 @@ class DesktopEstimatorApp:
             except OSError:
                 size = "not found"
                 status = "missing"
-            self.files_list.insert(END, f"{idx:>2}. {name} ({size}, {status})\n")
+            scan = self._file_scan_meta.get(str(path.resolve()))
+            page_segment = ""
+            if scan:
+                page_count = scan.get("page_count")
+                scan_status = str(scan.get("status", "")).lower()
+                if scan_status == "error":
+                    error = str(scan.get("error", "unreadable"))
+                    page_segment = f", pages: n/a ({error})"
+                elif page_count is None:
+                    page_segment = ", pages: unknown"
+                else:
+                    page_segment = f", pages: {int(page_count)}"
+            else:
+                page_segment = ", pages: scanning..."
+            self.files_list.insert(END, f"{idx:>2}. {name} ({size}, {status}{page_segment})\n")
 
         self.files_list.configure(state="disabled")
 
@@ -2597,6 +2749,10 @@ class DesktopEstimatorApp:
 
         self._apply_beginner_mode(update_status=False)
         self._apply_advanced_tools_visibility(update_status=False)
+        self._file_scan_meta = {}
+        self._file_scan_token += 1
+        if self.files:
+            self._start_selected_file_scan(self.files)
 
         if self.auto_poll_enabled.get() and self.current_job_id.get().strip():
             self._start_auto_poll()

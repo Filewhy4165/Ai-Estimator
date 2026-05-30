@@ -126,6 +126,7 @@ class JobCapacityResponse(BaseModel):
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
 _ACTIVE_JOB_STATUSES = {"queued", "running"}
 _LISTABLE_JOB_STATUSES = _ACTIVE_JOB_STATUSES | _TERMINAL_JOB_STATUSES
+_UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
 
 
 class TradeRecommendationResponse(BaseModel):
@@ -1232,8 +1233,12 @@ async def _save_uploads(files: list[UploadFile], target_dir: Path) -> list[str]:
         suffix = Path(upload.filename or "drawing.pdf").suffix or ".pdf"
         clean_name = _safe_file_name(Path(upload.filename or f"drawing_{index + 1}.pdf").stem)
         target_path = target_dir / f"{index + 1:03d}_{clean_name}{suffix}"
-        content = await upload.read()
-        target_path.write_bytes(content)
+        with target_path.open("wb") as handle:
+            while True:
+                chunk = await upload.read(_UPLOAD_CHUNK_SIZE_BYTES)
+                if not chunk:
+                    break
+                handle.write(chunk)
         pdf_paths.append(str(target_path))
     return pdf_paths
 
