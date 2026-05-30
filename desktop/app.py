@@ -190,6 +190,7 @@ class DesktopEstimatorApp:
         self.end_to_end_task_running = False
         self.request_task_running = False
         self.job_polling = False
+        self.file_scan_running = False
         self._api_bootstrap_in_progress = False
         self.request_progress_text = StringVar(value="")
         self.job_progress_message = ""
@@ -1305,6 +1306,7 @@ class DesktopEstimatorApp:
 
     def _start_selected_file_scan(self, file_paths: list[str]) -> None:
         if not file_paths:
+            self._set_file_scan_busy(busy=False)
             return
         paths = [str(Path(p).resolve()) for p in file_paths if str(p).strip()]
         if not paths:
@@ -1312,6 +1314,10 @@ class DesktopEstimatorApp:
 
         self._append_output_line(
             f"Scanning {len(paths)} selected drawing file(s) for metadata (size and pages)..."
+        )
+        self._set_file_scan_busy(
+            busy=True,
+            message="Scanning selected drawing files (this usually takes seconds)...",
         )
         self._set_file_scan_message()
         worker = Thread(
@@ -1402,6 +1408,7 @@ class DesktopEstimatorApp:
     def _finalize_file_scan(self, *, token: int, scanned: int, total: int) -> None:
         if token != self._file_scan_token:
             return
+        self._set_file_scan_busy(busy=False, message="")
         if total <= 0:
             self._set_file_scan_message()
             return
@@ -2513,9 +2520,20 @@ class DesktopEstimatorApp:
             self.job_progress_message = ""
         self._refresh_progress_indicator()
 
+    def _set_file_scan_busy(self, *, busy: bool, message: str = "") -> None:
+        self.file_scan_running = bool(busy)
+        if message is not None:
+            msg = message.strip()
+            if msg:
+                self.request_progress_text.set(msg)
+            elif not self.file_scan_running:
+                self.request_progress_text.set("")
+        self._refresh_progress_indicator()
+
     def _refresh_progress_indicator(self) -> None:
         should_show_request_progress = self.request_task_running
         should_show_poll_progress = self.job_polling
+        should_show_file_scan = self.file_scan_running and not self.request_task_running
 
         if should_show_request_progress:
             if not self.request_progress_text.get():
@@ -2530,6 +2548,16 @@ class DesktopEstimatorApp:
         if should_show_poll_progress:
             polling_message = self.job_progress_message.strip()
             self.request_progress_text.set(polling_message or "Monitoring job progress...")
+            self.request_progress_label.grid()
+            self.request_progress_bar.grid()
+            if not self._progress_bar_running:
+                self.request_progress_bar.start(12)
+                self._progress_bar_running = True
+            return
+
+        if should_show_file_scan:
+            if not self.request_progress_text.get():
+                self.request_progress_text.set("Scanning drawing files...")
             self.request_progress_label.grid()
             self.request_progress_bar.grid()
             if not self._progress_bar_running:
