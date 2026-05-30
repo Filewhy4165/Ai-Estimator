@@ -1304,7 +1304,7 @@ class DesktopEstimatorApp:
     def _start_selected_file_scan(self, file_paths: list[str]) -> None:
         if not file_paths:
             return
-        paths = [str(Path(p).resolve()) for p in file_paths if str(Path(p).strip())]
+        paths = [str(Path(p).resolve()) for p in file_paths if str(p).strip()]
         if not paths:
             return
 
