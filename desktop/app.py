@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Callable
 from threading import Thread
-from tkinter import END, BooleanVar, StringVar, Text, Tk, filedialog, ttk
+from tkinter import END, BooleanVar, Label, Menu, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
 import time
 
@@ -63,11 +64,108 @@ def validate_selected_trade_scope(
     return selected_tokens
 
 
+class HoverTooltip:
+    def __init__(
+        self,
+        widget: object,
+        text: str,
+        *,
+        delay_ms: int = 450,
+        wrap_length: int = 360,
+    ) -> None:
+        self.widget = widget
+        self.text = text.strip()
+        self.delay_ms = delay_ms
+        self.wrap_length = wrap_length
+        self._after_id: str | None = None
+        self._tip_window: Toplevel | None = None
+
+        bind = getattr(widget, "bind", None)
+        if callable(bind):
+            bind("<Enter>", self._on_enter, add="+")
+            bind("<Leave>", self._on_leave, add="+")
+            bind("<ButtonPress>", self._on_leave, add="+")
+
+    def set_text(self, text: str) -> None:
+        self.text = text.strip()
+        self._hide()
+
+    def _on_enter(self, _event: object = None) -> None:
+        self._schedule_show()
+
+    def _on_leave(self, _event: object = None) -> None:
+        self._cancel_show()
+        self._hide()
+
+    def _schedule_show(self) -> None:
+        if not self.text:
+            return
+        after = getattr(self.widget, "after", None)
+        if not callable(after):
+            return
+        self._cancel_show()
+        self._after_id = after(self.delay_ms, self._show)
+
+    def _cancel_show(self) -> None:
+        if not self._after_id:
+            return
+        after_cancel = getattr(self.widget, "after_cancel", None)
+        if callable(after_cancel):
+            try:
+                after_cancel(self._after_id)
+            except Exception:
+                pass
+        self._after_id = None
+
+    def _show(self) -> None:
+        self._after_id = None
+        if self._tip_window is not None or not self.text:
+            return
+        try:
+            pointer_x = int(getattr(self.widget, "winfo_pointerx")())
+            pointer_y = int(getattr(self.widget, "winfo_pointery")())
+        except Exception:
+            return
+
+        tip = Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.wm_attributes("-topmost", True)
+        except Exception:
+            pass
+        tip.geometry(f"+{pointer_x + 14}+{pointer_y + 16}")
+
+        label = Label(
+            tip,
+            text=self.text,
+            justify="left",
+            wraplength=self.wrap_length,
+            background="#111827",
+            foreground="#E5E7EB",
+            relief="solid",
+            borderwidth=1,
+            padx=8,
+            pady=6,
+        )
+        label.pack()
+        self._tip_window = tip
+
+    def _hide(self) -> None:
+        if self._tip_window is None:
+            return
+        try:
+            self._tip_window.destroy()
+        except Exception:
+            pass
+        self._tip_window = None
+
+
 class DesktopEstimatorApp:
     def __init__(self) -> None:
         self.root = Tk()
         self.root.title("AI Estimator Desktop")
-        self.root.geometry("1080x760")
+        self.root.geometry("1320x820")
+        self.root.minsize(1180, 700)
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
@@ -79,6 +177,8 @@ class DesktopEstimatorApp:
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
         self.include_unmapped_benchmark = BooleanVar(value=True)
+        self.beginner_mode = BooleanVar(value=True)
+        self.show_advanced_tools = BooleanVar(value=False)
         self.auto_poll_enabled = BooleanVar(value=False)
         self.prune_statuses = StringVar(value="completed,failed,canceled")
         self.prune_older_than_hours = StringVar(value="168")
@@ -88,33 +188,189 @@ class DesktopEstimatorApp:
         self.auto_poll_handle: str | None = None
         self.benchmark_task_running = False
         self.end_to_end_task_running = False
+        self.request_task_running = False
+        self.job_polling = False
+        self.request_progress_text = StringVar(value="")
+        self.job_progress_message = ""
+        self._progress_bar_running = False
+        self._auto_poll_cycle = 0
         self.status_text = StringVar(value="Ready.")
+        self.header_mode_text = StringVar(value="Mode: auto")
+        self.header_job_text = StringVar(value="Job: none")
+        self.header_files_text = StringVar(value="Files: none")
         self.trade_catalog: list[str] = []
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
+        self._tooltips: list[HoverTooltip] = []
+        self._control_help_entries: dict[str, str] = {}
+        self._control_specs: dict[str, dict[str, str]] = {}
+        self._control_widgets: dict[str, object] = {}
+        self._field_label_widgets: dict[str, object] = {}
+        self._control_tooltips: dict[str, HoverTooltip] = {}
+        self._field_label_specs: dict[str, dict[str, str]] = {}
+        self._field_label_tooltips: dict[str, HoverTooltip] = {}
+        self._field_tooltip_specs: dict[str, dict[str, str]] = {}
+        self._field_tooltips: dict[str, HoverTooltip] = {}
+        self.files_list: Text | None = None
+        self.files_list_y_scroll: ttk.Scrollbar | None = None
+        self.actions_notebook: ttk.Notebook | None = None
+        self._advanced_tab_widgets: list[tuple[ttk.Frame, str]] = []
+        self.output_y_scroll: ttk.Scrollbar | None = None
+        self.output_x_scroll: ttk.Scrollbar | None = None
 
+        self.analysis_mode.trace_add("write", lambda *_: self._refresh_header_summary())
+        self.current_job_id.trace_add("write", lambda *_: self._refresh_header_summary())
+
+        self._configure_style()
         self._build_ui()
+        self._bind_shortcuts()
         self._load_settings()
         self._refresh_files_label()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _build_ui(self) -> None:
-        frame = ttk.Frame(self.root, padding=12)
-        frame.pack(fill="both", expand=True)
+    def _configure_style(self) -> None:
+        style = ttk.Style(self.root)
+        available_themes = set(style.theme_names())
+        if "vista" in available_themes:
+            style.theme_use("vista")
+        elif "xpnative" in available_themes:
+            style.theme_use("xpnative")
+        elif "clam" in available_themes:
+            style.theme_use("clam")
+        style.configure("TButton", padding=(10, 6), font=("Segoe UI", 9))
+        style.configure("Primary.TButton", padding=(12, 6), font=("Segoe UI Semibold", 9))
+        style.configure("TCheckbutton", padding=(4, 2), font=("Segoe UI", 9))
+        style.configure("TLabel", font=("Segoe UI", 9))
+        style.configure("TEntry", font=("Segoe UI", 9))
+        style.configure("TCombobox", font=("Segoe UI", 9))
+        style.configure("TNotebook", tabmargins=(8, 4, 8, 0))
+        style.configure("TNotebook.Tab", padding=(14, 7), font=("Segoe UI Semibold", 9))
+        style.configure("Section.TLabel", font=("Segoe UI", 9, "bold"))
+        style.configure("HeaderTitle.TLabel", font=("Segoe UI Semibold", 16))
+        style.configure("HeaderSub.TLabel", font=("Segoe UI", 9))
+        style.configure("SummaryChip.TLabel", font=("Segoe UI", 9, "bold"))
 
-        ttk.Label(frame, text="API URL").grid(row=0, column=0, sticky="w")
+    def _build_menu(self) -> None:
+        self.root.option_add("*tearOff", False)
+        menu = Menu(self.root)
+
+        file_menu = Menu(menu)
+        file_menu.add_command(label="Choose Drawing PDFs...", command=self._choose_pdfs)
+        file_menu.add_command(label="Pick Overrides JSON...", command=self._choose_overrides_file)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save Output...", command=self._save_output)
+        file_menu.add_command(label="Open Results Folder", command=self._open_results_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+        menu.add_cascade(label="File", menu=file_menu)
+
+        run_menu = Menu(menu)
+        run_menu.add_command(label="Quick Start", command=self._quick_start_run)
+        run_menu.add_command(label="Submit Async Job", command=self._submit_async_job)
+        run_menu.add_command(label="Run Analysis (sync)", command=self._run_analysis)
+        run_menu.add_separator()
+        run_menu.add_command(label="Refresh Job", command=self._refresh_job)
+        run_menu.add_command(label="Load Latest Job", command=self._load_latest_job)
+        run_menu.add_command(label="Cancel Job", command=self._cancel_job)
+        menu.add_cascade(label="Run", menu=run_menu)
+
+        view_menu = Menu(menu)
+        view_menu.add_checkbutton(
+            label="Beginner Mode",
+            variable=self.beginner_mode,
+            command=self._toggle_beginner_mode,
+        )
+        view_menu.add_checkbutton(
+            label="Advanced Tools",
+            variable=self.show_advanced_tools,
+            command=self._toggle_advanced_tools,
+        )
+        view_menu.add_checkbutton(
+            label="Auto Poll Job",
+            variable=self.auto_poll_enabled,
+            command=self._toggle_auto_poll,
+        )
+        menu.add_cascade(label="View", menu=view_menu)
+
+        help_menu = Menu(menu)
+        help_menu.add_command(label="Control Guide", command=self._show_control_guide)
+        menu.add_cascade(label="Help", menu=help_menu)
+
+        self.root.configure(menu=menu)
+
+    def _build_ui(self) -> None:
+        container = ttk.Frame(self.root, padding=14)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(2, weight=1)
+
+        self._build_menu()
+
+        header = ttk.Frame(container)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="AI Estimator Desktop", style="HeaderTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            header,
+            text="Office-style workflow for construction estimate extraction, review, and handoff",
+            style="HeaderSub.TLabel",
+        ).grid(row=1, column=0, sticky="w")
+
+        summary_row = ttk.Frame(container)
+        summary_row.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        summary_row.columnconfigure(3, weight=1)
+        ttk.Label(summary_row, textvariable=self.header_mode_text, style="SummaryChip.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 12)
+        )
+        ttk.Label(summary_row, textvariable=self.header_job_text, style="SummaryChip.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(0, 12)
+        )
+        ttk.Label(summary_row, textvariable=self.header_files_text, style="SummaryChip.TLabel").grid(
+            row=0, column=2, sticky="w"
+        )
+
+        frame = ttk.Frame(container)
+        frame.grid(row=2, column=0, sticky="nsew")
+        frame.columnconfigure(1, weight=1)
+
+        self.field_label_api_url = ttk.Label(frame, text="API URL")
+        self.field_label_api_url.grid(row=0, column=0, sticky="w")
+        self._field_label_widgets["api_url"] = self.field_label_api_url
         api_row = ttk.Frame(frame)
         api_row.grid(row=0, column=1, sticky="ew")
         api_row.columnconfigure(0, weight=1)
-        ttk.Entry(api_row, textvariable=self.api_url, width=58).grid(row=0, column=0, sticky="ew")
+        api_url_entry = ttk.Entry(api_row, textvariable=self.api_url, width=58)
+        api_url_entry.grid(row=0, column=0, sticky="ew")
         ttk.Button(api_row, text="Start Local API", command=self._start_local_api_clicked).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
+        ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
+            row=0, column=2, sticky="w", padx=(8, 0)
+        )
+        ttk.Checkbutton(
+            api_row,
+            text="Beginner Mode",
+            variable=self.beginner_mode,
+            command=self._toggle_beginner_mode,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Checkbutton(
+            api_row,
+            text="Advanced Tools",
+            variable=self.show_advanced_tools,
+            command=self._toggle_advanced_tools,
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
 
-        ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.api_key, width=68, show="*").grid(row=1, column=1, sticky="ew")
+        self.field_label_api_key = ttk.Label(frame, text="API Key (optional)")
+        self.field_label_api_key.grid(row=1, column=0, sticky="w")
+        self._field_label_widgets["api_key"] = self.field_label_api_key
+        api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
+        api_key_entry.grid(row=1, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Analysis Mode").grid(row=2, column=0, sticky="w")
+        self.field_label_analysis_mode = ttk.Label(frame, text="Analysis Mode")
+        self.field_label_analysis_mode.grid(row=2, column=0, sticky="w")
+        self._field_label_widgets["analysis_mode"] = self.field_label_analysis_mode
         self.analysis_mode_combo = ttk.Combobox(
             frame,
             values=self.analysis_mode_catalog,
@@ -124,11 +380,14 @@ class DesktopEstimatorApp:
         )
         self.analysis_mode_combo.grid(row=2, column=1, sticky="w")
 
-        ttk.Label(frame, text="Selected Trades (CSV)").grid(row=3, column=0, sticky="w")
+        self.field_label_selected_trades = ttk.Label(frame, text="Selected Trades (CSV)")
+        self.field_label_selected_trades.grid(row=3, column=0, sticky="w")
+        self._field_label_widgets["selected_trades"] = self.field_label_selected_trades
         selected_trades_row = ttk.Frame(frame)
         selected_trades_row.grid(row=3, column=1, sticky="ew")
         selected_trades_row.columnconfigure(0, weight=1)
-        ttk.Entry(selected_trades_row, textvariable=self.selected_trades, width=52).grid(
+        selected_trades_entry = ttk.Entry(selected_trades_row, textvariable=self.selected_trades, width=52)
+        selected_trades_entry.grid(
             row=0, column=0, sticky="ew"
         )
         ttk.Button(selected_trades_row, text="Load Trades", command=self._load_trade_catalog).grid(
@@ -140,137 +399,178 @@ class DesktopEstimatorApp:
             command=self._validate_selected_trades_clicked,
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
-        ttk.Label(frame, text="Sheet Overrides JSON").grid(row=4, column=0, sticky="w")
+        self.field_label_sheet_overrides = ttk.Label(frame, text="Sheet Overrides JSON")
+        self.field_label_sheet_overrides.grid(row=4, column=0, sticky="w")
+        self._field_label_widgets["overrides_path"] = self.field_label_sheet_overrides
         overrides_row = ttk.Frame(frame)
         overrides_row.grid(row=4, column=1, sticky="ew")
         overrides_row.columnconfigure(0, weight=1)
-        ttk.Entry(overrides_row, textvariable=self.sheet_overrides_path, width=58).grid(row=0, column=0, sticky="ew")
+        overrides_entry = ttk.Entry(overrides_row, textvariable=self.sheet_overrides_path, width=58)
+        overrides_entry.grid(row=0, column=0, sticky="ew")
         ttk.Button(overrides_row, text="Browse", command=self._choose_overrides_file).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
-        ttk.Label(frame, text="Current Job ID").grid(row=5, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.current_job_id, width=68).grid(row=5, column=1, sticky="ew")
+        self.field_label_current_job = ttk.Label(frame, text="Current Job ID")
+        self.field_label_current_job.grid(row=5, column=0, sticky="w")
+        self._field_label_widgets["current_job"] = self.field_label_current_job
+        current_job_entry = ttk.Entry(frame, textvariable=self.current_job_id, width=68)
+        current_job_entry.grid(row=5, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Notes").grid(row=6, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.notes, width=68).grid(row=6, column=1, sticky="ew")
+        self.field_label_notes = ttk.Label(frame, text="Notes")
+        self.field_label_notes.grid(row=6, column=0, sticky="w")
+        self._field_label_widgets["notes"] = self.field_label_notes
+        notes_entry = ttk.Entry(frame, textvariable=self.notes, width=68)
+        notes_entry.grid(row=6, column=1, sticky="ew")
 
-        actions1 = ttk.Frame(frame)
-        actions1.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 4))
-        actions1.columnconfigure(9, weight=1)
-        ttk.Button(actions1, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="w")
-        ttk.Button(actions1, text="Run Analysis", command=self._run_analysis).grid(
-            row=0, column=1, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Submit Async Job", command=self._submit_async_job).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Refresh Job", command=self._refresh_job).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Load Latest Job", command=self._load_latest_job).grid(
-            row=0, column=4, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Rerun Job", command=self._rerun_job).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions1, text="Run End-to-End Benchmark", command=self._run_end_to_end_benchmark).grid(
-            row=0, column=6, sticky="w", padx=(8, 0)
-        )
+        self.actions_notebook = ttk.Notebook(frame)
+        self.actions_notebook.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 8))
+        workflow_tab = ttk.Frame(self.actions_notebook, padding=8)
+        quality_tab = ttk.Frame(self.actions_notebook, padding=8)
+        operations_tab = ttk.Frame(self.actions_notebook, padding=8)
+        self.actions_notebook.add(workflow_tab, text="Workflow")
+        self.actions_notebook.add(quality_tab, text="Quality")
+        self.actions_notebook.add(operations_tab, text="Operations")
+        self._advanced_tab_widgets = [(quality_tab, "Quality"), (operations_tab, "Operations")]
+
+        workflow_run = ttk.LabelFrame(workflow_tab, text="Run Drawings", padding=8)
+        workflow_run.grid(row=0, column=0, sticky="ew")
+        for col in range(6):
+            workflow_run.columnconfigure(col, weight=1)
+        ttk.Button(workflow_run, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
         ttk.Button(
-            actions1,
+            workflow_run,
+            text="Quick Start",
+            style="Primary.TButton",
+            command=self._quick_start_run,
+        ).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(
+            workflow_run,
+            text="Submit Async Job",
+            style="Primary.TButton",
+            command=self._submit_async_job,
+        ).grid(row=0, column=2, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Run Analysis", command=self._run_analysis).grid(row=0, column=3, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Refresh Job", command=self._refresh_job).grid(row=0, column=4, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Load Latest Job", command=self._load_latest_job).grid(row=0, column=5, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Rerun Job", command=self._rerun_job).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Button(
+            workflow_run,
             text="Rerun Recommended",
             command=self._rerun_job_with_recommendation,
-        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
-        ttk.Button(actions1, text="Cancel Job", command=self._cancel_job).grid(
-            row=0, column=8, sticky="w", padx=(8, 0)
-        )
-
-        actions2 = ttk.Frame(frame)
-        actions2.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        actions2.columnconfigure(21, weight=1)
+        ).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Cancel Job", command=self._cancel_job).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
         ttk.Checkbutton(
-            actions2,
-            text="Template Include All Sheets",
-            variable=self.include_all_template,
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Button(actions2, text="Get Review Queue", command=self._get_review_queue).grid(
-            row=0, column=1, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Export Overrides Template", command=self._export_overrides_template).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Export Benchmark Template", command=self._export_benchmark_template).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
-        )
-        ttk.Checkbutton(
-            actions2,
-            text="Benchmark Include Unmapped",
-            variable=self.include_unmapped_benchmark,
-        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
-        ttk.Button(actions2, text="Run Baseline Benchmark", command=self._run_baseline_benchmark).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Show Benchmark History", command=self._show_benchmark_history).grid(
-            row=0, column=6, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Compare Reports", command=self._compare_benchmark_reports).grid(
-            row=0, column=7, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Compare Latest Reports", command=self._compare_latest_benchmark_reports).grid(
-            row=0, column=8, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Latest Trend Snapshot", command=self._show_benchmark_trend_snapshot).grid(
-            row=0, column=9, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Score Timeline", command=self._show_benchmark_score_timeline).grid(
-            row=0, column=10, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Evaluate Gate", command=self._evaluate_benchmark_quality_gate).grid(
-            row=0, column=11, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Benchmark Dashboard", command=self._show_benchmark_dashboard).grid(
-            row=0, column=12, sticky="w", padx=(8, 0)
-        )
-        ttk.Checkbutton(
-            actions2,
+            workflow_run,
             text="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
-        ).grid(row=0, column=13, sticky="w", padx=(8, 0))
-        ttk.Button(actions2, text="Save Output", command=self._save_output).grid(
-            row=0, column=14, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Open Results Folder", command=self._open_results_folder).grid(
-            row=0, column=15, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Job Ops Snapshot", command=self._show_job_ops_snapshot).grid(
-            row=0, column=16, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Job Ops Gate", command=self._evaluate_job_ops_gate).grid(
-            row=0, column=17, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Trade Recommendation", command=self._get_trade_recommendation).grid(
-            row=0, column=18, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Trade Coverage", command=self._get_trade_coverage).grid(
-            row=0, column=19, sticky="w", padx=(8, 0)
-        )
-        ttk.Button(actions2, text="Readiness Report", command=self._get_readiness_report).grid(
-            row=0, column=20, sticky="w", padx=(8, 0)
+        ).grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Save Output", command=self._save_output).grid(row=1, column=4, sticky="ew", padx=4, pady=4)
+        ttk.Button(workflow_run, text="Open Results Folder", command=self._open_results_folder).grid(
+            row=1, column=5, sticky="ew", padx=4, pady=4
         )
 
-        prune_row = ttk.Frame(frame)
-        prune_row.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        prune_row.columnconfigure(10, weight=1)
-        ttk.Label(prune_row, text="Prune Statuses").grid(row=0, column=0, sticky="w")
-        ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28).grid(row=0, column=1, sticky="w", padx=(6, 0))
-        ttk.Label(prune_row, text="Older Than (h)").grid(row=0, column=2, sticky="w", padx=(12, 0))
-        ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8).grid(
-            row=0, column=3, sticky="w", padx=(6, 0)
+        workflow_benchmark = ttk.LabelFrame(workflow_tab, text="Full Quality Flow", padding=8)
+        workflow_benchmark.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        workflow_benchmark.columnconfigure(0, weight=1)
+        ttk.Button(
+            workflow_benchmark,
+            text="Run End-to-End Benchmark",
+            command=self._run_end_to_end_benchmark,
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+
+        quality_templates = ttk.LabelFrame(quality_tab, text="Templates & Review", padding=8)
+        quality_templates.grid(row=0, column=0, sticky="ew")
+        for col in range(4):
+            quality_templates.columnconfigure(col, weight=1)
+        ttk.Checkbutton(
+            quality_templates,
+            text="Template Include All Sheets",
+            variable=self.include_all_template,
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Button(quality_templates, text="Get Review Queue", command=self._get_review_queue).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
         )
-        ttk.Label(prune_row, text="Limit").grid(row=0, column=4, sticky="w", padx=(12, 0))
-        ttk.Entry(prune_row, textvariable=self.prune_limit, width=8).grid(row=0, column=5, sticky="w", padx=(6, 0))
+        ttk.Button(quality_templates, text="Export Overrides Template", command=self._export_overrides_template).grid(
+            row=0, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_templates, text="Export Benchmark Template", command=self._export_benchmark_template).grid(
+            row=0, column=3, sticky="ew", padx=4, pady=4
+        )
+
+        quality_compare = ttk.LabelFrame(quality_tab, text="Benchmarks", padding=8)
+        quality_compare.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        for col in range(5):
+            quality_compare.columnconfigure(col, weight=1)
+        ttk.Checkbutton(
+            quality_compare,
+            text="Benchmark Include Unmapped",
+            variable=self.include_unmapped_benchmark,
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Button(quality_compare, text="Run Baseline Benchmark", command=self._run_baseline_benchmark).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Show Benchmark History", command=self._show_benchmark_history).grid(
+            row=0, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Compare Reports", command=self._compare_benchmark_reports).grid(
+            row=0, column=3, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Compare Latest Reports", command=self._compare_latest_benchmark_reports).grid(
+            row=0, column=4, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Latest Trend Snapshot", command=self._show_benchmark_trend_snapshot).grid(
+            row=1, column=0, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Score Timeline", command=self._show_benchmark_score_timeline).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Evaluate Gate", command=self._evaluate_benchmark_quality_gate).grid(
+            row=1, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(quality_compare, text="Benchmark Dashboard", command=self._show_benchmark_dashboard).grid(
+            row=1, column=3, sticky="ew", padx=4, pady=4
+        )
+
+        operations_jobs = ttk.LabelFrame(operations_tab, text="Operations", padding=8)
+        operations_jobs.grid(row=0, column=0, sticky="ew")
+        for col in range(3):
+            operations_jobs.columnconfigure(col, weight=1)
+        ttk.Button(operations_jobs, text="Job Ops Snapshot", command=self._show_job_ops_snapshot).grid(
+            row=0, column=0, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Job Ops Gate", command=self._evaluate_job_ops_gate).grid(
+            row=0, column=1, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Readiness Report", command=self._get_readiness_report).grid(
+            row=0, column=2, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Trade Recommendation", command=self._get_trade_recommendation).grid(
+            row=1, column=0, sticky="ew", padx=4, pady=4
+        )
+        ttk.Button(operations_jobs, text="Trade Coverage", command=self._get_trade_coverage).grid(
+            row=1, column=1, sticky="ew", padx=4, pady=4
+        )
+
+        prune_row = ttk.LabelFrame(operations_tab, text="Data Cleanup", padding=8)
+        prune_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        prune_row.columnconfigure(12, weight=1)
+        self.field_label_prune_statuses = ttk.Label(prune_row, text="Prune Statuses")
+        self.field_label_prune_statuses.grid(row=0, column=0, sticky="w")
+        self._field_label_widgets["prune_statuses"] = self.field_label_prune_statuses
+        prune_statuses_entry = ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28)
+        prune_statuses_entry.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self.field_label_prune_older_than = ttk.Label(prune_row, text="Older Than (h)")
+        self.field_label_prune_older_than.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self._field_label_widgets["prune_older_than"] = self.field_label_prune_older_than
+        prune_older_than_entry = ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8)
+        prune_older_than_entry.grid(row=0, column=3, sticky="w", padx=(6, 0))
+        self.field_label_prune_limit = ttk.Label(prune_row, text="Limit")
+        self.field_label_prune_limit.grid(row=0, column=4, sticky="w", padx=(12, 0))
+        self._field_label_widgets["prune_limit"] = self.field_label_prune_limit
+        prune_limit_entry = ttk.Entry(prune_row, textvariable=self.prune_limit, width=8)
+        prune_limit_entry.grid(row=0, column=5, sticky="w", padx=(6, 0))
         ttk.Checkbutton(
             prune_row,
             text="Cleanup Uploads",
@@ -284,15 +584,706 @@ class DesktopEstimatorApp:
         )
 
         self.files_label = ttk.Label(frame, text="No files selected.")
-        self.files_label.grid(row=10, column=0, columnspan=2, sticky="w")
+        self.files_label.grid(row=8, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(frame, textvariable=self.status_text).grid(row=11, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        files_summary_frame = ttk.Frame(frame)
+        files_summary_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 8))
+        files_summary_frame.columnconfigure(0, weight=1)
+        self.files_list = Text(
+            files_summary_frame,
+            height=5,
+            wrap="none",
+            background="#F9FAFB",
+            foreground="#111827",
+            insertbackground="#111827",
+            padx=6,
+            pady=6,
+            font=("Segoe UI", 9),
+            width=1,
+        )
+        self.files_list.grid(row=0, column=0, sticky="ew")
+        self.files_list_y_scroll = ttk.Scrollbar(
+            files_summary_frame, orient="vertical", command=self.files_list.yview
+        )
+        self.files_list_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.files_list.configure(yscrollcommand=self.files_list_y_scroll.set)
+        self.files_list.configure(state="disabled")
 
-        self.output = Text(frame, wrap="none")
-        self.output.grid(row=12, column=0, columnspan=2, sticky="nsew")
+        status_strip = ttk.Frame(frame)
+        status_strip.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 8))
+        status_strip.columnconfigure(1, weight=1)
+        ttk.Label(status_strip, text="Status:").grid(row=0, column=0, sticky="w")
+        ttk.Label(status_strip, textvariable=self.status_text).grid(row=0, column=1, sticky="w")
+
+        progress_row = ttk.Frame(frame)
+        progress_row.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        progress_row.columnconfigure(1, weight=1)
+        self.request_progress_label = ttk.Label(progress_row, textvariable=self.request_progress_text)
+        self.request_progress_label.grid(row=0, column=0, sticky="w")
+        self.request_progress_bar = ttk.Progressbar(progress_row, mode="indeterminate", length=260)
+        self.request_progress_bar.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.request_progress_label.grid_remove()
+        self.request_progress_bar.grid_remove()
+
+        output_frame = ttk.Frame(frame)
+        output_frame.grid(row=12, column=0, columnspan=2, sticky="nsew")
+        output_frame.columnconfigure(0, weight=1)
+        output_frame.rowconfigure(0, weight=1)
+
+        self.output = Text(
+            output_frame,
+            wrap="none",
+            background="#FFFFFF",
+            foreground="#111827",
+            insertbackground="#111827",
+            padx=8,
+            pady=8,
+            font=("Segoe UI", 10),
+        )
+        self.output.grid(row=0, column=0, sticky="nsew")
+        self.output_y_scroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.output.yview)
+        self.output_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.output_x_scroll = ttk.Scrollbar(output_frame, orient="horizontal", command=self.output.xview)
+        self.output_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.output.configure(yscrollcommand=self.output_y_scroll.set, xscrollcommand=self.output_x_scroll.set)
+
+        footer = ttk.Frame(frame)
+        footer.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        footer.columnconfigure(1, weight=1)
+        ttk.Separator(footer, orient="horizontal").grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        ttk.Label(footer, text="Ready").grid(row=1, column=0, sticky="w")
+        ttk.Label(footer, text="F1 Help | Ctrl+O Open PDFs | Ctrl+Enter Submit").grid(row=1, column=1, sticky="e")
 
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(12, weight=1)
+        self._install_tooltips(
+            frame=frame,
+            api_url_entry=api_url_entry,
+            api_key_entry=api_key_entry,
+            selected_trades_entry=selected_trades_entry,
+            overrides_entry=overrides_entry,
+            current_job_entry=current_job_entry,
+            notes_entry=notes_entry,
+            prune_statuses_entry=prune_statuses_entry,
+            prune_older_than_entry=prune_older_than_entry,
+            prune_limit_entry=prune_limit_entry,
+        )
+        self._apply_advanced_tools_visibility(update_status=False)
+
+    def _install_tooltips(
+        self,
+        *,
+        frame: ttk.Frame,
+        api_url_entry: ttk.Entry,
+        api_key_entry: ttk.Entry,
+        selected_trades_entry: ttk.Entry,
+        overrides_entry: ttk.Entry,
+        current_job_entry: ttk.Entry,
+        notes_entry: ttk.Entry,
+        prune_statuses_entry: ttk.Entry,
+        prune_older_than_entry: ttk.Entry,
+        prune_limit_entry: ttk.Entry,
+    ) -> None:
+        self._control_specs = self._control_specs_for_ui()
+        self._control_widgets = {}
+        self._control_tooltips = {}
+        pro_label_to_key = {
+            spec["pro_label"]: key for key, spec in self._control_specs.items()
+        }
+        for widget in self._walk_widgets(frame):
+            class_name = ""
+            try:
+                class_name = str(widget.winfo_class())
+            except Exception:
+                continue
+            if class_name not in {"TButton", "TCheckbutton"}:
+                continue
+            try:
+                text = str(widget.cget("text"))
+            except Exception:
+                continue
+            key = pro_label_to_key.get(text)
+            if not key:
+                continue
+            spec = self._control_specs.get(key)
+            if not spec:
+                continue
+            self._control_widgets[key] = widget
+            tooltip = self._add_tooltip(widget, spec["pro_tip"])
+            if tooltip:
+                self._control_tooltips[key] = tooltip
+
+        self._field_tooltip_specs = {
+            "api_url": {
+                "pro_tip": "Base API endpoint. Use local default unless pointing to a remote service.",
+                "beginner_tip": "Where this app sends requests. Leave this as the local address unless told otherwise.",
+            },
+            "api_key": {
+                "pro_tip": (
+                    "Optional API key sent as x-api-key. Required only when remote service enforces auth."
+                ),
+                "beginner_tip": (
+                    "Optional security key. Leave empty for local server; use one for protected remote servers."
+                ),
+            },
+            "analysis_mode": {
+                "pro_tip": "auto=detect trades, selected=only selected trades, all=analyze all supported trades.",
+                "beginner_tip": "Choose how wide the takeoff should run: auto, selected types, or all types.",
+            },
+            "selected_trades": {
+                "pro_tip": "Comma-separated trade tokens. Required when Analysis Mode is set to selected.",
+                "beginner_tip": "Type work types separated by commas (example: plumbing,electrical) when using selected mode.",
+            },
+            "overrides_path": {
+                "pro_tip": "Path to JSON that overrides inferred sheet IDs and titles.",
+                "beginner_tip": "Optional fix file for sheet names if auto-detection is wrong.",
+            },
+            "current_job": {
+                "pro_tip": "Target job ID for refresh, rerun, cancel, and review workflows.",
+                "beginner_tip": "Job number used to check status, rerun, or stop a background run.",
+            },
+            "notes": {
+                "pro_tip": "Optional run context or assumptions saved with the request.",
+                "beginner_tip": "Optional notes for this run (scope, clarifications, assumptions).",
+            },
+            "prune_statuses": {
+                "pro_tip": "Comma-separated terminal statuses to prune (completed, failed, canceled).",
+                "beginner_tip": "Which finished job types can be cleaned up.",
+            },
+            "prune_older_than": {
+                "pro_tip": "Only prune jobs older than this many hours.",
+                "beginner_tip": "Only clean jobs older than this number of hours.",
+            },
+            "prune_limit": {
+                "pro_tip": "Maximum number of jobs to evaluate/prune in one operation.",
+                "beginner_tip": "Maximum jobs to check in one cleanup run.",
+            },
+            "output_panel": {
+                "pro_tip": "Output panel for API responses, reports, and run diagnostics.",
+                "beginner_tip": "Main results window. Job results and messages appear here.",
+            },
+        }
+        self._field_tooltips = {}
+        self._field_label_specs = self._field_label_specs_for_ui()
+        self._field_label_tooltips = {}
+        field_widgets: dict[str, object] = {
+            "api_url": api_url_entry,
+            "api_key": api_key_entry,
+            "analysis_mode": self.analysis_mode_combo,
+            "selected_trades": selected_trades_entry,
+            "overrides_path": overrides_entry,
+            "current_job": current_job_entry,
+            "notes": notes_entry,
+            "prune_statuses": prune_statuses_entry,
+            "prune_older_than": prune_older_than_entry,
+            "prune_limit": prune_limit_entry,
+            "output_panel": self.output,
+        }
+        for key, widget in field_widgets.items():
+            spec = self._field_tooltip_specs.get(key)
+            if not spec:
+                continue
+            tooltip = self._add_tooltip(widget, spec["pro_tip"])
+            if tooltip:
+                self._field_tooltips[key] = tooltip
+
+        for key, widget in self._field_label_widgets.items():
+            spec = self._field_label_specs.get(key)
+            if not spec:
+                continue
+            tooltip = self._add_tooltip(widget, spec["pro_tip"])
+            if tooltip:
+                self._field_label_tooltips[key] = tooltip
+
+        self._apply_beginner_mode(update_status=False)
+
+    def _control_specs_for_ui(self) -> dict[str, dict[str, str]]:
+        return {
+            "start_local_api": {
+                "pro_label": "Start Local API",
+                "beginner_label": "Start Local Server",
+                "pro_tip": "Start the local backend service at the API URL if it is not already running.",
+                "beginner_tip": "Turn on the local engine so this app can run jobs.",
+            },
+            "control_guide": {
+                "pro_label": "Control Guide",
+                "beginner_label": "Help: Button Guide",
+                "pro_tip": "Show a complete action/shortcut guide in the output panel.",
+                "beginner_tip": "Show a plain-language list of what each button does.",
+            },
+            "beginner_mode_toggle": {
+                "pro_label": "Beginner Mode",
+                "beginner_label": "Beginner Mode",
+                "pro_tip": "Switch labels and tooltips to plain-language construction terms.",
+                "beginner_tip": "Use simpler button names and easier help text.",
+            },
+            "advanced_tools_toggle": {
+                "pro_label": "Advanced Tools",
+                "beginner_label": "Show Advanced Tabs",
+                "pro_tip": "Show advanced quality and operations tabs in the ribbon area.",
+                "beginner_tip": "Turn on extra tabs with technical tools and maintenance actions.",
+            },
+            "load_trades": {
+                "pro_label": "Load Trades",
+                "beginner_label": "Load Work Types",
+                "pro_tip": "Fetch valid trade names from the API and refresh trade mode options.",
+                "beginner_tip": "Load the list of work types this job can use.",
+            },
+            "validate_trades": {
+                "pro_label": "Validate Trades",
+                "beginner_label": "Check Work Types",
+                "pro_tip": "Check your selected trades against the active analysis mode and trade catalog.",
+                "beginner_tip": "Check that your chosen work types are valid.",
+            },
+            "browse_overrides": {
+                "pro_label": "Browse",
+                "beginner_label": "Pick JSON File",
+                "pro_tip": "Select a sheet-overrides JSON file to apply authoritative sheet IDs/titles.",
+                "beginner_tip": "Choose a fix file for sheet names and numbers.",
+            },
+            "choose_pdfs": {
+                "pro_label": "Choose PDFs",
+                "beginner_label": "Pick Drawing Files",
+                "pro_tip": "Pick one or more drawing PDFs for analysis or async job submission.",
+                "beginner_tip": "Choose the plan drawing files you want to run.",
+            },
+            "quick_start": {
+                "pro_label": "Quick Start",
+                "beginner_label": "Start Estimate",
+                "pro_tip": "Recommended one-click flow: ensure files are selected, submit async job, and auto-poll status.",
+                "beginner_tip": "Main button to start estimating in the background and watch progress automatically.",
+            },
+            "run_analysis": {
+                "pro_label": "Run Analysis",
+                "beginner_label": "Run Now (Wait)",
+                "pro_tip": "Run synchronous analysis and return results directly in this window.",
+                "beginner_tip": "Run now and wait here until results finish.",
+            },
+            "submit_async_job": {
+                "pro_label": "Submit Async Job",
+                "beginner_label": "Start Background Run",
+                "pro_tip": "Submit a background job and return a job ID for polling.",
+                "beginner_tip": "Start in background so you can keep working while it runs.",
+            },
+            "refresh_job": {
+                "pro_label": "Refresh Job",
+                "beginner_label": "Check Job Status",
+                "pro_tip": "Fetch latest status and payload for the current job ID.",
+                "beginner_tip": "Check progress for the current background run.",
+            },
+            "load_latest_job": {
+                "pro_label": "Load Latest Job",
+                "beginner_label": "Use Newest Job",
+                "pro_tip": "Load the newest job from the API into the current job field.",
+                "beginner_tip": "Auto-fill with the most recent job number.",
+            },
+            "rerun_job": {
+                "pro_label": "Rerun Job",
+                "beginner_label": "Run Job Again",
+                "pro_tip": "Rerun a previous job using the current form inputs and stored uploads.",
+                "beginner_tip": "Run the same job again with your current settings.",
+            },
+            "run_e2e_benchmark": {
+                "pro_label": "Run End-to-End Benchmark",
+                "beginner_label": "Run Full Test",
+                "pro_tip": "Build templates, execute benchmark runs, and return quality comparisons.",
+                "beginner_tip": "Run the full quality test flow from start to finish.",
+            },
+            "rerun_recommended": {
+                "pro_label": "Rerun Recommended",
+                "beginner_label": "Run Suggested Job",
+                "pro_tip": "Create a rerun from automated trade recommendations for current job context.",
+                "beginner_tip": "Run again using the tool's suggested work-type scope.",
+            },
+            "cancel_job": {
+                "pro_label": "Cancel Job",
+                "beginner_label": "Stop Job",
+                "pro_tip": "Cancel the current queued or running job when possible.",
+                "beginner_tip": "Stop the current background run if it is still active.",
+            },
+            "template_include_all_sheets": {
+                "pro_label": "Template Include All Sheets",
+                "beginner_label": "Use All Sheets in Template",
+                "pro_tip": "Include all detected sheets when generating benchmark template output.",
+                "beginner_tip": "Add every found sheet when creating the test template.",
+            },
+            "get_review_queue": {
+                "pro_label": "Get Review Queue",
+                "beginner_label": "Show Sheets to Review",
+                "pro_tip": "Show low-confidence sheet IDs and items needing human review.",
+                "beginner_tip": "Show places where the app is unsure and needs a quick check.",
+            },
+            "export_overrides_template": {
+                "pro_label": "Export Overrides Template",
+                "beginner_label": "Create Sheet Fix File",
+                "pro_tip": "Generate a sheet overrides template JSON for manual correction.",
+                "beginner_tip": "Create a file where you can correct sheet names/IDs.",
+            },
+            "export_benchmark_template": {
+                "pro_label": "Export Benchmark Template",
+                "beginner_label": "Create Test Template",
+                "pro_tip": "Generate a benchmark manifest template from current/last completed job.",
+                "beginner_tip": "Create a quality-test template from this job.",
+            },
+            "benchmark_include_unmapped": {
+                "pro_label": "Benchmark Include Unmapped",
+                "beginner_label": "Include Unnamed Sheets",
+                "pro_tip": "Include unmapped sheet IDs in benchmark template expectations.",
+                "beginner_tip": "Include sheets with missing IDs in the quality test.",
+            },
+            "run_baseline_benchmark": {
+                "pro_label": "Run Baseline Benchmark",
+                "beginner_label": "Run Baseline Test",
+                "pro_tip": "Run a baseline benchmark using selected manifests and settings.",
+                "beginner_tip": "Run a base test to compare future improvements.",
+            },
+            "show_benchmark_history": {
+                "pro_label": "Show Benchmark History",
+                "beginner_label": "Show Past Tests",
+                "pro_tip": "Show saved benchmark result history from API or local fallback.",
+                "beginner_tip": "Show previous quality-test runs.",
+            },
+            "compare_reports": {
+                "pro_label": "Compare Reports",
+                "beginner_label": "Compare Two Test Files",
+                "pro_tip": "Pick two benchmark JSON files and compare baseline vs candidate scores.",
+                "beginner_tip": "Compare two test files to see what improved or dropped.",
+            },
+            "compare_latest_reports": {
+                "pro_label": "Compare Latest Reports",
+                "beginner_label": "Compare Last Two Tests",
+                "pro_tip": "Compare the two newest benchmark reports automatically.",
+                "beginner_tip": "Auto-compare your two newest tests.",
+            },
+            "latest_trend_snapshot": {
+                "pro_label": "Latest Trend Snapshot",
+                "beginner_label": "Show Score Trend",
+                "pro_tip": "Show current benchmark trend and overall score delta.",
+                "beginner_tip": "Show whether quality is improving or getting worse.",
+            },
+            "score_timeline": {
+                "pro_label": "Score Timeline",
+                "beginner_label": "Show Score Over Time",
+                "pro_tip": "Display benchmark score timeline points across saved runs.",
+                "beginner_tip": "Show quality scores over time.",
+            },
+            "evaluate_gate": {
+                "pro_label": "Evaluate Gate",
+                "beginner_label": "Check Pass/Fail Rules",
+                "pro_tip": "Run quality-gate checks (non-regression/improvement thresholds).",
+                "beginner_tip": "Check if current quality passes required rules.",
+            },
+            "benchmark_dashboard": {
+                "pro_label": "Benchmark Dashboard",
+                "beginner_label": "Show Test Dashboard",
+                "pro_tip": "Open consolidated history, timeline, trend, and gate summary payload.",
+                "beginner_tip": "Show one view with all quality-test summaries.",
+            },
+            "auto_poll_job": {
+                "pro_label": "Auto Poll Job",
+                "beginner_label": "Auto-Refresh Job Status",
+                "pro_tip": "Automatically refresh the current job until it reaches a terminal status.",
+                "beginner_tip": "Auto-check job status until it is done.",
+            },
+            "save_output": {
+                "pro_label": "Save Output",
+                "beginner_label": "Save Results Text",
+                "pro_tip": "Save the output panel content to a JSON file.",
+                "beginner_tip": "Save what you see in the results panel.",
+            },
+            "open_results_folder": {
+                "pro_label": "Open Results Folder",
+                "beginner_label": "Open Results Folder",
+                "pro_tip": "Open local benchmarks/results folder in your file explorer.",
+                "beginner_tip": "Open the folder where test and result files are stored.",
+            },
+            "job_ops_snapshot": {
+                "pro_label": "Job Ops Snapshot",
+                "beginner_label": "Show System Snapshot",
+                "pro_tip": "Show operational metrics snapshot for queue, durations, and throughput.",
+                "beginner_tip": "Show system health numbers like queue size and speed.",
+            },
+            "job_ops_gate": {
+                "pro_label": "Job Ops Gate",
+                "beginner_label": "Check System Pass/Fail",
+                "pro_tip": "Evaluate operational quality gate thresholds against recent job metrics.",
+                "beginner_tip": "Check if system performance is inside allowed limits.",
+            },
+            "trade_recommendation": {
+                "pro_label": "Trade Recommendation",
+                "beginner_label": "Suggest Work Types",
+                "pro_tip": "Generate recommended trade scope for current job based on detected content.",
+                "beginner_tip": "Suggest which work types should be included for this job.",
+            },
+            "trade_coverage": {
+                "pro_label": "Trade Coverage",
+                "beginner_label": "Show Work Type Coverage",
+                "pro_tip": "Show per-trade coverage and review-needed status for current job results.",
+                "beginner_tip": "Show how complete each work type is in current results.",
+            },
+            "readiness_report": {
+                "pro_label": "Readiness Report",
+                "beginner_label": "Show Ready-to-Handoff Report",
+                "pro_tip": "Generate handoff/readiness report combining review, coverage, and ops gates.",
+                "beginner_tip": "Generate a report showing if this job is ready to hand off.",
+            },
+            "cleanup_uploads": {
+                "pro_label": "Cleanup Uploads",
+                "beginner_label": "Delete Uploaded Files Too",
+                "pro_tip": "When pruning, also delete uploaded file folders tied to pruned jobs.",
+                "beginner_tip": "Also delete uploaded source files during cleanup.",
+            },
+            "prune_dry_run": {
+                "pro_label": "Prune Dry Run",
+                "beginner_label": "Preview Cleanup",
+                "pro_tip": "Preview jobs that would be pruned using current prune filters.",
+                "beginner_tip": "Show what would be deleted without deleting anything.",
+            },
+            "prune_apply": {
+                "pro_label": "Prune Apply",
+                "beginner_label": "Run Cleanup",
+                "pro_tip": "Delete/prune matching completed/failed/canceled jobs using current filters.",
+                "beginner_tip": "Delete old finished jobs using your cleanup settings.",
+            },
+        }
+
+    def _field_label_specs_for_ui(self) -> dict[str, dict[str, str]]:
+        return {
+            "api_url": {
+                "pro_label": "API URL",
+                "beginner_label": "Server Address",
+                "pro_tip": "Base API endpoint for requests.",
+                "beginner_tip": "Server address (leave as local unless your admin gave another one).",
+            },
+            "api_key": {
+                "pro_label": "API Key (optional)",
+                "beginner_label": "Security Key (optional)",
+                "pro_tip": (
+                    "Optional x-api-key value. Leave blank for local, unprotected instances."
+                ),
+                "beginner_tip": (
+                    "Leave blank for local server. For protected APIs, paste the key here so jobs can connect."
+                ),
+            },
+            "analysis_mode": {
+                "pro_label": "Analysis Mode",
+                "beginner_label": "Run Settings",
+                "pro_tip": "Trade scope inference behavior for the job.",
+                "beginner_tip": "Choose what kinds of work types to include in this run.",
+            },
+            "selected_trades": {
+                "pro_label": "Selected Trades (CSV)",
+                "beginner_label": "Choose Work Types (comma list)",
+                "pro_tip": "Comma-separated trade list used with selected analysis mode.",
+                "beginner_tip": "Type each work type you want to include, separated by commas.",
+            },
+            "overrides_path": {
+                "pro_label": "Sheet Overrides JSON",
+                "beginner_label": "Sheet Fix File",
+                "pro_tip": "Path to a JSON file with manual sheet ID/title overrides.",
+                "beginner_tip": "Pick a sheet-fix file to correct sheet names/IDs.",
+            },
+            "current_job": {
+                "pro_label": "Current Job ID",
+                "beginner_label": "Current Job Number",
+                "pro_tip": "Use this value to check/cancel/rerun jobs.",
+                "beginner_tip": "The job number you want to check or rerun.",
+            },
+            "notes": {
+                "pro_label": "Notes",
+                "beginner_label": "Project Notes",
+                "pro_tip": "Optional notes sent with the analysis request.",
+                "beginner_tip": "Optional notes for this job.",
+            },
+            "prune_statuses": {
+                "pro_label": "Prune Statuses",
+                "beginner_label": "Job Types to Remove",
+                "pro_tip": "Statuses used when pruning job records.",
+                "beginner_tip": "Which finished job states to clean up.",
+            },
+            "prune_older_than": {
+                "pro_label": "Older Than (h)",
+                "beginner_label": "Age in Hours",
+                "pro_tip": "Only prune jobs older than this threshold.",
+                "beginner_tip": "Only clean jobs older than this many hours.",
+            },
+            "prune_limit": {
+                "pro_label": "Limit",
+                "beginner_label": "Max Cleaned Jobs",
+                "pro_tip": "Limit jobs evaluated per cleanup action.",
+                "beginner_tip": "Maximum number of jobs cleaned in one go.",
+            },
+        }
+
+    def _toggle_beginner_mode(self) -> None:
+        self._apply_beginner_mode(update_status=True)
+        self._save_settings()
+
+    def _toggle_advanced_tools(self) -> None:
+        self._apply_advanced_tools_visibility(update_status=True)
+        self._save_settings()
+
+    def _apply_advanced_tools_visibility(self, *, update_status: bool) -> None:
+        if self.actions_notebook is None:
+            return
+        show_advanced = bool(self.show_advanced_tools.get())
+        for tab_widget, tab_text in self._advanced_tab_widgets:
+            current_state = str(self.actions_notebook.tab(tab_widget, "state"))
+            desired_state = "normal" if show_advanced else "hidden"
+            if current_state != desired_state:
+                self.actions_notebook.tab(tab_widget, state=desired_state)
+        if not show_advanced:
+            self.actions_notebook.select(0)
+        if update_status:
+            message = "Advanced tabs shown." if show_advanced else "Advanced tabs hidden."
+            self.status_text.set(message)
+
+    def _apply_beginner_mode(self, *, update_status: bool) -> None:
+        use_beginner = bool(self.beginner_mode.get())
+        if use_beginner and self.show_advanced_tools.get():
+            self.show_advanced_tools.set(False)
+            self._apply_advanced_tools_visibility(update_status=False)
+        for key, widget in self._control_widgets.items():
+            spec = self._control_specs.get(key)
+            if not spec:
+                continue
+            target_label = spec["beginner_label"] if use_beginner else spec["pro_label"]
+            try:
+                widget.configure(text=target_label)
+            except Exception:
+                pass
+            tip = self._control_tooltips.get(key)
+            if tip is not None:
+                tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+                tip.set_text(tip_text)
+
+        for key, tip in self._field_tooltips.items():
+            spec = self._field_tooltip_specs.get(key)
+            if not spec:
+                continue
+            tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+            tip.set_text(tip_text)
+
+        for key, widget in self._field_label_widgets.items():
+            spec = self._field_label_specs.get(key)
+            if not spec:
+                continue
+            try:
+                widget.configure(text=spec["beginner_label"] if use_beginner else spec["pro_label"])
+            except Exception:
+                pass
+
+        for key, tip in self._field_label_tooltips.items():
+            spec = self._field_label_specs.get(key)
+            if not spec:
+                continue
+            tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+            tip.set_text(tip_text)
+
+        self._control_help_entries = {}
+        for key, spec in self._control_specs.items():
+            label = spec["beginner_label"] if use_beginner else spec["pro_label"]
+            description = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+            self._control_help_entries[label] = description
+
+        if update_status:
+            mode_text = "Beginner mode enabled." if use_beginner else "Beginner mode disabled."
+            self.status_text.set(mode_text)
+
+    def _walk_widgets(self, parent: object) -> list[object]:
+        children = []
+        winfo_children = getattr(parent, "winfo_children", None)
+        if not callable(winfo_children):
+            return children
+        for child in winfo_children():
+            children.append(child)
+            children.extend(self._walk_widgets(child))
+        return children
+
+    def _add_tooltip(self, widget: object, text: str) -> HoverTooltip | None:
+        if not text.strip():
+            return None
+        tooltip = HoverTooltip(widget, text)
+        self._tooltips.append(tooltip)
+        return tooltip
+
+    def _bind_shortcuts(self) -> None:
+        self.root.bind("<F1>", self._shortcut_show_guide, add="+")
+        self.root.bind("<Control-o>", self._shortcut_choose_pdfs, add="+")
+        self.root.bind("<Control-Return>", self._shortcut_submit_job, add="+")
+        self.root.bind("<Control-Shift-Return>", self._shortcut_quick_start, add="+")
+        self.root.bind("<F5>", self._shortcut_refresh_job, add="+")
+        self.root.bind("<Control-l>", self._shortcut_load_latest_job, add="+")
+        self.root.bind("<Control-s>", self._shortcut_save_output, add="+")
+        self.root.bind("<Control-b>", self._shortcut_toggle_beginner_mode, add="+")
+
+    def _shortcut_show_guide(self, _event: object = None) -> str:
+        self._show_control_guide()
+        return "break"
+
+    def _shortcut_choose_pdfs(self, _event: object = None) -> str:
+        self._choose_pdfs()
+        return "break"
+
+    def _shortcut_submit_job(self, _event: object = None) -> str:
+        self._submit_async_job()
+        return "break"
+
+    def _shortcut_quick_start(self, _event: object = None) -> str:
+        self._quick_start_run()
+        return "break"
+
+    def _shortcut_refresh_job(self, _event: object = None) -> str:
+        self._refresh_job()
+        return "break"
+
+    def _shortcut_load_latest_job(self, _event: object = None) -> str:
+        self._load_latest_job()
+        return "break"
+
+    def _shortcut_save_output(self, _event: object = None) -> str:
+        self._save_output()
+        return "break"
+
+    def _shortcut_toggle_beginner_mode(self, _event: object = None) -> str:
+        self.beginner_mode.set(not bool(self.beginner_mode.get()))
+        self._toggle_beginner_mode()
+        return "break"
+
+    def _show_control_guide(self) -> None:
+        use_beginner = bool(self.beginner_mode.get())
+        heading = "AI Estimator Desktop - Beginner Guide" if use_beginner else "AI Estimator Desktop - Control Guide"
+        label_mode = "beginner_label" if use_beginner else "pro_label"
+        choose_pdfs_label = self._control_specs.get("choose_pdfs", {}).get(label_mode, "Choose PDFs")
+        submit_job_label = self._control_specs.get("submit_async_job", {}).get(label_mode, "Submit Async Job")
+        refresh_job_label = self._control_specs.get("refresh_job", {}).get(label_mode, "Refresh Job")
+        load_latest_label = self._control_specs.get("load_latest_job", {}).get(label_mode, "Load Latest Job")
+        save_output_label = self._control_specs.get("save_output", {}).get(label_mode, "Save Output")
+        beginner_mode_label = self._control_specs.get("beginner_mode_toggle", {}).get(label_mode, "Beginner Mode")
+        lines = [
+            heading,
+            "",
+            "API key is only required when your API endpoint is protected (local default usually is not).",
+            "Keyboard shortcuts:",
+            "- F1: Show this guide",
+            f"- Ctrl+O: {choose_pdfs_label}",
+            f"- Ctrl+Enter: {submit_job_label}",
+            "- Ctrl+Shift+Enter: Quick Start",
+            f"- F5: {refresh_job_label}",
+            f"- Ctrl+L: {load_latest_label}",
+            f"- Ctrl+S: {save_output_label}",
+            f"- Ctrl+B: Toggle {beginner_mode_label}",
+            "",
+            "Controls:",
+        ]
+        if self._control_help_entries:
+            for name, description in self._control_help_entries.items():
+                lines.append(f"- {name}: {description}")
+        else:
+            lines.append("- No control descriptions were found.")
+
+        self._set_output_text("\n".join(lines))
+        self.status_text.set("Guide loaded.")
 
     def _choose_pdfs(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -315,6 +1306,20 @@ class DesktopEstimatorApp:
         self.status_text.set("Overrides file selected.")
         self._save_settings()
 
+    def _quick_start_run(self) -> None:
+        if self.request_task_running:
+            self.status_text.set("Another request is already running. Wait for it to finish.")
+            return
+        if not self.files:
+            self._choose_pdfs()
+            if not self.files:
+                self.status_text.set("Quick start canceled: no drawing files selected.")
+                return
+        if not self.auto_poll_enabled.get():
+            self.auto_poll_enabled.set(True)
+        self.status_text.set("Quick start: submitting background job with auto-poll.")
+        self._submit_async_job()
+
     def _load_trade_catalog(self) -> None:
         try:
             payload = self._refresh_trade_catalog_from_api(update_output=True)
@@ -335,38 +1340,160 @@ class DesktopEstimatorApp:
 
     def _run_analysis(self) -> None:
         self.output.delete("1.0", END)
+        if self.request_task_running:
+            self.status_text.set("Another request is already running. Wait for it to finish.")
+            return
         if not self.files:
             self.output.insert(END, "Please select at least one PDF.")
             return
 
         try:
             data = self._build_request_data()
-            payload = self._post_files("/v1/analyze", data=data, timeout=600)
-            self._set_output_json(payload)
-            self.status_text.set("Synchronous analysis completed.")
+            api_base = self.api_url.get().strip().rstrip("/")
+            if not api_base:
+                raise RuntimeError("API URL is required.")
+            file_paths = list(self.files)
         except Exception as exc:
-            self._set_output_text(f"Failed to run analysis:\n{exc}")
+            self._set_output_text(f"Failed to start analysis:\n{exc}")
+            return
+
+        file_lines = [Path(path).name for path in file_paths]
+        self._set_output_text(
+            "Starting synchronous analysis:\n"
+            f"Files ({len(file_paths)}): {', '.join(file_lines[:10])}"
+            + ("\n..." if len(file_lines) > 10 else "")
+        )
+
+        self._set_request_busy(
+            busy=True,
+            message=f"Running analysis on {len(file_paths)} file(s). Large PDFs may take several minutes...",
+        )
+        self.status_text.set("Uploading drawings and running analysis...")
+        worker = Thread(
+            target=self._run_analysis_worker,
+            args=(api_base, data, file_paths),
+            daemon=True,
+        )
+        worker.start()
 
     def _submit_async_job(self) -> None:
         self.output.delete("1.0", END)
+        if self.request_task_running:
+            self.status_text.set("Another request is already running. Wait for it to finish.")
+            return
         if not self.files:
             self.output.insert(END, "Please select at least one PDF.")
             return
 
         try:
             data = self._build_request_data()
-            payload = self._post_files("/v1/jobs", data=data, timeout=120)
-            job_id = str(payload.get("job_id", "")).strip()
-            if not job_id:
-                raise RuntimeError("API response did not include job_id.")
-            self.current_job_id.set(job_id)
-            self._set_output_json(payload)
-            self.status_text.set(f"Async job submitted: {job_id}")
-            self._save_settings()
-            if self.auto_poll_enabled.get():
-                self._start_auto_poll()
+            api_base = self.api_url.get().strip().rstrip("/")
+            if not api_base:
+                raise RuntimeError("API URL is required.")
+            file_paths = list(self.files)
         except Exception as exc:
-            self._set_output_text(f"Failed to submit async job:\n{exc}")
+            self._set_output_text(f"Failed to start async job:\n{exc}")
+            return
+
+        file_lines = [Path(path).name for path in file_paths]
+        self._set_output_text(
+            "Submitting background job:\n"
+            f"Files ({len(file_paths)}): {', '.join(file_lines[:10])}"
+            + ("\n..." if len(file_lines) > 10 else "")
+            + "\n\n"
+        )
+
+        self._set_request_busy(
+            busy=True,
+            message=f"Submitting background job for {len(file_paths)} file(s). Uploading large PDFs...",
+        )
+        self.status_text.set("Uploading files and creating background job...")
+        worker = Thread(
+            target=self._submit_async_job_worker,
+            args=(api_base, data, file_paths),
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_analysis_worker(
+        self,
+        api_base: str,
+        request_data: dict[str, str],
+        file_paths: list[str],
+    ) -> None:
+        try:
+            payload = self._post_files_to_base(
+                api_base=api_base,
+                path="/v1/analyze",
+                data=request_data,
+                file_paths=file_paths,
+                timeout=1800,
+                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
+            )
+            self.root.after(0, lambda: self._on_run_analysis_success(payload))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_run_analysis_failure(exc))
+
+    def _submit_async_job_worker(
+        self,
+        api_base: str,
+        request_data: dict[str, str],
+        file_paths: list[str],
+    ) -> None:
+        try:
+            payload = self._post_files_to_base(
+                api_base=api_base,
+                path="/v1/jobs",
+                data=request_data,
+                file_paths=file_paths,
+                timeout=1800,
+                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
+            )
+            self.root.after(0, lambda: self._on_submit_async_job_success(payload))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_submit_async_job_failure(exc))
+
+    def _on_run_analysis_success(self, payload: dict) -> None:
+        self._set_request_busy(busy=False)
+        self._set_job_polling(busy=False)
+        self._set_output_json(payload)
+        self.status_text.set("Synchronous analysis completed.")
+
+    def _on_run_analysis_failure(self, exc: Exception) -> None:
+        self._set_request_busy(busy=False)
+        self._set_job_polling(busy=False)
+        self._set_output_text(f"Failed to run analysis:\n{exc}")
+        self.status_text.set("Analysis failed.")
+
+    def _on_submit_async_job_success(self, payload: dict) -> None:
+        self._set_request_busy(busy=False)
+        job_id = str(payload.get("job_id", "")).strip()
+        if not job_id:
+            self._set_output_text("Failed to submit async job:\nAPI response did not include job_id.")
+            self.status_text.set("Async job submission failed.")
+            self._set_job_polling(busy=False)
+            return
+        self.current_job_id.set(job_id)
+        self._set_output_json(payload)
+        self._save_settings()
+        self._append_output_line(f"Async job accepted: {job_id}")
+        self._set_job_polling(
+            busy=True,
+            message=f"Background job accepted ({job_id}). Watching for start of processing...",
+        )
+        self.status_text.set(f"Async job submitted: {job_id}")
+        if not self.auto_poll_enabled.get():
+            self.auto_poll_enabled.set(True)
+            if self.request_task_running:
+                self._append_output_line("Auto poll will start after request completes.")
+        if self.auto_poll_enabled.get():
+            self._start_auto_poll()
+
+    def _on_submit_async_job_failure(self, exc: Exception) -> None:
+        self._set_request_busy(busy=False)
+        self._set_job_polling(busy=False)
+        self._set_output_text(f"Failed to submit async job:\n{exc}")
+        self.status_text.set("Async job submission failed.")
 
     def _rerun_job(self) -> None:
         source_job_id = self.current_job_id.get().strip()
@@ -383,8 +1510,13 @@ class DesktopEstimatorApp:
             self.current_job_id.set(new_job_id)
             self._set_output_json(payload)
             self.status_text.set(f"Rerun job submitted: {new_job_id}")
+            self._append_output_line(f"Rerun job submitted: {new_job_id}")
             self._save_settings()
             if self.auto_poll_enabled.get():
+                self._set_job_polling(
+                    busy=True,
+                    message=f"Watching rerun job {new_job_id}...",
+                )
                 self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to rerun job:\n{exc}")
@@ -411,8 +1543,15 @@ class DesktopEstimatorApp:
             self.status_text.set(
                 f"Recommended rerun submitted: {new_job_id} (mode={mode}, confidence={confidence})"
             )
+            self._append_output_line(
+                f"Recommended rerun submitted: {new_job_id} (mode={mode}, confidence={confidence})"
+            )
             self._save_settings()
             if self.auto_poll_enabled.get():
+                self._set_job_polling(
+                    busy=True,
+                    message=f"Watching recommended rerun job {new_job_id}...",
+                )
                 self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to submit recommended rerun:\n{exc}")
@@ -429,8 +1568,13 @@ class DesktopEstimatorApp:
             self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} cancel result: {status}")
             if status == "canceled":
+                self._append_output_line(f"Job {job_id} canceled.")
+                self._set_job_polling(busy=False)
+            if status == "canceled":
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
+            else:
+                self._append_output_line(f"Cancel request sent for job {job_id}. New status: {status}")
         except Exception as exc:
             self._set_output_text(f"Failed to cancel job:\n{exc}")
 
@@ -448,6 +1592,10 @@ class DesktopEstimatorApp:
             else:
                 self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} status: {status or 'unknown'}")
+            self._set_job_polling(
+                busy=False if status in _TERMINAL_JOB_STATUSES else self.job_polling,
+                message=self._make_job_poll_message(job_id, status),
+            )
             if status in _TERMINAL_JOB_STATUSES:
                 self._stop_auto_poll()
         except Exception as exc:
@@ -473,6 +1621,10 @@ class DesktopEstimatorApp:
             if self.auto_poll_enabled.get():
                 latest_status = str(latest.get("status", "")).strip()
                 if latest_status not in _TERMINAL_JOB_STATUSES:
+                    self._set_job_polling(
+                        busy=True,
+                        message=self._make_job_poll_message(job_id, latest_status),
+                    )
                     self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to load latest job:\n{exc}")
@@ -840,6 +1992,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=180,
+                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
             )
             job_id = str(create_payload.get("job_id", "")).strip()
             if not job_id:
@@ -850,6 +2003,9 @@ class DesktopEstimatorApp:
                 job_id=job_id,
                 max_wait_seconds=1200,
                 poll_interval_seconds=2,
+                progress_callback=lambda message: self.root.after(
+                    0, lambda: self._append_output_line(message)
+                ),
             )
             status = str(job_payload.get("status", "")).strip()
             if status != "completed":
@@ -920,26 +2076,38 @@ class DesktopEstimatorApp:
         if not job_id:
             self.status_text.set("Auto poll not started: no current job ID.")
             self.auto_poll_enabled.set(False)
+            self._set_job_polling(busy=False)
             return
         if self.auto_poll_handle is not None:
             return
+        self._auto_poll_cycle = 0
         self.status_text.set(f"Auto polling job {job_id} every {self.auto_poll_interval_ms // 1000}s.")
+        if not self.job_polling:
+            self._set_job_polling(
+                busy=True,
+                message=f"Auto-polling job {job_id} (every {self.auto_poll_interval_ms // 1000}s)...",
+            )
         self.auto_poll_handle = self.root.after(self.auto_poll_interval_ms, self._auto_poll_tick)
 
     def _stop_auto_poll(self) -> None:
         if self.auto_poll_handle is not None:
             self.root.after_cancel(self.auto_poll_handle)
             self.auto_poll_handle = None
+        self._set_job_polling(busy=False)
+        self.auto_poll_enabled.set(False)
 
     def _auto_poll_tick(self) -> None:
         self.auto_poll_handle = None
         if not self.auto_poll_enabled.get():
+            self._set_job_polling(busy=False)
             return
         job_id = self.current_job_id.get().strip()
         if not job_id:
             self.auto_poll_enabled.set(False)
+            self._set_job_polling(busy=False)
             self.status_text.set("Auto poll stopped: no current job ID.")
             return
+        self._auto_poll_cycle += 1
 
         try:
             payload = self._request_json("GET", f"/v1/jobs/{job_id}", timeout=30)
@@ -948,20 +2116,27 @@ class DesktopEstimatorApp:
             if status == "completed" and isinstance(result, dict):
                 self._set_output_json(result)
                 self.status_text.set(f"Job {job_id} completed.")
+                self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
                 return
             if status in {"failed", "canceled"}:
                 self._set_output_json(payload)
                 self.status_text.set(f"Job {job_id} {status}.")
+                self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
                 return
+            self._set_job_polling(
+                busy=True,
+                message=self._make_job_poll_message(job_id, status),
+            )
             self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} status: {status or 'unknown'} (auto polling)")
         except Exception as exc:
             self.status_text.set(f"Auto poll error: {exc}")
             self.auto_poll_enabled.set(False)
+            self._set_job_polling(busy=False)
             self._stop_auto_poll()
             return
 
@@ -1063,14 +2238,41 @@ class DesktopEstimatorApp:
         data: dict[str, str],
         file_paths: list[str],
         timeout: int,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
         files = []
         handles = []
+        seen_paths = set[str]()
+        if not file_paths:
+            raise RuntimeError("No files were provided for upload.")
+        if progress_callback is not None:
+            total = len(file_paths)
+            progress_callback(f"Preparing {total} drawing file(s) for upload...")
         try:
             for file_path in file_paths:
-                handle = open(file_path, "rb")
+                normalized_path = str(file_path).strip()
+                if not normalized_path:
+                    raise RuntimeError("One or more PDF paths are empty.")
+                if normalized_path in seen_paths:
+                    continue
+                seen_paths.add(normalized_path)
+                path_obj = Path(normalized_path)
+                if not path_obj.exists():
+                    raise RuntimeError(f"Selected file not found: {normalized_path}")
+                if not path_obj.is_file():
+                    raise RuntimeError(f"Selected path is not a file: {normalized_path}")
+                size = path_obj.stat().st_size
+                if size <= 0:
+                    raise RuntimeError(f"Selected file is empty: {normalized_path}")
+                if progress_callback is not None:
+                    progress_callback(f"Attaching {path_obj.name} ({self._format_size_label(size)}).")
+                handle = open(path_obj, "rb")
                 handles.append(handle)
-                files.append(("files", (Path(file_path).name, handle, "application/pdf")))
+                files.append(("files", (path_obj.name, handle, "application/pdf")))
+            if not files:
+                raise RuntimeError("No valid PDF files were selected after validation.")
+            if progress_callback is not None:
+                progress_callback(f"Uploading {len(files)} file(s) to {path} ...")
             return self._request_json_from_base(
                 "POST",
                 api_base=api_base,
@@ -1080,6 +2282,8 @@ class DesktopEstimatorApp:
                 timeout=timeout,
             )
         finally:
+            if progress_callback is not None and handles:
+                progress_callback("Upload complete, waiting for API response...")
             for handle in handles:
                 handle.close()
 
@@ -1090,6 +2294,7 @@ class DesktopEstimatorApp:
         job_id: str,
         max_wait_seconds: int,
         poll_interval_seconds: int,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
         deadline = time.time() + max(1, max_wait_seconds)
         last_payload: dict = {}
@@ -1104,6 +2309,8 @@ class DesktopEstimatorApp:
             status = str(payload.get("status", "")).strip()
             if status in _TERMINAL_JOB_STATUSES:
                 return payload
+            if progress_callback is not None:
+                progress_callback(self._make_job_poll_message(job_id, status))
             time.sleep(max(1, poll_interval_seconds))
         raise RuntimeError(
             f"Timed out waiting for job {job_id}. Last status: {last_payload.get('status', 'unknown')}"
@@ -1159,11 +2366,153 @@ class DesktopEstimatorApp:
         self.output.delete("1.0", END)
         self.output.insert(END, text)
 
-    def _refresh_files_label(self) -> None:
-        if self.files:
-            self.files_label.config(text=f"{len(self.files)} file(s) selected.")
+    def _append_output_line(self, text: str) -> None:
+        if not text:
+            return
+        self.output.insert(END, f"{text}\n")
+        self.output.see(END)
+
+    def _make_job_poll_message(self, job_id: str, status: str) -> str:
+        status_text = status or "unknown"
+        cycle = self._auto_poll_cycle
+        cycle_text = f" (check #{cycle})" if cycle else ""
+        if self.auto_poll_interval_ms:
+            interval = self.auto_poll_interval_ms // 1000
+            return f"Tracking job {job_id}: {status_text}{cycle_text} (checks every {interval}s)"
+        return f"Tracking job {job_id}: {status_text}{cycle_text}"
+
+    def _set_job_polling(self, *, busy: bool, message: str = "") -> None:
+        self.job_polling = busy
+        if busy:
+            candidate = message.strip()
+            if candidate:
+                self.job_progress_message = candidate
         else:
-            self.files_label.config(text="No files selected.")
+            self.job_progress_message = ""
+        self._refresh_progress_indicator()
+
+    def _refresh_progress_indicator(self) -> None:
+        should_show_request_progress = self.request_task_running
+        should_show_poll_progress = self.job_polling
+
+        if should_show_request_progress:
+            if not self.request_progress_text.get():
+                self.request_progress_text.set("Working...")
+            self.request_progress_label.grid()
+            self.request_progress_bar.grid()
+            if not self._progress_bar_running:
+                self.request_progress_bar.start(12)
+                self._progress_bar_running = True
+            return
+
+        if should_show_poll_progress:
+            polling_message = self.job_progress_message.strip()
+            self.request_progress_text.set(polling_message or "Monitoring job progress...")
+            self.request_progress_label.grid()
+            self.request_progress_bar.grid()
+            if not self._progress_bar_running:
+                self.request_progress_bar.start(12)
+                self._progress_bar_running = True
+            return
+
+        if self._progress_bar_running:
+            self.request_progress_bar.stop()
+            self._progress_bar_running = False
+        self.request_progress_bar.grid_remove()
+        self.request_progress_label.grid_remove()
+        self.request_progress_text.set("")
+
+    def _set_request_busy(self, *, busy: bool, message: str = "") -> None:
+        self.request_task_running = busy
+        if busy:
+            self.request_progress_text.set(message.strip() or "Working...")
+            for control in self._control_widgets.values():
+                try:
+                    control.configure(state="disabled")
+                except Exception:
+                    pass
+            self._refresh_progress_indicator()
+            return
+
+        for control in self._control_widgets.values():
+            try:
+                control.configure(state="normal")
+            except Exception:
+                pass
+        self._refresh_progress_indicator()
+
+    def _format_size_label(self, byte_count: int) -> str:
+        if byte_count < 1024:
+            return f"{byte_count} B"
+        kib = byte_count / 1024.0
+        if kib < 1024:
+            return f"{kib:.1f} KB"
+        mib = kib / 1024.0
+        if mib < 1024:
+            return f"{mib:.1f} MB"
+        gib = mib / 1024.0
+        return f"{gib:.2f} GB"
+
+    def _selected_files_summary(self) -> str:
+        if not self.files:
+            return "No files selected."
+        names: list[str] = [Path(path).name for path in self.files]
+        total_bytes = 0
+        missing = 0
+        for path in self.files:
+            try:
+                total_bytes += Path(path).stat().st_size
+            except OSError:
+                missing += 1
+        shown = ", ".join(names[:3])
+        if len(names) > 3:
+            shown = f"{shown}, +{len(names) - 3} more"
+
+        size_text = self._format_size_label(total_bytes) if total_bytes > 0 else "size unknown"
+        if missing > 0:
+            return (
+                f"{len(names)} file(s) selected ({size_text}; {missing} unavailable): {shown}"
+            )
+        return f"{len(names)} file(s) selected ({size_text}): {shown}"
+
+    def _refresh_header_summary(self) -> None:
+        mode = self.analysis_mode.get().strip() or "auto"
+        job_id = self.current_job_id.get().strip()
+        self.header_mode_text.set(f"Mode: {mode}")
+        self.header_job_text.set(f"Job: {job_id[:12]}..." if job_id else "Job: none")
+        if not self.files:
+            self.header_files_text.set("Files: none")
+        else:
+            self.header_files_text.set(f"Files: {len(self.files)} selected")
+
+    def _refresh_files_label(self) -> None:
+        self.files_label.config(text=self._selected_files_summary())
+        self._refresh_files_list()
+        self._refresh_header_summary()
+
+    def _refresh_files_list(self) -> None:
+        if self.files_list is None:
+            return
+
+        self.files_list.configure(state="normal")
+        self.files_list.delete("1.0", END)
+        if not self.files:
+            self.files_list.insert(END, "No files selected.\n")
+            self.files_list.configure(state="disabled")
+            return
+
+        for idx, path_text in enumerate(self.files, start=1):
+            path = Path(path_text)
+            name = path.name
+            try:
+                size = self._format_size_label(path.stat().st_size)
+                status = "found"
+            except OSError:
+                size = "not found"
+                status = "missing"
+            self.files_list.insert(END, f"{idx:>2}. {name} ({size}, {status})\n")
+
+        self.files_list.configure(state="disabled")
 
     def _load_settings(self) -> None:
         if not self.settings_path.exists():
@@ -1208,6 +2557,14 @@ class DesktopEstimatorApp:
         if isinstance(include_unmapped_benchmark, bool):
             self.include_unmapped_benchmark.set(include_unmapped_benchmark)
 
+        beginner_mode = loaded.get("beginner_mode")
+        if isinstance(beginner_mode, bool):
+            self.beginner_mode.set(beginner_mode)
+
+        show_advanced_tools = loaded.get("show_advanced_tools")
+        if isinstance(show_advanced_tools, bool):
+            self.show_advanced_tools.set(show_advanced_tools)
+
         auto_poll_enabled = loaded.get("auto_poll_enabled")
         if isinstance(auto_poll_enabled, bool):
             self.auto_poll_enabled.set(auto_poll_enabled)
@@ -1238,6 +2595,9 @@ class DesktopEstimatorApp:
                         restored.append(str(path))
             self.files = restored
 
+        self._apply_beginner_mode(update_status=False)
+        self._apply_advanced_tools_visibility(update_status=False)
+
         if self.auto_poll_enabled.get() and self.current_job_id.get().strip():
             self._start_auto_poll()
 
@@ -1251,6 +2611,8 @@ class DesktopEstimatorApp:
             "current_job_id": self.current_job_id.get().strip(),
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
+            "beginner_mode": bool(self.beginner_mode.get()),
+            "show_advanced_tools": bool(self.show_advanced_tools.get()),
             "auto_poll_enabled": bool(self.auto_poll_enabled.get()),
             "prune_statuses": self.prune_statuses.get().strip(),
             "prune_older_than_hours": self.prune_older_than_hours.get().strip(),

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from ai_estimator.constants import DEFAULT_CSI_BY_TRADE, TRADE_NAMES
@@ -267,6 +267,59 @@ async def require_api_key_when_configured(request: Request, call_next):  # type:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "db_path": _get_job_store().db_path}
+
+
+@app.get("/", response_class=HTMLResponse)
+def root() -> str:
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Estimator Service</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    main {
+      max-width: 760px;
+      margin: 48px auto;
+      padding: 24px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+    }
+    h1 { margin-top: 0; }
+    p { color: #cbd5e1; }
+    ul { padding-left: 20px; }
+    a { color: #93c5fd; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      border-radius: 6px;
+      padding: 2px 6px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AI Estimator Service</h1>
+    <p>Service is running. Use the links below.</p>
+    <ul>
+      <li><a href="/docs">API docs</a></li>
+      <li><a href="/health">Health check</a></li>
+      <li><a href="/v1/jobs">Jobs list</a></li>
+      <li><a href="/v1/meta/trades">Trade catalog</a></li>
+    </ul>
+    <p>For async analysis, submit to <code>/v1/jobs</code>.</p>
+  </main>
+</body>
+</html>
+"""
 
 
 @app.get("/v1/meta/trades", response_model=TradeCatalogResponse)
