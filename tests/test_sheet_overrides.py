@@ -66,3 +66,27 @@ def test_load_sheet_overrides_invalid_page_index_raises(tmp_path):
         assert "source_page_index" in str(exc)
     else:
         raise AssertionError("Expected ValueError for invalid source_page_index")
+
+
+def test_normalize_sheet_overrides_uses_current_sheet_id_when_sheet_id_missing():
+    loaded = [{"current_sheet_id": "A101", "title": "Floor Plan", "source_page_index": 2}]
+    parsed = normalize_sheet_overrides_items(loaded)
+    assert parsed == [
+        {
+            "sheet_id": "A101",
+            "title": "Floor Plan",
+            "source_page_index": 2,
+        }
+    ]
+
+
+def test_normalize_sheet_overrides_ignores_unmapped_current_sheet_id():
+    loaded = [{"current_sheet_id": "UNMAPPED_doc_4", "title": "Legend", "source_page_index": 3}]
+    parsed = normalize_sheet_overrides_items(loaded)
+    assert parsed == [
+        {
+            "sheet_id": "",
+            "title": "Legend",
+            "source_page_index": 3,
+        }
+    ]

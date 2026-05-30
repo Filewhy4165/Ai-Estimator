@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Callable
 from threading import Thread
 from tkinter import END, BooleanVar, Label, Menu, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
@@ -188,7 +189,11 @@ class DesktopEstimatorApp:
         self.benchmark_task_running = False
         self.end_to_end_task_running = False
         self.request_task_running = False
+        self.job_polling = False
         self.request_progress_text = StringVar(value="")
+        self.job_progress_message = ""
+        self._progress_bar_running = False
+        self._auto_poll_cycle = 0
         self.status_text = StringVar(value="Ready.")
         self.header_mode_text = StringVar(value="Mode: auto")
         self.header_job_text = StringVar(value="Job: none")
@@ -200,9 +205,14 @@ class DesktopEstimatorApp:
         self._control_help_entries: dict[str, str] = {}
         self._control_specs: dict[str, dict[str, str]] = {}
         self._control_widgets: dict[str, object] = {}
+        self._field_label_widgets: dict[str, object] = {}
         self._control_tooltips: dict[str, HoverTooltip] = {}
+        self._field_label_specs: dict[str, dict[str, str]] = {}
+        self._field_label_tooltips: dict[str, HoverTooltip] = {}
         self._field_tooltip_specs: dict[str, dict[str, str]] = {}
         self._field_tooltips: dict[str, HoverTooltip] = {}
+        self.files_list: Text | None = None
+        self.files_list_y_scroll: ttk.Scrollbar | None = None
         self.actions_notebook: ttk.Notebook | None = None
         self._advanced_tab_widgets: list[tuple[ttk.Frame, str]] = []
         self.output_y_scroll: ttk.Scrollbar | None = None
@@ -325,7 +335,9 @@ class DesktopEstimatorApp:
         frame.grid(row=2, column=0, sticky="nsew")
         frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="API URL").grid(row=0, column=0, sticky="w")
+        self.field_label_api_url = ttk.Label(frame, text="API URL")
+        self.field_label_api_url.grid(row=0, column=0, sticky="w")
+        self._field_label_widgets["api_url"] = self.field_label_api_url
         api_row = ttk.Frame(frame)
         api_row.grid(row=0, column=1, sticky="ew")
         api_row.columnconfigure(0, weight=1)
@@ -350,11 +362,15 @@ class DesktopEstimatorApp:
             command=self._toggle_advanced_tools,
         ).grid(row=0, column=4, sticky="w", padx=(8, 0))
 
-        ttk.Label(frame, text="API Key (optional)").grid(row=1, column=0, sticky="w")
+        self.field_label_api_key = ttk.Label(frame, text="API Key (optional)")
+        self.field_label_api_key.grid(row=1, column=0, sticky="w")
+        self._field_label_widgets["api_key"] = self.field_label_api_key
         api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
         api_key_entry.grid(row=1, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Analysis Mode").grid(row=2, column=0, sticky="w")
+        self.field_label_analysis_mode = ttk.Label(frame, text="Analysis Mode")
+        self.field_label_analysis_mode.grid(row=2, column=0, sticky="w")
+        self._field_label_widgets["analysis_mode"] = self.field_label_analysis_mode
         self.analysis_mode_combo = ttk.Combobox(
             frame,
             values=self.analysis_mode_catalog,
@@ -364,7 +380,9 @@ class DesktopEstimatorApp:
         )
         self.analysis_mode_combo.grid(row=2, column=1, sticky="w")
 
-        ttk.Label(frame, text="Selected Trades (CSV)").grid(row=3, column=0, sticky="w")
+        self.field_label_selected_trades = ttk.Label(frame, text="Selected Trades (CSV)")
+        self.field_label_selected_trades.grid(row=3, column=0, sticky="w")
+        self._field_label_widgets["selected_trades"] = self.field_label_selected_trades
         selected_trades_row = ttk.Frame(frame)
         selected_trades_row.grid(row=3, column=1, sticky="ew")
         selected_trades_row.columnconfigure(0, weight=1)
@@ -381,7 +399,9 @@ class DesktopEstimatorApp:
             command=self._validate_selected_trades_clicked,
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
-        ttk.Label(frame, text="Sheet Overrides JSON").grid(row=4, column=0, sticky="w")
+        self.field_label_sheet_overrides = ttk.Label(frame, text="Sheet Overrides JSON")
+        self.field_label_sheet_overrides.grid(row=4, column=0, sticky="w")
+        self._field_label_widgets["overrides_path"] = self.field_label_sheet_overrides
         overrides_row = ttk.Frame(frame)
         overrides_row.grid(row=4, column=1, sticky="ew")
         overrides_row.columnconfigure(0, weight=1)
@@ -391,11 +411,15 @@ class DesktopEstimatorApp:
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
-        ttk.Label(frame, text="Current Job ID").grid(row=5, column=0, sticky="w")
+        self.field_label_current_job = ttk.Label(frame, text="Current Job ID")
+        self.field_label_current_job.grid(row=5, column=0, sticky="w")
+        self._field_label_widgets["current_job"] = self.field_label_current_job
         current_job_entry = ttk.Entry(frame, textvariable=self.current_job_id, width=68)
         current_job_entry.grid(row=5, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Notes").grid(row=6, column=0, sticky="w")
+        self.field_label_notes = ttk.Label(frame, text="Notes")
+        self.field_label_notes.grid(row=6, column=0, sticky="w")
+        self._field_label_widgets["notes"] = self.field_label_notes
         notes_entry = ttk.Entry(frame, textvariable=self.notes, width=68)
         notes_entry.grid(row=6, column=1, sticky="ew")
 
@@ -532,13 +556,19 @@ class DesktopEstimatorApp:
         prune_row = ttk.LabelFrame(operations_tab, text="Data Cleanup", padding=8)
         prune_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         prune_row.columnconfigure(12, weight=1)
-        ttk.Label(prune_row, text="Prune Statuses").grid(row=0, column=0, sticky="w")
+        self.field_label_prune_statuses = ttk.Label(prune_row, text="Prune Statuses")
+        self.field_label_prune_statuses.grid(row=0, column=0, sticky="w")
+        self._field_label_widgets["prune_statuses"] = self.field_label_prune_statuses
         prune_statuses_entry = ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28)
         prune_statuses_entry.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        ttk.Label(prune_row, text="Older Than (h)").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.field_label_prune_older_than = ttk.Label(prune_row, text="Older Than (h)")
+        self.field_label_prune_older_than.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self._field_label_widgets["prune_older_than"] = self.field_label_prune_older_than
         prune_older_than_entry = ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8)
         prune_older_than_entry.grid(row=0, column=3, sticky="w", padx=(6, 0))
-        ttk.Label(prune_row, text="Limit").grid(row=0, column=4, sticky="w", padx=(12, 0))
+        self.field_label_prune_limit = ttk.Label(prune_row, text="Limit")
+        self.field_label_prune_limit.grid(row=0, column=4, sticky="w", padx=(12, 0))
+        self._field_label_widgets["prune_limit"] = self.field_label_prune_limit
         prune_limit_entry = ttk.Entry(prune_row, textvariable=self.prune_limit, width=8)
         prune_limit_entry.grid(row=0, column=5, sticky="w", padx=(6, 0))
         ttk.Checkbutton(
@@ -556,14 +586,37 @@ class DesktopEstimatorApp:
         self.files_label = ttk.Label(frame, text="No files selected.")
         self.files_label.grid(row=8, column=0, columnspan=2, sticky="w")
 
+        files_summary_frame = ttk.Frame(frame)
+        files_summary_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 8))
+        files_summary_frame.columnconfigure(0, weight=1)
+        self.files_list = Text(
+            files_summary_frame,
+            height=5,
+            wrap="none",
+            background="#F9FAFB",
+            foreground="#111827",
+            insertbackground="#111827",
+            padx=6,
+            pady=6,
+            font=("Segoe UI", 9),
+            width=1,
+        )
+        self.files_list.grid(row=0, column=0, sticky="ew")
+        self.files_list_y_scroll = ttk.Scrollbar(
+            files_summary_frame, orient="vertical", command=self.files_list.yview
+        )
+        self.files_list_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.files_list.configure(yscrollcommand=self.files_list_y_scroll.set)
+        self.files_list.configure(state="disabled")
+
         status_strip = ttk.Frame(frame)
-        status_strip.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(4, 8))
+        status_strip.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 8))
         status_strip.columnconfigure(1, weight=1)
         ttk.Label(status_strip, text="Status:").grid(row=0, column=0, sticky="w")
         ttk.Label(status_strip, textvariable=self.status_text).grid(row=0, column=1, sticky="w")
 
         progress_row = ttk.Frame(frame)
-        progress_row.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        progress_row.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         progress_row.columnconfigure(1, weight=1)
         self.request_progress_label = ttk.Label(progress_row, textvariable=self.request_progress_text)
         self.request_progress_label.grid(row=0, column=0, sticky="w")
@@ -573,7 +626,7 @@ class DesktopEstimatorApp:
         self.request_progress_bar.grid_remove()
 
         output_frame = ttk.Frame(frame)
-        output_frame.grid(row=11, column=0, columnspan=2, sticky="nsew")
+        output_frame.grid(row=12, column=0, columnspan=2, sticky="nsew")
         output_frame.columnconfigure(0, weight=1)
         output_frame.rowconfigure(0, weight=1)
 
@@ -595,14 +648,14 @@ class DesktopEstimatorApp:
         self.output.configure(yscrollcommand=self.output_y_scroll.set, xscrollcommand=self.output_x_scroll.set)
 
         footer = ttk.Frame(frame)
-        footer.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        footer.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         footer.columnconfigure(1, weight=1)
         ttk.Separator(footer, orient="horizontal").grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
         ttk.Label(footer, text="Ready").grid(row=1, column=0, sticky="w")
         ttk.Label(footer, text="F1 Help | Ctrl+O Open PDFs | Ctrl+Enter Submit").grid(row=1, column=1, sticky="e")
 
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(11, weight=1)
+        frame.rowconfigure(12, weight=1)
         self._install_tooltips(
             frame=frame,
             api_url_entry=api_url_entry,
@@ -666,8 +719,12 @@ class DesktopEstimatorApp:
                 "beginner_tip": "Where this app sends requests. Leave this as the local address unless told otherwise.",
             },
             "api_key": {
-                "pro_tip": "Optional API key header value sent as x-api-key.",
-                "beginner_tip": "Optional password for protected API servers.",
+                "pro_tip": (
+                    "Optional API key sent as x-api-key. Required only when remote service enforces auth."
+                ),
+                "beginner_tip": (
+                    "Optional security key. Leave empty for local server; use one for protected remote servers."
+                ),
             },
             "analysis_mode": {
                 "pro_tip": "auto=detect trades, selected=only selected trades, all=analyze all supported trades.",
@@ -707,6 +764,8 @@ class DesktopEstimatorApp:
             },
         }
         self._field_tooltips = {}
+        self._field_label_specs = self._field_label_specs_for_ui()
+        self._field_label_tooltips = {}
         field_widgets: dict[str, object] = {
             "api_url": api_url_entry,
             "api_key": api_key_entry,
@@ -727,6 +786,14 @@ class DesktopEstimatorApp:
             tooltip = self._add_tooltip(widget, spec["pro_tip"])
             if tooltip:
                 self._field_tooltips[key] = tooltip
+
+        for key, widget in self._field_label_widgets.items():
+            spec = self._field_label_specs.get(key)
+            if not spec:
+                continue
+            tooltip = self._add_tooltip(widget, spec["pro_tip"])
+            if tooltip:
+                self._field_label_tooltips[key] = tooltip
 
         self._apply_beginner_mode(update_status=False)
 
@@ -980,6 +1047,74 @@ class DesktopEstimatorApp:
             },
         }
 
+    def _field_label_specs_for_ui(self) -> dict[str, dict[str, str]]:
+        return {
+            "api_url": {
+                "pro_label": "API URL",
+                "beginner_label": "Server Address",
+                "pro_tip": "Base API endpoint for requests.",
+                "beginner_tip": "Server address (leave as local unless your admin gave another one).",
+            },
+            "api_key": {
+                "pro_label": "API Key (optional)",
+                "beginner_label": "Security Key (optional)",
+                "pro_tip": (
+                    "Optional x-api-key value. Leave blank for local, unprotected instances."
+                ),
+                "beginner_tip": (
+                    "Leave blank for local server. For protected APIs, paste the key here so jobs can connect."
+                ),
+            },
+            "analysis_mode": {
+                "pro_label": "Analysis Mode",
+                "beginner_label": "Run Settings",
+                "pro_tip": "Trade scope inference behavior for the job.",
+                "beginner_tip": "Choose what kinds of work types to include in this run.",
+            },
+            "selected_trades": {
+                "pro_label": "Selected Trades (CSV)",
+                "beginner_label": "Choose Work Types (comma list)",
+                "pro_tip": "Comma-separated trade list used with selected analysis mode.",
+                "beginner_tip": "Type each work type you want to include, separated by commas.",
+            },
+            "overrides_path": {
+                "pro_label": "Sheet Overrides JSON",
+                "beginner_label": "Sheet Fix File",
+                "pro_tip": "Path to a JSON file with manual sheet ID/title overrides.",
+                "beginner_tip": "Pick a sheet-fix file to correct sheet names/IDs.",
+            },
+            "current_job": {
+                "pro_label": "Current Job ID",
+                "beginner_label": "Current Job Number",
+                "pro_tip": "Use this value to check/cancel/rerun jobs.",
+                "beginner_tip": "The job number you want to check or rerun.",
+            },
+            "notes": {
+                "pro_label": "Notes",
+                "beginner_label": "Project Notes",
+                "pro_tip": "Optional notes sent with the analysis request.",
+                "beginner_tip": "Optional notes for this job.",
+            },
+            "prune_statuses": {
+                "pro_label": "Prune Statuses",
+                "beginner_label": "Job Types to Remove",
+                "pro_tip": "Statuses used when pruning job records.",
+                "beginner_tip": "Which finished job states to clean up.",
+            },
+            "prune_older_than": {
+                "pro_label": "Older Than (h)",
+                "beginner_label": "Age in Hours",
+                "pro_tip": "Only prune jobs older than this threshold.",
+                "beginner_tip": "Only clean jobs older than this many hours.",
+            },
+            "prune_limit": {
+                "pro_label": "Limit",
+                "beginner_label": "Max Cleaned Jobs",
+                "pro_tip": "Limit jobs evaluated per cleanup action.",
+                "beginner_tip": "Maximum number of jobs cleaned in one go.",
+            },
+        }
+
     def _toggle_beginner_mode(self) -> None:
         self._apply_beginner_mode(update_status=True)
         self._save_settings()
@@ -1024,6 +1159,22 @@ class DesktopEstimatorApp:
 
         for key, tip in self._field_tooltips.items():
             spec = self._field_tooltip_specs.get(key)
+            if not spec:
+                continue
+            tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
+            tip.set_text(tip_text)
+
+        for key, widget in self._field_label_widgets.items():
+            spec = self._field_label_specs.get(key)
+            if not spec:
+                continue
+            try:
+                widget.configure(text=spec["beginner_label"] if use_beginner else spec["pro_label"])
+            except Exception:
+                pass
+
+        for key, tip in self._field_label_tooltips.items():
+            spec = self._field_label_specs.get(key)
             if not spec:
                 continue
             tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
@@ -1112,6 +1263,7 @@ class DesktopEstimatorApp:
         lines = [
             heading,
             "",
+            "API key is only required when your API endpoint is protected (local default usually is not).",
             "Keyboard shortcuts:",
             "- F1: Show this guide",
             f"- Ctrl+O: {choose_pdfs_label}",
@@ -1205,6 +1357,13 @@ class DesktopEstimatorApp:
             self._set_output_text(f"Failed to start analysis:\n{exc}")
             return
 
+        file_lines = [Path(path).name for path in file_paths]
+        self._set_output_text(
+            "Starting synchronous analysis:\n"
+            f"Files ({len(file_paths)}): {', '.join(file_lines[:10])}"
+            + ("\n..." if len(file_lines) > 10 else "")
+        )
+
         self._set_request_busy(
             busy=True,
             message=f"Running analysis on {len(file_paths)} file(s). Large PDFs may take several minutes...",
@@ -1236,6 +1395,14 @@ class DesktopEstimatorApp:
             self._set_output_text(f"Failed to start async job:\n{exc}")
             return
 
+        file_lines = [Path(path).name for path in file_paths]
+        self._set_output_text(
+            "Submitting background job:\n"
+            f"Files ({len(file_paths)}): {', '.join(file_lines[:10])}"
+            + ("\n..." if len(file_lines) > 10 else "")
+            + "\n\n"
+        )
+
         self._set_request_busy(
             busy=True,
             message=f"Submitting background job for {len(file_paths)} file(s). Uploading large PDFs...",
@@ -1261,6 +1428,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=1800,
+                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
             )
             self.root.after(0, lambda: self._on_run_analysis_success(payload))
         except Exception as exc:
@@ -1279,6 +1447,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=1800,
+                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
             )
             self.root.after(0, lambda: self._on_submit_async_job_success(payload))
         except Exception as exc:
@@ -1286,11 +1455,13 @@ class DesktopEstimatorApp:
 
     def _on_run_analysis_success(self, payload: dict) -> None:
         self._set_request_busy(busy=False)
+        self._set_job_polling(busy=False)
         self._set_output_json(payload)
         self.status_text.set("Synchronous analysis completed.")
 
     def _on_run_analysis_failure(self, exc: Exception) -> None:
         self._set_request_busy(busy=False)
+        self._set_job_polling(busy=False)
         self._set_output_text(f"Failed to run analysis:\n{exc}")
         self.status_text.set("Analysis failed.")
 
@@ -1300,16 +1471,27 @@ class DesktopEstimatorApp:
         if not job_id:
             self._set_output_text("Failed to submit async job:\nAPI response did not include job_id.")
             self.status_text.set("Async job submission failed.")
+            self._set_job_polling(busy=False)
             return
         self.current_job_id.set(job_id)
         self._set_output_json(payload)
-        self.status_text.set(f"Async job submitted: {job_id}")
         self._save_settings()
+        self._append_output_line(f"Async job accepted: {job_id}")
+        self._set_job_polling(
+            busy=True,
+            message=f"Background job accepted ({job_id}). Watching for start of processing...",
+        )
+        self.status_text.set(f"Async job submitted: {job_id}")
+        if not self.auto_poll_enabled.get():
+            self.auto_poll_enabled.set(True)
+            if self.request_task_running:
+                self._append_output_line("Auto poll will start after request completes.")
         if self.auto_poll_enabled.get():
             self._start_auto_poll()
 
     def _on_submit_async_job_failure(self, exc: Exception) -> None:
         self._set_request_busy(busy=False)
+        self._set_job_polling(busy=False)
         self._set_output_text(f"Failed to submit async job:\n{exc}")
         self.status_text.set("Async job submission failed.")
 
@@ -1328,8 +1510,13 @@ class DesktopEstimatorApp:
             self.current_job_id.set(new_job_id)
             self._set_output_json(payload)
             self.status_text.set(f"Rerun job submitted: {new_job_id}")
+            self._append_output_line(f"Rerun job submitted: {new_job_id}")
             self._save_settings()
             if self.auto_poll_enabled.get():
+                self._set_job_polling(
+                    busy=True,
+                    message=f"Watching rerun job {new_job_id}...",
+                )
                 self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to rerun job:\n{exc}")
@@ -1356,8 +1543,15 @@ class DesktopEstimatorApp:
             self.status_text.set(
                 f"Recommended rerun submitted: {new_job_id} (mode={mode}, confidence={confidence})"
             )
+            self._append_output_line(
+                f"Recommended rerun submitted: {new_job_id} (mode={mode}, confidence={confidence})"
+            )
             self._save_settings()
             if self.auto_poll_enabled.get():
+                self._set_job_polling(
+                    busy=True,
+                    message=f"Watching recommended rerun job {new_job_id}...",
+                )
                 self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to submit recommended rerun:\n{exc}")
@@ -1374,8 +1568,13 @@ class DesktopEstimatorApp:
             self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} cancel result: {status}")
             if status == "canceled":
+                self._append_output_line(f"Job {job_id} canceled.")
+                self._set_job_polling(busy=False)
+            if status == "canceled":
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
+            else:
+                self._append_output_line(f"Cancel request sent for job {job_id}. New status: {status}")
         except Exception as exc:
             self._set_output_text(f"Failed to cancel job:\n{exc}")
 
@@ -1393,6 +1592,10 @@ class DesktopEstimatorApp:
             else:
                 self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} status: {status or 'unknown'}")
+            self._set_job_polling(
+                busy=False if status in _TERMINAL_JOB_STATUSES else self.job_polling,
+                message=self._make_job_poll_message(job_id, status),
+            )
             if status in _TERMINAL_JOB_STATUSES:
                 self._stop_auto_poll()
         except Exception as exc:
@@ -1418,6 +1621,10 @@ class DesktopEstimatorApp:
             if self.auto_poll_enabled.get():
                 latest_status = str(latest.get("status", "")).strip()
                 if latest_status not in _TERMINAL_JOB_STATUSES:
+                    self._set_job_polling(
+                        busy=True,
+                        message=self._make_job_poll_message(job_id, latest_status),
+                    )
                     self._start_auto_poll()
         except Exception as exc:
             self._set_output_text(f"Failed to load latest job:\n{exc}")
@@ -1785,6 +1992,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=180,
+                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
             )
             job_id = str(create_payload.get("job_id", "")).strip()
             if not job_id:
@@ -1795,6 +2003,9 @@ class DesktopEstimatorApp:
                 job_id=job_id,
                 max_wait_seconds=1200,
                 poll_interval_seconds=2,
+                progress_callback=lambda message: self.root.after(
+                    0, lambda: self._append_output_line(message)
+                ),
             )
             status = str(job_payload.get("status", "")).strip()
             if status != "completed":
@@ -1865,26 +2076,38 @@ class DesktopEstimatorApp:
         if not job_id:
             self.status_text.set("Auto poll not started: no current job ID.")
             self.auto_poll_enabled.set(False)
+            self._set_job_polling(busy=False)
             return
         if self.auto_poll_handle is not None:
             return
+        self._auto_poll_cycle = 0
         self.status_text.set(f"Auto polling job {job_id} every {self.auto_poll_interval_ms // 1000}s.")
+        if not self.job_polling:
+            self._set_job_polling(
+                busy=True,
+                message=f"Auto-polling job {job_id} (every {self.auto_poll_interval_ms // 1000}s)...",
+            )
         self.auto_poll_handle = self.root.after(self.auto_poll_interval_ms, self._auto_poll_tick)
 
     def _stop_auto_poll(self) -> None:
         if self.auto_poll_handle is not None:
             self.root.after_cancel(self.auto_poll_handle)
             self.auto_poll_handle = None
+        self._set_job_polling(busy=False)
+        self.auto_poll_enabled.set(False)
 
     def _auto_poll_tick(self) -> None:
         self.auto_poll_handle = None
         if not self.auto_poll_enabled.get():
+            self._set_job_polling(busy=False)
             return
         job_id = self.current_job_id.get().strip()
         if not job_id:
             self.auto_poll_enabled.set(False)
+            self._set_job_polling(busy=False)
             self.status_text.set("Auto poll stopped: no current job ID.")
             return
+        self._auto_poll_cycle += 1
 
         try:
             payload = self._request_json("GET", f"/v1/jobs/{job_id}", timeout=30)
@@ -1893,20 +2116,27 @@ class DesktopEstimatorApp:
             if status == "completed" and isinstance(result, dict):
                 self._set_output_json(result)
                 self.status_text.set(f"Job {job_id} completed.")
+                self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
                 return
             if status in {"failed", "canceled"}:
                 self._set_output_json(payload)
                 self.status_text.set(f"Job {job_id} {status}.")
+                self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
                 return
+            self._set_job_polling(
+                busy=True,
+                message=self._make_job_poll_message(job_id, status),
+            )
             self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} status: {status or 'unknown'} (auto polling)")
         except Exception as exc:
             self.status_text.set(f"Auto poll error: {exc}")
             self.auto_poll_enabled.set(False)
+            self._set_job_polling(busy=False)
             self._stop_auto_poll()
             return
 
@@ -2008,14 +2238,41 @@ class DesktopEstimatorApp:
         data: dict[str, str],
         file_paths: list[str],
         timeout: int,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
         files = []
         handles = []
+        seen_paths = set[str]()
+        if not file_paths:
+            raise RuntimeError("No files were provided for upload.")
+        if progress_callback is not None:
+            total = len(file_paths)
+            progress_callback(f"Preparing {total} drawing file(s) for upload...")
         try:
             for file_path in file_paths:
-                handle = open(file_path, "rb")
+                normalized_path = str(file_path).strip()
+                if not normalized_path:
+                    raise RuntimeError("One or more PDF paths are empty.")
+                if normalized_path in seen_paths:
+                    continue
+                seen_paths.add(normalized_path)
+                path_obj = Path(normalized_path)
+                if not path_obj.exists():
+                    raise RuntimeError(f"Selected file not found: {normalized_path}")
+                if not path_obj.is_file():
+                    raise RuntimeError(f"Selected path is not a file: {normalized_path}")
+                size = path_obj.stat().st_size
+                if size <= 0:
+                    raise RuntimeError(f"Selected file is empty: {normalized_path}")
+                if progress_callback is not None:
+                    progress_callback(f"Attaching {path_obj.name} ({self._format_size_label(size)}).")
+                handle = open(path_obj, "rb")
                 handles.append(handle)
-                files.append(("files", (Path(file_path).name, handle, "application/pdf")))
+                files.append(("files", (path_obj.name, handle, "application/pdf")))
+            if not files:
+                raise RuntimeError("No valid PDF files were selected after validation.")
+            if progress_callback is not None:
+                progress_callback(f"Uploading {len(files)} file(s) to {path} ...")
             return self._request_json_from_base(
                 "POST",
                 api_base=api_base,
@@ -2025,6 +2282,8 @@ class DesktopEstimatorApp:
                 timeout=timeout,
             )
         finally:
+            if progress_callback is not None and handles:
+                progress_callback("Upload complete, waiting for API response...")
             for handle in handles:
                 handle.close()
 
@@ -2035,6 +2294,7 @@ class DesktopEstimatorApp:
         job_id: str,
         max_wait_seconds: int,
         poll_interval_seconds: int,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
         deadline = time.time() + max(1, max_wait_seconds)
         last_payload: dict = {}
@@ -2049,6 +2309,8 @@ class DesktopEstimatorApp:
             status = str(payload.get("status", "")).strip()
             if status in _TERMINAL_JOB_STATUSES:
                 return payload
+            if progress_callback is not None:
+                progress_callback(self._make_job_poll_message(job_id, status))
             time.sleep(max(1, poll_interval_seconds))
         raise RuntimeError(
             f"Timed out waiting for job {job_id}. Last status: {last_payload.get('status', 'unknown')}"
@@ -2104,19 +2366,80 @@ class DesktopEstimatorApp:
         self.output.delete("1.0", END)
         self.output.insert(END, text)
 
+    def _append_output_line(self, text: str) -> None:
+        if not text:
+            return
+        self.output.insert(END, f"{text}\n")
+        self.output.see(END)
+
+    def _make_job_poll_message(self, job_id: str, status: str) -> str:
+        status_text = status or "unknown"
+        cycle = self._auto_poll_cycle
+        cycle_text = f" (check #{cycle})" if cycle else ""
+        if self.auto_poll_interval_ms:
+            interval = self.auto_poll_interval_ms // 1000
+            return f"Tracking job {job_id}: {status_text}{cycle_text} (checks every {interval}s)"
+        return f"Tracking job {job_id}: {status_text}{cycle_text}"
+
+    def _set_job_polling(self, *, busy: bool, message: str = "") -> None:
+        self.job_polling = busy
+        if busy:
+            candidate = message.strip()
+            if candidate:
+                self.job_progress_message = candidate
+        else:
+            self.job_progress_message = ""
+        self._refresh_progress_indicator()
+
+    def _refresh_progress_indicator(self) -> None:
+        should_show_request_progress = self.request_task_running
+        should_show_poll_progress = self.job_polling
+
+        if should_show_request_progress:
+            if not self.request_progress_text.get():
+                self.request_progress_text.set("Working...")
+            self.request_progress_label.grid()
+            self.request_progress_bar.grid()
+            if not self._progress_bar_running:
+                self.request_progress_bar.start(12)
+                self._progress_bar_running = True
+            return
+
+        if should_show_poll_progress:
+            polling_message = self.job_progress_message.strip()
+            self.request_progress_text.set(polling_message or "Monitoring job progress...")
+            self.request_progress_label.grid()
+            self.request_progress_bar.grid()
+            if not self._progress_bar_running:
+                self.request_progress_bar.start(12)
+                self._progress_bar_running = True
+            return
+
+        if self._progress_bar_running:
+            self.request_progress_bar.stop()
+            self._progress_bar_running = False
+        self.request_progress_bar.grid_remove()
+        self.request_progress_label.grid_remove()
+        self.request_progress_text.set("")
+
     def _set_request_busy(self, *, busy: bool, message: str = "") -> None:
         self.request_task_running = busy
         if busy:
             self.request_progress_text.set(message.strip() or "Working...")
-            self.request_progress_label.grid()
-            self.request_progress_bar.grid()
-            self.request_progress_bar.start(12)
+            for control in self._control_widgets.values():
+                try:
+                    control.configure(state="disabled")
+                except Exception:
+                    pass
+            self._refresh_progress_indicator()
             return
 
-        self.request_progress_bar.stop()
-        self.request_progress_bar.grid_remove()
-        self.request_progress_label.grid_remove()
-        self.request_progress_text.set("")
+        for control in self._control_widgets.values():
+            try:
+                control.configure(state="normal")
+            except Exception:
+                pass
+        self._refresh_progress_indicator()
 
     def _format_size_label(self, byte_count: int) -> str:
         if byte_count < 1024:
@@ -2164,7 +2487,32 @@ class DesktopEstimatorApp:
 
     def _refresh_files_label(self) -> None:
         self.files_label.config(text=self._selected_files_summary())
+        self._refresh_files_list()
         self._refresh_header_summary()
+
+    def _refresh_files_list(self) -> None:
+        if self.files_list is None:
+            return
+
+        self.files_list.configure(state="normal")
+        self.files_list.delete("1.0", END)
+        if not self.files:
+            self.files_list.insert(END, "No files selected.\n")
+            self.files_list.configure(state="disabled")
+            return
+
+        for idx, path_text in enumerate(self.files, start=1):
+            path = Path(path_text)
+            name = path.name
+            try:
+                size = self._format_size_label(path.stat().st_size)
+                status = "found"
+            except OSError:
+                size = "not found"
+                status = "missing"
+            self.files_list.insert(END, f"{idx:>2}. {name} ({size}, {status})\n")
+
+        self.files_list.configure(state="disabled")
 
     def _load_settings(self) -> None:
         if not self.settings_path.exists():

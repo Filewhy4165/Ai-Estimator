@@ -33,7 +33,8 @@ def build_job_metrics_snapshot(
     failed_24h = 0
     canceled_24h = 0
     generated_dt = _parse_iso_datetime(generated_at) or datetime.now(timezone.utc)
-    throughput_start = generated_dt - timedelta(hours=24)
+    throughput_start: datetime = generated_dt - timedelta(hours=24)
+    latest_terminal_dt: datetime | None = None
 
     for record in records:
         status = str(record.status).strip().lower()
@@ -58,6 +59,9 @@ def build_job_metrics_snapshot(
                     canceled_24h += 1
                 else:
                     failed_24h += 1
+            if terminal_at:
+                if latest_terminal_dt is None or terminal_at > latest_terminal_dt:
+                    latest_terminal_dt = terminal_at
 
         result_payload = record.result if isinstance(record.result, dict) else None
         if status != "completed" or result_payload is None:
@@ -99,6 +103,28 @@ def build_job_metrics_snapshot(
     completed_or_failed = status_counts["completed"] + status_counts["failed"]
     terminal = completed_or_failed + status_counts["canceled"]
     failure_rate = round(status_counts["failed"] / completed_or_failed, 4) if completed_or_failed > 0 else None
+    if latest_terminal_dt is not None:
+        throughput_start = latest_terminal_dt - timedelta(hours=24)
+        # Recompute 24h throughput using the newest terminal timestamp as the reference point.
+        completed_24h = 0
+        failed_24h = 0
+        canceled_24h = 0
+        for record in records:
+            status = str(record.status).strip().lower()
+            if status not in {"completed", "failed", "canceled"}:
+                continue
+            terminal_at = _parse_iso_datetime(record.completed_at) or _parse_iso_datetime(record.updated_at)
+            if not terminal_at:
+                continue
+            if terminal_at < throughput_start or terminal_at > latest_terminal_dt:
+                continue
+            if status == "completed":
+                completed_24h += 1
+            elif status == "canceled":
+                canceled_24h += 1
+            else:
+                failed_24h += 1
+
     terminal_24h = completed_24h + failed_24h + canceled_24h
 
     return {

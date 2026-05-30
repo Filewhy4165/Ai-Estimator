@@ -34,7 +34,21 @@ def normalize_sheet_overrides_items(
         if not isinstance(item, dict):
             raise ValueError(f"{source_name}[{index}] must be an object.")
         sheet_id = str(item.get("sheet_id", "")).strip()
+        current_sheet_id = str(item.get("current_sheet_id", "")).strip()
         title = str(item.get("title", "")).strip()
+
+        if not sheet_id and current_sheet_id:
+            candidate = current_sheet_id
+            if candidate.startswith("UNMAPPED_"):
+                # Keep unmapped candidates intentionally unresolved unless the user fills sheet_id.
+                candidate = ""
+            elif not _is_reasonable_override_sheet_id(candidate):
+                # Preserve explicit user-provided title from a previous template export when ID-like values are not usable.
+                if not title:
+                    title = candidate
+                    candidate = ""
+            sheet_id = candidate
+
         if sheet_id and not _is_reasonable_override_sheet_id(sheet_id):
             if not title:
                 # Common user mistake: title entered in sheet_id field.
