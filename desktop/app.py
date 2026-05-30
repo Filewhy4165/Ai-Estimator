@@ -190,6 +190,7 @@ class DesktopEstimatorApp:
         self.end_to_end_task_running = False
         self.request_task_running = False
         self.job_polling = False
+        self._api_bootstrap_in_progress = False
         self.request_progress_text = StringVar(value="")
         self.job_progress_message = ""
         self._progress_bar_running = False
@@ -228,6 +229,7 @@ class DesktopEstimatorApp:
         self._bind_shortcuts()
         self._load_settings()
         self._refresh_files_label()
+        self.root.after(700, self._start_local_api_if_needed)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_style(self) -> None:
@@ -2835,6 +2837,79 @@ class DesktopEstimatorApp:
                 self.status_text.set("Local API start attempted, but health check is not responding yet.")
         except Exception as exc:
             self._set_output_text(f"Failed to start local API:\n{exc}")
+
+    def _start_local_api_if_needed(self) -> None:
+        base = self.api_url.get().strip().rstrip("/")
+        if not base:
+            return
+
+        if self._api_bootstrap_in_progress:
+            return
+
+        if not self._is_local_api_base(base):
+            return
+
+        if self._can_reach_health(base, timeout_seconds=2):
+            self.status_text.set("Local API is already running.")
+            return
+
+        self._api_bootstrap_in_progress = True
+        self._append_output_line(
+            "Local API is not running. Starting local API automatically..."
+        )
+        self.status_text.set("Starting local API automatically...")
+        worker = Thread(
+            target=self._start_local_api_if_needed_worker,
+            args=(base,),
+            daemon=True,
+        )
+        worker.start()
+
+    def _start_local_api_if_needed_worker(self, base: str) -> None:
+        try:
+            started = self._ensure_local_api_running(base, force_start=True)
+            if started:
+                self.root.after(
+                    0,
+                    lambda: self._append_output_line(
+                        f"Local API started for {base}."
+                    ),
+                )
+                self.root.after(0, lambda: self.status_text.set("Local API is running."))
+            elif self._can_reach_health(base, timeout_seconds=2):
+                self.root.after(
+                    0,
+                    lambda: self._append_output_line("Local API is already reachable."),
+                )
+                self.root.after(0, lambda: self.status_text.set("Local API is running."))
+            else:
+                self.root.after(
+                    0,
+                    lambda: self._append_output_line(
+                        "Local API auto-start did not produce a healthy service; use Start Local API."
+                    ),
+                )
+                self.root.after(
+                    0,
+                    lambda: self.status_text.set(
+                        "Local API is not reachable yet. Click 'Start Local API' if needed."
+                    ),
+                )
+        except Exception as exc:
+            self.root.after(
+                0,
+                lambda: self._append_output_line(
+                    f"Automatic local API startup failed: {exc}"
+                ),
+            )
+            self.root.after(
+                0,
+                lambda: self.status_text.set(
+                    "Automatic local API startup failed. Click 'Start Local API' to retry."
+                ),
+            )
+        finally:
+            self._api_bootstrap_in_progress = False
 
     def _ensure_local_api_running(self, api_base: str, force_start: bool = False) -> bool:
         if not self._is_local_api_base(api_base):
