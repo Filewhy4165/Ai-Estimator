@@ -154,7 +154,14 @@ def extract_geometry(
                 if key in seen_dimension_pairs:
                     continue
                 seen_dimension_pairs.add(key)
-                annotations["dimensions"].append({"sheet_id": sheet_id, "value": normalized_dim})
+                annotations["dimensions"].append(
+                    {
+                        "sheet_id": sheet_id,
+                        "trade": trade,
+                        "value": normalized_dim,
+                        "source_page_index": page.page_index + 1,
+                    }
+                )
 
     if not (walls or doors or windows or slabs or roofs or fixtures or equipment):
         issues.append(

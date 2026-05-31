@@ -39,6 +39,18 @@ from service.trade_coverage import build_trade_coverage_report
 from service.trade_recommendation import build_trade_recommendation
 
 
+def _resolve_cors_origins() -> list[str]:
+    configured = os.environ.get("AI_ESTIMATOR_CORS_ORIGINS", "").strip()
+    if configured:
+        return [item.strip() for item in configured.split(",") if item.strip()]
+    return [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+    ]
+
+
 class JobCreateResponse(BaseModel):
     job_id: str
     status: str
@@ -87,6 +99,7 @@ class TradeCatalogResponse(BaseModel):
 
 class SpecProfileResponse(BaseModel):
     spec_id: str
+    tenant_id: str = "public"
     title: str
     organization: str
     agency: str
@@ -283,10 +296,11 @@ class BenchmarkDashboardResponse(BaseModel):
 
 
 app = FastAPI(title="AI Estimator Service", version="0.1.0")
+_cors_origins = _resolve_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -397,12 +411,15 @@ def get_specs_catalog(
     project_type: str = "",
     limit: int = 100,
     offset: int = 0,
+    request: Request = None,
 ) -> SpecCatalogResponse:
+    tenant_id = _tenant_id_for_request(request)
     items, total = _get_spec_store().list_specs(
         organization=organization,
         agency=agency,
         public_only=public_only,
         project_type=project_type,
+        tenant_id=tenant_id,
         limit=limit,
         offset=offset,
     )
@@ -416,13 +433,15 @@ def get_specs_catalog(
 
 
 @app.get("/v1/specs/organizations", response_model=SpecOrganizationResponse)
-def get_specs_organizations() -> SpecOrganizationResponse:
-    return SpecOrganizationResponse(organizations=_get_spec_store().list_organizations())
+def get_specs_organizations(request: Request = None) -> SpecOrganizationResponse:
+    tenant_id = _tenant_id_for_request(request)
+    return SpecOrganizationResponse(organizations=_get_spec_store().list_organizations(tenant_id=tenant_id))
 
 
 @app.get("/v1/specs/{spec_id}", response_model=SpecProfileResponse)
-def get_spec_profile(spec_id: str) -> SpecProfileResponse:
-    item = _get_spec_store().get_spec(spec_id)
+def get_spec_profile(spec_id: str, request: Request = None) -> SpecProfileResponse:
+    tenant_id = _tenant_id_for_request(request)
+    item = _get_spec_store().get_spec(spec_id, tenant_id=tenant_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Spec profile not found")
     return SpecProfileResponse(**_normalize_spec_item(item))
@@ -439,12 +458,18 @@ async def upload_spec_profile(
     tags_csv: str = Form(""),
     is_public: bool = Form(False),
     notes: str = Form(""),
+    request: Request = None,
 ) -> SpecUploadResponse:
+    tenant_id = _tenant_id_for_request(request)
     organization_clean = organization.strip()
     if not organization_clean:
         raise HTTPException(status_code=400, detail="organization is required.")
     upload_dir = _get_upload_root() / "specs" / str(uuid.uuid4())
-    saved = await _save_uploads([spec_file], upload_dir)
+    saved = await _save_uploads(
+        [spec_file],
+        upload_dir,
+        allowed_suffixes={".pdf", ".txt", ".md", ".csv", ".json"},
+    )
     if not saved:
         raise HTTPException(status_code=400, detail="No spec file uploaded.")
     saved_path = saved[0]
@@ -459,6 +484,7 @@ async def upload_spec_profile(
         tags=tags,
         notes=notes.strip(),
         is_public=bool(is_public),
+        tenant_id=tenant_id,
     )
     stored = _get_spec_store().upsert_spec(profile)
     return SpecUploadResponse(item=SpecProfileResponse(**_normalize_spec_item(stored)))
@@ -468,9 +494,11 @@ async def upload_spec_profile(
 def search_spec_submittals(
     spec_profile_ids: str = "",
     max_results: int = 10,
+    request: Request = None,
 ) -> SpecSubmittalSearchResponse:
+    tenant_id = _tenant_id_for_request(request)
     spec_ids = parse_csv_tokens(spec_profile_ids)
-    selected_profiles = _get_spec_store().get_by_ids(spec_ids)
+    selected_profiles = _get_spec_store().get_by_ids(spec_ids, tenant_id=tenant_id)
     queries = build_submittal_queries(spec_profiles=selected_profiles, max_queries=40)
     warnings: list[str] = []
     items: list[dict[str, Any]] = []
@@ -518,7 +546,9 @@ async def analyze(
     spec_organization: str = Form(""),
     include_public_specs: bool = Form(False),
     notes: str | None = Form(None),
+    request: Request = None,
 ) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
     selected_trade_list = sanitize_selected_trades(selected_trades)
     try:
         _validate_analysis_scope(analysis_mode=analysis_mode, selected_trades=selected_trade_list)
@@ -527,7 +557,7 @@ async def analyze(
 
     request_id = str(uuid.uuid4())
     request_dir = _get_upload_root() / "sync" / request_id
-    pdf_paths = await _save_uploads(files, request_dir)
+    pdf_paths = await _save_uploads(files, request_dir, allowed_suffixes={".pdf"})
     if not pdf_paths:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -539,6 +569,7 @@ async def analyze(
         spec_profile_ids_csv=spec_profile_ids,
         spec_organization=spec_organization,
         include_public_specs=include_public_specs,
+        tenant_id=tenant_id,
     )
     normalized_notes = normalize_notes(notes)
 
@@ -581,7 +612,7 @@ async def create_job(
 
     job_id = str(uuid.uuid4())
     job_upload_dir = _get_upload_root() / "jobs" / job_id
-    pdf_paths = await _save_uploads(files, job_upload_dir)
+    pdf_paths = await _save_uploads(files, job_upload_dir, allowed_suffixes={".pdf"})
     if not pdf_paths:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -593,6 +624,7 @@ async def create_job(
         spec_profile_ids_csv=spec_profile_ids,
         spec_organization=spec_organization,
         include_public_specs=include_public_specs,
+        tenant_id=tenant_id,
     )
     normalized_notes = normalize_notes(notes)
 
@@ -673,6 +705,7 @@ async def rerun_job(
             resolved_notes,
         ) = _resolve_rerun_inputs(
             source_input=source_input,
+            tenant_id=tenant_id,
             analysis_mode=analysis_mode,
             selected_trades=selected_trades,
             sheet_overrides_json=sheet_overrides_json,
@@ -1026,6 +1059,7 @@ def rerun_job_with_recommendation(
         ),
         spec_organization=str(source_input.get("spec_organization", "")).strip(),
         include_public_specs=bool(source_input.get("include_public_specs", False)),
+        tenant_id=tenant_id,
     )
 
     rerun_job_id = _queue_rerun_job(
@@ -1293,8 +1327,8 @@ def compare_benchmark_reports_endpoint(
     baseline_path: str,
     candidate_path: str,
 ) -> dict[str, Any]:
-    baseline = Path(str(baseline_path).strip()).expanduser().resolve()
-    candidate = Path(str(candidate_path).strip()).expanduser().resolve()
+    baseline = _resolve_benchmark_report_path(baseline_path, label="Baseline")
+    candidate = _resolve_benchmark_report_path(candidate_path, label="Candidate")
     if not baseline.exists():
         raise HTTPException(status_code=404, detail=f"Baseline report not found: {baseline}")
     if not candidate.exists():
@@ -1310,10 +1344,7 @@ def compare_benchmark_reports_endpoint(
 def compare_latest_benchmark_reports_endpoint(
     results_dir: str = "",
 ) -> dict[str, Any]:
-    if str(results_dir).strip():
-        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
-    else:
-        target_dir = Path.cwd() / "benchmarks" / "results"
+    target_dir = _resolve_benchmark_results_dir(results_dir)
 
     try:
         return compare_latest_benchmark_reports_from_dir(target_dir)
@@ -1327,10 +1358,7 @@ def get_benchmark_reports_history(
     limit: int = 50,
     offset: int = 0,
 ) -> BenchmarkHistoryResponse:
-    if str(results_dir).strip():
-        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
-    else:
-        target_dir = Path.cwd() / "benchmarks" / "results"
+    target_dir = _resolve_benchmark_results_dir(results_dir)
 
     payload = build_benchmark_history(results_dir=target_dir, limit=limit, offset=offset)
     return BenchmarkHistoryResponse(**payload)
@@ -1340,10 +1368,7 @@ def get_benchmark_reports_history(
 def get_benchmark_reports_trend(
     results_dir: str = "",
 ) -> BenchmarkTrendResponse:
-    if str(results_dir).strip():
-        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
-    else:
-        target_dir = Path.cwd() / "benchmarks" / "results"
+    target_dir = _resolve_benchmark_results_dir(results_dir)
 
     try:
         payload = build_latest_benchmark_trend_summary(target_dir)
@@ -1360,10 +1385,7 @@ def get_benchmark_reports_gate(
     require_non_regression: bool = True,
     require_improvement: bool = False,
 ) -> BenchmarkGateResponse:
-    if str(results_dir).strip():
-        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
-    else:
-        target_dir = Path.cwd() / "benchmarks" / "results"
+    target_dir = _resolve_benchmark_results_dir(results_dir)
 
     try:
         payload = evaluate_latest_benchmark_quality_gate(
@@ -1384,10 +1406,7 @@ def get_benchmark_reports_timeline(
     limit: int = 30,
     offset: int = 0,
 ) -> BenchmarkTimelineResponse:
-    if str(results_dir).strip():
-        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
-    else:
-        target_dir = Path.cwd() / "benchmarks" / "results"
+    target_dir = _resolve_benchmark_results_dir(results_dir)
 
     payload = build_benchmark_score_timeline(results_dir=target_dir, limit=limit, offset=offset)
     return BenchmarkTimelineResponse(**payload)
@@ -1405,10 +1424,7 @@ def get_benchmark_reports_dashboard(
     gate_require_non_regression: bool = True,
     gate_require_improvement: bool = False,
 ) -> BenchmarkDashboardResponse:
-    if str(results_dir).strip():
-        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
-    else:
-        target_dir = Path.cwd() / "benchmarks" / "results"
+    target_dir = _resolve_benchmark_results_dir(results_dir)
 
     payload = build_benchmark_dashboard(
         results_dir=target_dir,
@@ -1516,7 +1532,12 @@ def _run_job(
             shutil.rmtree(upload_dir, ignore_errors=True)
 
 
-async def _save_uploads(files: list[UploadFile], target_dir: Path) -> list[str]:
+async def _save_uploads(
+    files: list[UploadFile],
+    target_dir: Path,
+    *,
+    allowed_suffixes: set[str] | None = None,
+) -> list[str]:
     max_files = _resolve_max_upload_files()
     max_file_bytes = _resolve_max_upload_file_bytes()
     max_total_bytes = _resolve_max_upload_total_bytes()
@@ -1534,6 +1555,19 @@ async def _save_uploads(files: list[UploadFile], target_dir: Path) -> list[str]:
     total_written = 0
     for index, upload in enumerate(files):
         suffix = Path(upload.filename or "drawing.pdf").suffix or ".pdf"
+        suffix = suffix.lower()
+        display_name = upload.filename or f"upload_{index + 1}{suffix}"
+        if allowed_suffixes is not None:
+            normalized_allowed = {item.lower() for item in allowed_suffixes}
+            if suffix not in normalized_allowed:
+                allowed_text = ", ".join(sorted(normalized_allowed))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Upload rejected: '{display_name}' has unsupported "
+                        f"file type '{suffix}'. Allowed file types: {allowed_text}."
+                    ),
+                )
         clean_name = _safe_file_name(Path(upload.filename or f"drawing_{index + 1}.pdf").stem)
         target_path = target_dir / f"{index + 1:03d}_{clean_name}{suffix}"
         file_written = 0
@@ -1584,6 +1618,56 @@ async def _save_uploads(files: list[UploadFile], target_dir: Path) -> list[str]:
                 detail=f"Upload failed while saving '{upload.filename or target_path.name}': {exc}",
             ) from exc
     return pdf_paths
+
+
+def _resolve_benchmark_results_dir(results_dir: str) -> Path:
+    if str(results_dir).strip():
+        target_dir = Path(str(results_dir).strip()).expanduser().resolve()
+    else:
+        target_dir = Path.cwd().joinpath("benchmarks", "results").resolve()
+    _ensure_benchmark_path_allowed(target_dir)
+    return target_dir
+
+
+def _resolve_benchmark_report_path(report_path: str, *, label: str) -> Path:
+    target = Path(str(report_path).strip()).expanduser().resolve()
+    _ensure_benchmark_path_allowed(target)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"{label} report not found: {target}")
+    return target
+
+
+def _ensure_benchmark_path_allowed(target: Path) -> None:
+    if _parse_bool_env(os.environ.get("AI_ESTIMATOR_ALLOW_ARBITRARY_BENCHMARK_PATHS", "")):
+        return
+    roots = _allowed_benchmark_roots()
+    if any(_path_is_relative_to(target, root) for root in roots):
+        return
+    allowed = ", ".join(str(root) for root in roots)
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Benchmark path is outside allowed results directories: {target}. "
+            f"Allowed roots: {allowed}. Set AI_ESTIMATOR_ALLOW_ARBITRARY_BENCHMARK_PATHS=true "
+            "for local development only."
+        ),
+    )
+
+
+def _allowed_benchmark_roots() -> list[Path]:
+    roots = [Path.cwd().joinpath("benchmarks", "results")]
+    configured = os.environ.get("AI_ESTIMATOR_BENCHMARK_RESULTS_DIRS", "").strip()
+    if configured:
+        roots.extend(Path(item).expanduser() for item in configured.split(os.pathsep) if item.strip())
+    return [root.resolve() for root in roots]
+
+
+def _path_is_relative_to(target: Path, root: Path) -> bool:
+    try:
+        target.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def _utc_now() -> str:
@@ -2018,6 +2102,7 @@ def _build_handoff_recommendation(
 def _resolve_rerun_inputs(
     *,
     source_input: dict[str, Any],
+    tenant_id: str,
     analysis_mode: str | None,
     selected_trades: str | None,
     sheet_overrides_json: str | None,
@@ -2079,6 +2164,7 @@ def _resolve_rerun_inputs(
         spec_profile_ids_csv=resolved_spec_profile_ids_csv,
         spec_organization=resolved_spec_organization,
         include_public_specs=resolved_include_public_specs,
+        tenant_id=tenant_id,
     )
 
     if notes is None:
@@ -2184,8 +2270,12 @@ def _safe_file_name(name: str) -> str:
 
 
 def _normalize_spec_item(raw: dict[str, Any]) -> dict[str, Any]:
+    tenant_id = str(raw.get("tenant_id", "")).strip()
+    if not tenant_id:
+        tenant_id = "public" if bool(raw.get("is_public", False)) else _DEFAULT_TENANT_ID
     return {
         "spec_id": str(raw.get("spec_id", "")).strip(),
+        "tenant_id": tenant_id,
         "title": str(raw.get("title", "")).strip(),
         "organization": str(raw.get("organization", "")).strip(),
         "agency": str(raw.get("agency", "")).strip(),
@@ -2223,15 +2313,17 @@ def _resolve_spec_profiles_for_request(
     spec_profile_ids_csv: str | None,
     spec_organization: str | None,
     include_public_specs: bool,
+    tenant_id: str,
 ) -> list[dict[str, Any]]:
     spec_store = _get_spec_store()
     spec_ids = parse_csv_tokens(spec_profile_ids_csv)
-    selected = spec_store.get_by_ids(spec_ids)
+    selected = spec_store.get_by_ids(spec_ids, tenant_id=tenant_id)
 
     if include_public_specs:
         public_matches, _total = spec_store.list_specs(
             organization=(spec_organization or "").strip(),
             public_only=True,
+            tenant_id=tenant_id,
             limit=1000,
             offset=0,
         )
