@@ -1,6 +1,7 @@
 import json
 import os
 
+import pytest
 from fastapi import HTTPException
 
 from service.app import (
@@ -12,6 +13,11 @@ from service.app import (
     get_benchmark_reports_timeline,
     get_benchmark_reports_trend,
 )
+
+
+@pytest.fixture(autouse=True)
+def _allow_tmp_benchmark_paths(monkeypatch):
+    monkeypatch.setenv("AI_ESTIMATOR_ALLOW_ARBITRARY_BENCHMARK_PATHS", "true")
 
 
 def _write_report(path, score: float) -> None:
@@ -53,6 +59,23 @@ def test_compare_benchmark_reports_endpoint_404_for_missing_baseline(tmp_path):
         assert "Baseline report not found" in str(exc.detail)
     else:
         raise AssertionError("Expected HTTPException for missing baseline report")
+
+
+def test_compare_benchmark_reports_endpoint_rejects_untrusted_paths(monkeypatch, tmp_path):
+    monkeypatch.delenv("AI_ESTIMATOR_ALLOW_ARBITRARY_BENCHMARK_PATHS", raising=False)
+    candidate_path = tmp_path / "candidate.json"
+    _write_report(candidate_path, 0.8)
+
+    try:
+        compare_benchmark_reports_endpoint(
+            baseline_path=str(tmp_path / "baseline.json"),
+            candidate_path=str(candidate_path),
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "outside allowed results directories" in str(exc.detail)
+    else:
+        raise AssertionError("Expected HTTPException for untrusted benchmark path")
 
 
 def test_compare_latest_benchmark_reports_endpoint(tmp_path):

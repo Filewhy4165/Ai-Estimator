@@ -52,6 +52,7 @@ def test_resolve_rerun_inputs_uses_source_defaults():
     }
     mode, trades, overrides, spec_profiles, spec_org, include_public_specs, notes = _resolve_rerun_inputs(
         source_input=source_input,
+        tenant_id="default",
         analysis_mode=None,
         selected_trades=None,
         sheet_overrides_json=None,
@@ -73,6 +74,7 @@ def test_resolve_rerun_inputs_rejects_invalid_mode():
     try:
         _resolve_rerun_inputs(
             source_input={},
+            tenant_id="default",
             analysis_mode="bad-mode",
             selected_trades=None,
             sheet_overrides_json=None,
@@ -95,6 +97,7 @@ def test_resolve_rerun_inputs_rejects_selected_mode_without_valid_trades_from_so
     try:
         _resolve_rerun_inputs(
             source_input=source_input,
+            tenant_id="default",
             analysis_mode=None,
             selected_trades=None,
             sheet_overrides_json=None,
@@ -114,6 +117,7 @@ def test_resolve_rerun_inputs_rejects_selected_mode_without_valid_trades_from_ov
     try:
         _resolve_rerun_inputs(
             source_input=source_input,
+            tenant_id="default",
             analysis_mode="selected",
             selected_trades="unknown_trade",
             sheet_overrides_json=None,

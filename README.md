@@ -194,12 +194,13 @@ Common startup issues:
 
 Desktop async workflow:
 
-1. Click `Choose PDFs`
-2. Click `Submit Async Job`
-3. Click `Refresh Job` until status is `completed` (or enable `Auto Poll Job` to refresh automatically)
-4. Click `Get Review Queue` to see flagged sheets
-5. Click `Export Overrides Template` to save a prefilled JSON template for sheet corrections
-6. Edit the template file, then load it in `Sheet Overrides JSON` and submit a new job
+1. Click `Pick Drawing Files`
+2. Choose `all` work types for a complete pass, or use `Find Work Types from Drawings`
+3. Click `Start Background Takeoff`
+4. Click `Check Takeoff Status` until status is `completed` (or enable auto-refresh)
+5. Click `Show Sheets to Review` to see flagged sheets
+6. Click `Create Sheet Name Review File` to save a prefilled sheet correction file
+7. Edit the correction file, then load it in `Sheet Names (optional)` and submit a new job
 7. Use `Notes` for project-specific constraints before running
 8. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
 9. Use `Rerun Recommended` to auto-queue a rerun using AI-recommended trade scope (`selected` vs `all`)
@@ -453,12 +454,16 @@ iOS/Android apps should call the same `/v1/jobs` and `/v1/jobs/{job_id}` endpoin
 - move processing to worker queue (Celery/RQ/Arq)
 - store PDFs/results in object storage
 - add auth (JWT/OAuth)
+- use stored artifact IDs instead of local filesystem paths for benchmark reports
 
 ## Current limitations
 
-- Geometry extraction is text-driven in this MVP and requires CV/OCR modules for full plan accuracy.
+- Geometry extraction is text-driven in this MVP and requires CV/OCR/vector modules for full plan accuracy.
+- Explicit drawing dimensions are summarized as auditable reference linear measurements, but they are not treated as installed quantities until tied to detected geometry or reviewed assemblies.
 - Job execution currently runs in-process in the API server; production scale should move execution to a worker queue.
 - API security is currently API-key + tenant-header scoped; enterprise SSO/JWT is not yet implemented.
+- Private spec profiles are scoped by tenant/company workspace; public spec profiles are shared intentionally.
+- Benchmark report endpoints are restricted to configured result folders by default. Set `AI_ESTIMATOR_ALLOW_ARBITRARY_BENCHMARK_PATHS=true` only for local development.
 
 ## Dependency and mirror setup
 

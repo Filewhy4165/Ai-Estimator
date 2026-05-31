@@ -20,7 +20,9 @@ def summarize_payload(payload: dict[str, Any]) -> list[str]:
     if isinstance(result, dict):
         sheets = result.get("sheets_detected")
         unknown_symbols = result.get("legend_and_symbols", {}).get("unknown_symbols")
-        quantity = result.get("quantity_takeoff", {}).get("counts")
+        quantity_takeoff = result.get("quantity_takeoff", {})
+        quantity = quantity_takeoff.get("counts") if isinstance(quantity_takeoff, dict) else {}
+        linear = quantity_takeoff.get("linear") if isinstance(quantity_takeoff, dict) else {}
         trades = result.get("trade_scope", {}).get("analyzed_trades")
 
         lines.append("Result snapshot:")
@@ -34,6 +36,10 @@ def summarize_payload(payload: dict[str, Any]) -> list[str]:
                 if isinstance(value, (int, float)):
                     total_count += int(value)
             lines.append(f"- Quantity count total: {total_count}")
+        if isinstance(linear, dict) and linear.get("explicit_dimensions_total_ft") is not None:
+            lines.append(
+                f"- Explicit dimension references: {linear.get('explicit_dimensions_total_ft')} ft"
+            )
         if isinstance(trades, list) and trades:
             lines.append(f"- Trades analyzed: {', '.join(str(x) for x in trades)}")
     elif "items" in payload and isinstance(payload.get("items"), list):

@@ -14,10 +14,25 @@ def map_costs(quantity_takeoff: dict[str, object]) -> dict[str, object]:
             counts = {}
             if isinstance(buckets, dict):
                 counts = buckets.get("counts", {})
+                linear = buckets.get("linear", {})
+            else:
+                linear = {}
 
             assemblies[trade] = {
                 "derived_from_counts": counts,
-                "note": "Placeholder assembly mapping. Replace with estimator-specific recipes.",
+                "derived_from_linear": linear,
+                "assembly_status": "needs_estimator_recipe",
+                "estimator_inputs_needed": [
+                    "assembly recipe",
+                    "unit cost",
+                    "labor production rate",
+                    "waste factor",
+                    "crew or subcontractor rate",
+                ],
+                "note": (
+                    "Cost-ready structure is present, but final pricing still requires "
+                    "trade-specific contractor assemblies before use on a bid."
+                ),
             }
             csi_masterformat[trade] = DEFAULT_CSI_BY_TRADE.get(trade, [])
             contractor_custom[trade] = {}
@@ -29,4 +44,3 @@ def map_costs(quantity_takeoff: dict[str, object]) -> dict[str, object]:
             "contractor_custom": contractor_custom,
         },
     }
-

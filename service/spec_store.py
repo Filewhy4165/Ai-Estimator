@@ -12,6 +12,10 @@ from pypdf import PdfReader
 from ai_estimator.spec_intel import extract_standard_references, extract_trade_hints
 
 
+PUBLIC_SPEC_TENANT_ID = "public"
+DEFAULT_PRIVATE_SPEC_TENANT_ID = "default"
+
+
 class SpecStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = str(Path(db_path))
@@ -27,6 +31,7 @@ class SpecStore:
         agency: str | None = None,
         public_only: bool = True,
         project_type: str | None = None,
+        tenant_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -43,7 +48,10 @@ class SpecStore:
         for raw in specs:
             if not isinstance(raw, dict):
                 continue
-            if public_only and not bool(raw.get("is_public", False)):
+            if public_only:
+                if not bool(raw.get("is_public", False)):
+                    continue
+            elif not _spec_visible_to_tenant(raw, tenant_id=tenant_id):
                 continue
             org_value = str(raw.get("organization", "")).strip().lower()
             agency_value = str(raw.get("agency", "")).strip().lower()
@@ -68,7 +76,13 @@ class SpecStore:
         normalized_limit = max(1, min(limit, 500))
         return filtered[normalized_offset : normalized_offset + normalized_limit], total
 
-    def get_spec(self, spec_id: str) -> dict[str, Any] | None:
+    def get_spec(
+        self,
+        spec_id: str,
+        *,
+        tenant_id: str | None = None,
+        include_public: bool = True,
+    ) -> dict[str, Any] | None:
         target_id = spec_id.strip()
         if not target_id:
             return None
@@ -80,6 +94,12 @@ class SpecStore:
             if not isinstance(raw, dict):
                 continue
             if str(raw.get("spec_id", "")).strip() == target_id:
+                if not _spec_visible_to_tenant(
+                    raw,
+                    tenant_id=tenant_id,
+                    include_public=include_public,
+                ):
+                    return None
                 return raw
         return None
 
@@ -96,6 +116,7 @@ class SpecStore:
                 item["spec_id"] = spec_id
                 item["created_at"] = _utc_now()
 
+            item["tenant_id"] = _resolve_item_tenant_id(item)
             item["updated_at"] = _utc_now()
             stored = dict(item)
             updated_items: list[dict[str, Any]] = []
@@ -115,7 +136,13 @@ class SpecStore:
             self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             return stored
 
-    def get_by_ids(self, spec_ids: list[str]) -> list[dict[str, Any]]:
+    def get_by_ids(
+        self,
+        spec_ids: list[str],
+        *,
+        tenant_id: str | None = None,
+        include_public: bool = True,
+    ) -> list[dict[str, Any]]:
         wanted = {token.strip() for token in spec_ids if token.strip()}
         if not wanted:
             return []
@@ -128,11 +155,15 @@ class SpecStore:
             if not isinstance(raw, dict):
                 continue
             spec_id = str(raw.get("spec_id", "")).strip()
-            if spec_id in wanted:
+            if spec_id in wanted and _spec_visible_to_tenant(
+                raw,
+                tenant_id=tenant_id,
+                include_public=include_public,
+            ):
                 matched.append(raw)
         return matched
 
-    def list_organizations(self) -> list[str]:
+    def list_organizations(self, *, tenant_id: str | None = None) -> list[str]:
         payload = self._read_payload()
         specs = payload.get("items", [])
         if not isinstance(specs, list):
@@ -140,7 +171,9 @@ class SpecStore:
         orgs = {
             str(raw.get("organization", "")).strip()
             for raw in specs
-            if isinstance(raw, dict) and str(raw.get("organization", "")).strip()
+            if isinstance(raw, dict)
+            and str(raw.get("organization", "")).strip()
+            and _spec_visible_to_tenant(raw, tenant_id=tenant_id)
         }
         return sorted(orgs, key=lambda value: value.casefold())
 
@@ -181,6 +214,7 @@ class SpecStore:
                 "project_type": "government-facilities",
                 "tags": ["nasa", "tsrc", "federal"],
                 "is_public": True,
+                "tenant_id": PUBLIC_SPEC_TENANT_ID,
                 "source_file_name": "",
                 "source_file_path": "",
                 "notes": "Seed profile for standards-aware estimating.",
@@ -236,6 +270,7 @@ def build_spec_profile_from_file(
     tags: list[str],
     notes: str | None,
     is_public: bool,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     text = extract_spec_text(file_path)
     refs = extract_standard_references(text)
@@ -251,6 +286,9 @@ def build_spec_profile_from_file(
         "project_type": (project_type or "").strip(),
         "tags": sorted({tag.strip() for tag in tags if tag.strip()}),
         "is_public": bool(is_public),
+        "tenant_id": _normalize_spec_tenant_id(
+            PUBLIC_SPEC_TENANT_ID if is_public else tenant_id
+        ),
         "source_file_name": Path(file_path).name,
         "source_file_path": str(file_path),
         "notes": (notes or "").strip(),
@@ -264,3 +302,32 @@ def build_spec_profile_from_file(
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_item_tenant_id(item: dict[str, Any]) -> str:
+    existing = str(item.get("tenant_id", "")).strip()
+    if existing:
+        return _normalize_spec_tenant_id(existing)
+    if bool(item.get("is_public", False)):
+        return PUBLIC_SPEC_TENANT_ID
+    return DEFAULT_PRIVATE_SPEC_TENANT_ID
+
+
+def _normalize_spec_tenant_id(value: str | None) -> str:
+    token = str(value or "").strip()
+    if not token:
+        return DEFAULT_PRIVATE_SPEC_TENANT_ID
+    return token
+
+
+def _spec_visible_to_tenant(
+    item: dict[str, Any],
+    *,
+    tenant_id: str | None,
+    include_public: bool = True,
+) -> bool:
+    if tenant_id is None:
+        return True
+    if include_public and bool(item.get("is_public", False)):
+        return True
+    return _resolve_item_tenant_id(item) == _normalize_spec_tenant_id(tenant_id)

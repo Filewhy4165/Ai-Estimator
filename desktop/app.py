@@ -2522,7 +2522,7 @@ class DesktopEstimatorApp:
             row=0, column=1, sticky="w", padx=(10, 0)
         )
 
-        ttk.Label(container, text="Step 2: Trade Scope", style="Section.TLabel").grid(
+        ttk.Label(container, text="Step 2: Work Types", style="Section.TLabel").grid(
             row=6, column=0, sticky="w", pady=(10, 0)
         )
         scope_row = ttk.Frame(container)
@@ -2561,7 +2561,7 @@ class DesktopEstimatorApp:
             width=80,
         ).grid(row=7, column=1, columnspan=3, sticky="ew", pady=(8, 0))
 
-        ttk.Label(container, text="Step 3: Sheet Fix File", style="Section.TLabel").grid(
+        ttk.Label(container, text="Step 3: Sheet Names (optional)", style="Section.TLabel").grid(
             row=8, column=0, sticky="w", pady=(10, 0)
         )
         fix_row = ttk.Frame(container)
@@ -2574,12 +2574,12 @@ class DesktopEstimatorApp:
         ).grid(row=0, column=0, sticky="ew")
         ttk.Button(
             fix_row,
-            text="Pick Sheet Fix JSON",
+            text="Pick Sheet Fix File",
             command=self._choose_overrides_file,
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
         ttk.Button(
             fix_row,
-            text="Create Sheet Fix File from Last Run",
+            text="Create Sheet Name Review File",
             command=self._export_overrides_template,
             style="Accent.TButton",
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
@@ -2619,7 +2619,7 @@ class DesktopEstimatorApp:
             variable=self.publish_uploaded_specs,
         ).grid(row=1, column=1, columnspan=3, sticky="w", pady=(6, 0))
 
-        ttk.Label(container, text="Selected Spec Profile IDs", style="FormLabel.TLabel").grid(
+        ttk.Label(container, text="Selected Specs", style="FormLabel.TLabel").grid(
             row=10, column=0, sticky="w", pady=(8, 0)
         )
         spec_ids_row = ttk.Frame(container)
@@ -2654,18 +2654,18 @@ class DesktopEstimatorApp:
         run_row.grid(row=12, column=1, columnspan=3, sticky="ew", pady=(12, 0))
         ttk.Button(
             run_row,
-            text="Start Background Run",
+            text="Start Background Takeoff",
             command=self._submit_async_job,
             style="Primary.TButton",
         ).grid(row=0, column=0, sticky="w")
         ttk.Button(
             run_row,
-            text="Run Now (Stay Here)",
+            text="Run Takeoff Now",
             command=self._run_analysis,
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
         ttk.Button(
             run_row,
-            text="Check Job Status",
+            text="Check Takeoff Status",
             command=self._refresh_job,
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
         ttk.Button(
@@ -3190,27 +3190,27 @@ class DesktopEstimatorApp:
             },
             "quick_start": {
                 "pro_label": "Quick Start",
-                "beginner_label": "Start Estimate",
+                "beginner_label": "Start Takeoff",
                 "pro_tip": "Recommended one-click flow: ensure files are selected, submit async job, and auto-poll status.",
-                "beginner_tip": "Main button to start estimating in the background and watch progress automatically.",
+                "beginner_tip": "Main button to start the drawing takeoff in the background and watch progress automatically.",
             },
             "run_analysis": {
-                "pro_label": "Run Analysis",
-                "beginner_label": "Run Now (Stay Here)",
+                "pro_label": "Run Takeoff Now",
+                "beginner_label": "Run Takeoff Now",
                 "pro_tip": "Run synchronous analysis and return results directly in this window.",
-                "beginner_tip": "Run now and wait here until results finish.",
+                "beginner_tip": "Run the takeoff now and wait here until results finish.",
             },
             "submit_async_job": {
-                "pro_label": "Submit Async Job",
-                "beginner_label": "Start Background Run",
-                "pro_tip": "Submit a background job and return a job ID for polling.",
-                "beginner_tip": "Start in background so you can keep working while it runs.",
+                "pro_label": "Start Background Takeoff",
+                "beginner_label": "Start Background Takeoff",
+                "pro_tip": "Submit a background takeoff job and return a job ID for polling.",
+                "beginner_tip": "Start the takeoff in the background so you can keep working while it runs.",
             },
             "refresh_job": {
-                "pro_label": "Refresh Job",
-                "beginner_label": "Check Job Status",
-                "pro_tip": "Fetch latest status and payload for the current job ID.",
-                "beginner_tip": "Check progress for the current background run.",
+                "pro_label": "Check Takeoff Status",
+                "beginner_label": "Check Takeoff Status",
+                "pro_tip": "Fetch latest status and payload for the current takeoff job.",
+                "beginner_tip": "Check progress for the current background takeoff.",
             },
             "load_latest_job": {
                 "pro_label": "Load Latest Job",

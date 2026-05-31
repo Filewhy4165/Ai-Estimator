@@ -8,7 +8,10 @@ def test_summarize_payload_for_result_payload() -> None:
         "result": {
             "sheets_detected": [{"sheet_id": "A101"}],
             "legend_and_symbols": {"unknown_symbols": [{"symbol": "X"}]},
-            "quantity_takeoff": {"counts": {"door": 2, "window": 3}},
+            "quantity_takeoff": {
+                "counts": {"door": 2, "window": 3},
+                "linear": {"explicit_dimensions_total_ft": 12.5},
+            },
             "trade_scope": {"analyzed_trades": ["architectural", "electrical"]},
         }
     }
@@ -18,6 +21,7 @@ def test_summarize_payload_for_result_payload() -> None:
     assert any("Sheets detected: 1" in line for line in lines)
     assert any("Unknown symbols: 1" in line for line in lines)
     assert any("Quantity count total: 5" in line for line in lines)
+    assert any("Explicit dimension references: 12.5 ft" in line for line in lines)
     assert any("Trades analyzed: architectural, electrical" in line for line in lines)
 
 

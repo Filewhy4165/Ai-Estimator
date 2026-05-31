@@ -93,3 +93,13 @@ def test_save_uploads_rejects_empty_file(monkeypatch, tmp_path: Path) -> None:
 
     assert exc.value.status_code == 400
     assert "empty" in str(exc.value.detail).lower()
+
+
+def test_save_uploads_rejects_disallowed_suffix(tmp_path: Path) -> None:
+    uploads = [_UploadStub(filename="not-a-drawing.exe", content=b"A")]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_save_uploads(uploads, tmp_path / "uploads", allowed_suffixes={".pdf"}))
+
+    assert exc.value.status_code == 400
+    assert "unsupported file type" in str(exc.value.detail).lower()
