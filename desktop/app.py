@@ -347,6 +347,8 @@ class DesktopEstimatorApp:
         self._calculator_popups: dict[str, Toplevel] = {}
         self.logo_image: PhotoImage | None = None
         self.logo_label: Label | None = None
+        self.main_scroll_canvas: Canvas | None = None
+        self.setup_scroll_canvas: Canvas | None = None
         self.project_selector_combo: ttk.Combobox | None = None
         self.spec_org_combo: ttk.Combobox | None = None
         self.setup_project_combo: ttk.Combobox | None = None
@@ -404,6 +406,17 @@ class DesktopEstimatorApp:
         palette = self._resolve_theme_palette()
         _THEME.update(palette)
         self._configure_style()
+
+        if self.main_scroll_canvas is not None:
+            try:
+                self.main_scroll_canvas.configure(background=palette["app_bg"])
+            except Exception:
+                pass
+        if self.setup_scroll_canvas is not None:
+            try:
+                self.setup_scroll_canvas.configure(background=palette["surface"])
+            except Exception:
+                pass
 
         if self.construction_banner is not None:
             try:
@@ -828,10 +841,65 @@ class DesktopEstimatorApp:
         self.root.bind("<Motion>", self._on_root_motion_menu, add="+")
         self.root.bind("<Leave>", self._on_root_leave_menu, add="+")
 
+    def _build_scrollable_surface(
+        self,
+        *,
+        parent: object,
+        container_style: str,
+        padding: tuple[int, int, int, int],
+        canvas_background: str,
+        min_width: int,
+        min_height: int,
+    ) -> tuple[Canvas, ttk.Frame]:
+        host = ttk.Frame(parent, style=container_style)
+        host.pack(fill="both", expand=True)
+        host.columnconfigure(0, weight=1)
+        host.rowconfigure(0, weight=1)
+
+        canvas = Canvas(
+            host,
+            background=canvas_background,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        canvas.grid(row=0, column=0, sticky="nsew")
+        v_scroll = ttk.Scrollbar(host, orient="vertical", command=canvas.yview)
+        v_scroll.grid(row=0, column=1, sticky="ns")
+        h_scroll = ttk.Scrollbar(host, orient="horizontal", command=canvas.xview)
+        h_scroll.grid(row=1, column=0, sticky="ew")
+        canvas.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+
+        container = ttk.Frame(canvas, padding=padding, style=container_style)
+        window_id = canvas.create_window((0, 0), window=container, anchor="nw")
+
+        def _sync_scroll_region(_event: object = None) -> None:
+            bbox = canvas.bbox("all")
+            if bbox is not None:
+                canvas.configure(scrollregion=bbox)
+
+        def _sync_window_size(event: object) -> None:
+            viewport_width = int(getattr(event, "width", 0))
+            viewport_height = int(getattr(event, "height", 0))
+            target_width = max(container.winfo_reqwidth(), viewport_width, min_width)
+            target_height = max(container.winfo_reqheight(), viewport_height, min_height)
+            canvas.itemconfigure(window_id, width=target_width, height=target_height)
+            _sync_scroll_region()
+
+        container.bind("<Configure>", _sync_scroll_region)
+        canvas.bind("<Configure>", _sync_window_size)
+        self._bind_mousewheel_scrollable_canvas(canvas)
+        return canvas, container
+
     def _build_ui(self) -> None:
         p = _THEME
-        container = ttk.Frame(self.root, padding=(18, 16, 18, 16), style="App.TFrame")
-        container.pack(fill="both", expand=True)
+        self.main_scroll_canvas, container = self._build_scrollable_surface(
+            parent=self.root,
+            container_style="App.TFrame",
+            padding=(18, 16, 18, 16),
+            canvas_background=p["app_bg"],
+            min_width=1200,
+            min_height=740,
+        )
         container.columnconfigure(0, weight=1)
         container.rowconfigure(4, weight=1)
 
@@ -1378,6 +1446,7 @@ class DesktopEstimatorApp:
             highlightthickness=0,
             borderwidth=0,
             yscrollincrement=14,
+            xscrollincrement=14,
         )
         self.calculators_canvas.grid(row=0, column=0, sticky="nsew")
         calc_vscroll = ttk.Scrollbar(
@@ -1386,7 +1455,16 @@ class DesktopEstimatorApp:
             command=self.calculators_canvas.yview,
         )
         calc_vscroll.grid(row=0, column=1, sticky="ns")
-        self.calculators_canvas.configure(yscrollcommand=calc_vscroll.set)
+        calc_hscroll = ttk.Scrollbar(
+            calc_scroll_frame,
+            orient="horizontal",
+            command=self.calculators_canvas.xview,
+        )
+        calc_hscroll.grid(row=1, column=0, sticky="ew")
+        self.calculators_canvas.configure(
+            yscrollcommand=calc_vscroll.set,
+            xscrollcommand=calc_hscroll.set,
+        )
 
         calculators_surface = ttk.Frame(self.calculators_canvas, padding=(4, 4, 8, 8))
         calc_window = self.calculators_canvas.create_window(
@@ -1401,10 +1479,12 @@ class DesktopEstimatorApp:
                 scrollregion=self.calculators_canvas.bbox("all")
             ),
         )
-        self.calculators_canvas.bind(
-            "<Configure>",
-            lambda event: self.calculators_canvas.itemconfigure(calc_window, width=event.width),
-        )
+        def _sync_calculator_surface(event: object) -> None:
+            viewport_width = int(getattr(event, "width", 0))
+            target_width = max(calculators_surface.winfo_reqwidth(), viewport_width)
+            self.calculators_canvas.itemconfigure(calc_window, width=target_width)
+
+        self.calculators_canvas.bind("<Configure>", _sync_calculator_surface)
         self._bind_mousewheel_scrollable_canvas(self.calculators_canvas)
 
         calculators_surface.columnconfigure(0, weight=1)
@@ -1714,6 +1794,7 @@ class DesktopEstimatorApp:
             except Exception:
                 pass
         self.setup_window = None
+        self.setup_scroll_canvas = None
         self.setup_project_combo = None
         self._setup_window_is_open = False
 
@@ -2005,8 +2086,14 @@ class DesktopEstimatorApp:
         setup.configure(background=_THEME["surface"])
         setup.protocol("WM_DELETE_WINDOW", self._close_setup_window)
 
-        container = ttk.Frame(setup, padding=(18, 16, 18, 16), style="Panel.TFrame")
-        container.pack(fill="both", expand=True)
+        self.setup_scroll_canvas, container = self._build_scrollable_surface(
+            parent=setup,
+            container_style="Panel.TFrame",
+            padding=(18, 16, 18, 16),
+            canvas_background=_THEME["surface"],
+            min_width=1000,
+            min_height=620,
+        )
         container.columnconfigure(1, weight=1)
 
         ttk.Label(container, text="Project Setup", style="HeaderTitle.TLabel").grid(
@@ -3525,15 +3612,27 @@ class DesktopEstimatorApp:
         popup.configure(background=_THEME["app_bg"])
         self._calculator_popups[calculator_key] = popup
 
+        calc_canvas, calc_surface = self._build_scrollable_surface(
+            parent=popup,
+            container_style="App.TFrame",
+            padding=(14, 14, 14, 14),
+            canvas_background=_THEME["app_bg"],
+            min_width=860,
+            min_height=560,
+        )
+        calc_canvas.configure(yscrollincrement=14, xscrollincrement=14)
+        calc_surface.columnconfigure(0, weight=1)
+        calc_surface.rowconfigure(0, weight=1)
+
         shell = Frame(
-            popup,
+            calc_surface,
             background=str(config["case_bg"]),
             bd=4,
             relief="ridge",
             padx=14,
             pady=14,
         )
-        shell.pack(fill="both", expand=True, padx=14, pady=14)
+        shell.grid(row=0, column=0, sticky="nsew")
         shell.grid_columnconfigure(0, weight=3)
         shell.grid_columnconfigure(1, weight=2)
         shell.grid_rowconfigure(3, weight=1)
