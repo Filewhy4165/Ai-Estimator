@@ -223,3 +223,43 @@ def test_list_jobs_for_prune_filters_by_status_and_cutoff(tmp_path: Path):
     )
     ids = [row.job_id for row in candidates]
     assert ids == ["job-old-completed"]
+
+
+def test_tenant_scoping_filters_get_list_count_and_delete(tmp_path: Path):
+    db_path = tmp_path / "jobs_tenant.db"
+    store = JobStore(str(db_path))
+    store.create_job(
+        JobRecord(
+            job_id="tenant-a-job",
+            tenant_id="tenant-a",
+            status="completed",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T00:10:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+    store.create_job(
+        JobRecord(
+            job_id="tenant-b-job",
+            tenant_id="tenant-b",
+            status="completed",
+            created_at="2026-05-24T00:00:00+00:00",
+            updated_at="2026-05-24T00:12:00+00:00",
+            input={"analysis_mode": "auto", "selected_trades": []},
+        )
+    )
+
+    assert store.get_job("tenant-a-job", tenant_id="tenant-a") is not None
+    assert store.get_job("tenant-a-job", tenant_id="tenant-b") is None
+
+    listed_a = store.list_jobs(limit=10, offset=0, tenant_id="tenant-a")
+    listed_b = store.list_jobs(limit=10, offset=0, tenant_id="tenant-b")
+    assert [item.job_id for item in listed_a] == ["tenant-a-job"]
+    assert [item.job_id for item in listed_b] == ["tenant-b-job"]
+
+    assert store.count_jobs(tenant_id="tenant-a") == 1
+    assert store.count_jobs(tenant_id="tenant-b") == 1
+
+    assert store.delete_job("tenant-a-job", tenant_id="tenant-b") is False
+    assert store.delete_job("tenant-a-job", tenant_id="tenant-a") is True
+    assert store.get_job("tenant-a-job", tenant_id="tenant-a") is None
