@@ -388,8 +388,6 @@ class DesktopEstimatorApp:
         self._enable_hover_menu_mode()
         self._refresh_files_label()
         self.root.after(700, self._start_local_api_if_needed)
-        if bool(self.beginner_mode.get()) and not self.files:
-            self.root.after(950, self._open_project_setup_window)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _resolve_theme_palette(self) -> dict[str, str]:
