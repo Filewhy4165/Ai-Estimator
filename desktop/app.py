@@ -358,6 +358,9 @@ class DesktopEstimatorApp:
         self._native_menu: Menu | None = None
         self._native_menu_visible = True
         self._menu_hide_after_id: str | None = None
+        self._menu_hover_zone_px = 36
+        self._menu_hide_delay_ms = 900
+        self._menu_last_activity_monotonic = 0.0
         self.project_profiles: dict[str, dict[str, object]] = {}
         self.spec_catalog: list[dict[str, object]] = []
         self.spec_org_catalog: list[str] = []
@@ -807,6 +810,8 @@ class DesktopEstimatorApp:
         try:
             self.root.configure(menu=self._native_menu if visible else "")
             self._native_menu_visible = visible
+            if visible:
+                self._menu_last_activity_monotonic = time.monotonic()
         except Exception:
             return
 
@@ -821,11 +826,38 @@ class DesktopEstimatorApp:
 
     def _schedule_native_menu_hide(self) -> None:
         self._cancel_native_menu_hide()
-        self._menu_hide_after_id = self.root.after(900, lambda: self._set_native_menu_visible(False))
+        self._menu_hide_after_id = self.root.after(
+            int(self._menu_hide_delay_ms),
+            self._attempt_native_menu_hide,
+        )
+
+    def _pointer_in_menu_hover_zone(self) -> bool:
+        try:
+            pointer_y = int(self.root.winfo_pointery()) - int(self.root.winfo_rooty())
+        except Exception:
+            return False
+        return -24 <= pointer_y <= int(self._menu_hover_zone_px)
+
+    def _attempt_native_menu_hide(self) -> None:
+        self._menu_hide_after_id = None
+        if not self._native_menu_visible:
+            return
+        if self._pointer_in_menu_hover_zone():
+            return
+        elapsed = time.monotonic() - float(self._menu_last_activity_monotonic)
+        if elapsed < (float(self._menu_hide_delay_ms) / 1000.0):
+            self._schedule_native_menu_hide()
+            return
+        self._set_native_menu_visible(False)
+
+    def _on_native_menu_activity(self, _event: object = None) -> None:
+        self._menu_last_activity_monotonic = time.monotonic()
+        self._cancel_native_menu_hide()
+        self._set_native_menu_visible(True)
 
     def _on_root_motion_menu(self, event: object) -> None:
-        y_value = int(getattr(event, "y", 0))
-        if y_value <= 6:
+        if self._pointer_in_menu_hover_zone():
+            self._menu_last_activity_monotonic = time.monotonic()
             self._cancel_native_menu_hide()
             self._set_native_menu_visible(True)
             return
@@ -840,6 +872,7 @@ class DesktopEstimatorApp:
         self._set_native_menu_visible(False)
         self.root.bind("<Motion>", self._on_root_motion_menu, add="+")
         self.root.bind("<Leave>", self._on_root_leave_menu, add="+")
+        self.root.bind_all("<<MenuSelect>>", self._on_native_menu_activity, add="+")
 
     def _build_scrollable_surface(
         self,
