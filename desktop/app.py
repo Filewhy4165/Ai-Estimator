@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import subprocess
 import sys
 from typing import Callable
 from threading import Thread
-from tkinter import END, BooleanVar, Label, Menu, StringVar, Text, Tk, Toplevel, filedialog, ttk
+from tkinter import END, BooleanVar, Canvas, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
 import time
 
@@ -27,6 +28,72 @@ from ai_estimator.benchmark_compare import (
 from ai_estimator.sheet_overrides import parse_sheet_overrides_json
 
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
+_THEME = {
+    "app_bg": "#05070D",
+    "surface": "#10151D",
+    "surface_2": "#151C26",
+    "surface_3": "#1D2633",
+    "field": "#071018",
+    "field_focus": "#0B1D28",
+    "text": "#F8FAFC",
+    "muted": "#9FB3C8",
+    "line": "#253244",
+    "cyan": "#19E6FF",
+    "cyan_dim": "#0D7E91",
+    "amber": "#FFB000",
+    "orange": "#FF5A1F",
+    "lime": "#95FF3D",
+    "magenta": "#FF3DD7",
+    "danger": "#FF3B4F",
+}
+_THEME_PRESETS: dict[str, dict[str, str]] = {
+    "construction_orange": {
+        "cyan": "#19E6FF",
+        "cyan_dim": "#0D7E91",
+        "amber": "#FFB000",
+        "orange": "#FF5A1F",
+        "lime": "#95FF3D",
+        "magenta": "#FF3DD7",
+    },
+    "electric_blue": {
+        "cyan": "#3DA5FF",
+        "cyan_dim": "#1E4E80",
+        "amber": "#FFC857",
+        "orange": "#FF7A33",
+        "lime": "#8DFFB3",
+        "magenta": "#A855F7",
+    },
+    "lime_steel": {
+        "cyan": "#7CF4D9",
+        "cyan_dim": "#2A6F63",
+        "amber": "#EAC435",
+        "orange": "#F08A24",
+        "lime": "#B5FF5E",
+        "magenta": "#F973C1",
+    },
+}
+_DARK_SURFACES = {
+    "app_bg": "#05070D",
+    "surface": "#10151D",
+    "surface_2": "#151C26",
+    "surface_3": "#1D2633",
+    "field": "#071018",
+    "field_focus": "#0B1D28",
+    "text": "#F8FAFC",
+    "muted": "#9FB3C8",
+    "line": "#253244",
+}
+_LIGHT_SURFACES = {
+    "app_bg": "#F1F5FB",
+    "surface": "#FFFFFF",
+    "surface_2": "#E8EEF7",
+    "surface_3": "#DDE7F4",
+    "field": "#FFFFFF",
+    "field_focus": "#EEF7FF",
+    "text": "#0B1324",
+    "muted": "#334155",
+    "line": "#9FB2CC",
+}
 
 
 def parse_selected_trade_tokens(selected_trades_csv: str) -> list[str]:
@@ -140,8 +207,8 @@ class HoverTooltip:
             text=self.text,
             justify="left",
             wraplength=self.wrap_length,
-            background="#111827",
-            foreground="#E5E7EB",
+            background=_THEME["surface_2"],
+            foreground=_THEME["text"],
             relief="solid",
             borderwidth=1,
             padx=8,
@@ -163,9 +230,9 @@ class HoverTooltip:
 class DesktopEstimatorApp:
     def __init__(self) -> None:
         self.root = Tk()
-        self.root.title("AI Estimator Desktop")
-        self.root.geometry("1320x820")
-        self.root.minsize(1180, 700)
+        self.root.title("AI Estimator Command Center")
+        self.root.geometry("1440x900")
+        self.root.minsize(1200, 740)
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
@@ -184,6 +251,40 @@ class DesktopEstimatorApp:
         self.prune_older_than_hours = StringVar(value="168")
         self.prune_limit = StringVar(value="200")
         self.prune_cleanup_uploads = BooleanVar(value=False)
+        self.guided_step = StringVar(value="trade")
+        self.guided_trade_strategy = StringVar(value="all")
+        self.guided_run_objective = StringVar(value="takeoff_and_estimation")
+        self.guided_step_title = StringVar(value="Step 1: Trade Selection Settings")
+        self.guided_step_detail = StringVar(
+            value="Choose how trades are selected, then click Guided Proceed."
+        )
+        self.pipe_length_feet = StringVar(value="10")
+        self.pipe_length_inches = StringVar(value="0")
+        self.pipe_run_count = StringVar(value="1")
+        self.pipe_waste_percent = StringVar(value="10")
+        self.pipe_calc_result = StringVar(value="Pipe calculator ready.")
+        self.concrete_length_feet = StringVar(value="20")
+        self.concrete_width_feet = StringVar(value="12")
+        self.concrete_depth_inches = StringVar(value="4")
+        self.concrete_waste_percent = StringVar(value="8")
+        self.concrete_calc_result = StringVar(value="Concrete/gravel calculator ready.")
+        self.carpentry_wall_length_feet = StringVar(value="16")
+        self.carpentry_wall_height_feet = StringVar(value="8")
+        self.carpentry_stud_spacing_inches = StringVar(value="16")
+        self.carpentry_waste_percent = StringVar(value="10")
+        self.carpentry_calc_result = StringVar(value="Carpentry framing calculator ready.")
+        self.hvac_diameter_inches = StringVar(value="12")
+        self.hvac_run_length_feet = StringVar(value="20")
+        self.hvac_run_count = StringVar(value="4")
+        self.hvac_waste_percent = StringVar(value="10")
+        self.hvac_calc_result = StringVar(value="Sheet metal / HVAC calculator ready.")
+        self.heavy_area_sqft = StringVar(value="1000")
+        self.heavy_depth_inches = StringVar(value="6")
+        self.heavy_swell_percent = StringVar(value="15")
+        self.heavy_calc_result = StringVar(value="Heavy earthwork calculator ready.")
+        self.theme_preset = StringVar(value="construction_orange")
+        self.dark_mode_enabled = BooleanVar(value=True)
+        self.banner_animation_enabled = BooleanVar(value=True)
         self.auto_poll_interval_ms = 2000
         self.auto_poll_handle: str | None = None
         self.benchmark_task_running = False
@@ -191,7 +292,9 @@ class DesktopEstimatorApp:
         self.request_task_running = False
         self.job_polling = False
         self.file_scan_running = False
+        self.trade_discovery_running = False
         self._api_bootstrap_in_progress = False
+        self._local_api_process: subprocess.Popen[object] | None = None
         self.request_progress_text = StringVar(value="")
         self.job_progress_message = ""
         self._progress_bar_running = False
@@ -219,11 +322,38 @@ class DesktopEstimatorApp:
         self.files_list_y_scroll: ttk.Scrollbar | None = None
         self.actions_notebook: ttk.Notebook | None = None
         self._advanced_tab_widgets: list[tuple[ttk.Frame, str]] = []
+        self.guided_flow_frame: ttk.LabelFrame | None = None
+        self.guided_objective_frame: ttk.LabelFrame | None = None
+        self.guided_selected_frame: ttk.LabelFrame | None = None
+        self.guided_trade_options_frame: ttk.Frame | None = None
+        self.guided_back_button: ttk.Button | None = None
+        self.guided_proceed_button: ttk.Button | None = None
+        self.guided_execute_button: ttk.Button | None = None
+        self.guided_skip_button: ttk.Button | None = None
+        self.guided_discover_button: ttk.Button | None = None
+        self.theme_combo: ttk.Combobox | None = None
+        self.construction_banner: Canvas | None = None
+        self._banner_phase = 0
+        self._banner_after_id: str | None = None
+        self.trade_option_vars: dict[str, BooleanVar] = {}
+        self._calculator_popups: dict[str, Toplevel] = {}
+        self.logo_image: PhotoImage | None = None
+        self.logo_label: Label | None = None
+        self.logo_path_candidates: list[Path] = [
+            Path(__file__).resolve().parents[1] / "desktop" / "assets" / "tech_build_logo.png",
+            Path(r"C:\Users\sthom\OneDrive\----!!!!TechBuild!!!!----\Tech Build Solutions Logos\1.png"),
+        ]
         self.output_y_scroll: ttk.Scrollbar | None = None
         self.output_x_scroll: ttk.Scrollbar | None = None
 
         self.analysis_mode.trace_add("write", lambda *_: self._refresh_header_summary())
+        self.analysis_mode.trace_add("write", lambda *_: self._sync_analysis_mode_to_guided())
         self.current_job_id.trace_add("write", lambda *_: self._refresh_header_summary())
+        self.guided_step.trace_add("write", lambda *_: self._refresh_guided_flow())
+        self.guided_trade_strategy.trace_add("write", lambda *_: self._sync_guided_trade_strategy())
+        self.theme_preset.trace_add("write", lambda *_: self._apply_visual_theme(update_status=True))
+        self.dark_mode_enabled.trace_add("write", lambda *_: self._apply_visual_theme(update_status=True))
+        self.banner_animation_enabled.trace_add("write", lambda *_: self._toggle_banner_animation())
 
         self._configure_style()
         self._build_ui()
@@ -233,33 +363,360 @@ class DesktopEstimatorApp:
         self.root.after(700, self._start_local_api_if_needed)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _resolve_theme_palette(self) -> dict[str, str]:
+        preset = self.theme_preset.get().strip() or "construction_orange"
+        if preset not in _THEME_PRESETS:
+            preset = "construction_orange"
+        surfaces = _DARK_SURFACES if bool(self.dark_mode_enabled.get()) else _LIGHT_SURFACES
+        palette = {
+            **_THEME,
+            **surfaces,
+            **_THEME_PRESETS[preset],
+        }
+        palette["danger"] = "#FF3B4F"
+        return palette
+
+    def _apply_visual_theme(self, *, update_status: bool) -> None:
+        palette = self._resolve_theme_palette()
+        _THEME.update(palette)
+        self._configure_style()
+
+        if self.construction_banner is not None:
+            try:
+                self.construction_banner.configure(
+                    background=palette["app_bg"],
+                    highlightbackground=palette["cyan"],
+                )
+            except Exception:
+                pass
+            self._draw_construction_banner(self.construction_banner)
+
+        if self.files_list is not None:
+            try:
+                self.files_list.configure(
+                    background=palette["field"],
+                    foreground=palette["text"],
+                    insertbackground=palette["cyan"],
+                    selectbackground=palette["cyan"],
+                    selectforeground="#041016",
+                )
+            except Exception:
+                pass
+        if getattr(self, "output", None) is not None:
+            try:
+                self.output.configure(
+                    background=palette["field"],
+                    foreground=palette["text"],
+                    insertbackground=palette["cyan"],
+                    selectbackground=palette["cyan"],
+                    selectforeground="#041016",
+                )
+            except Exception:
+                pass
+        self._install_company_logo()
+        self._toggle_banner_animation(update_status=False)
+        if update_status:
+            mode_text = "dark" if bool(self.dark_mode_enabled.get()) else "light"
+            self.status_text.set(
+                f"Theme applied: {self.theme_preset.get().strip()} ({mode_text} mode)."
+            )
+            self._save_settings()
+
+    def _install_company_logo(self) -> None:
+        if self.logo_label is None:
+            return
+        logo_path: Path | None = None
+        for candidate in self.logo_path_candidates:
+            if candidate.exists():
+                logo_path = candidate
+                break
+        try:
+            self.logo_label.configure(background=_THEME["surface"])
+        except Exception:
+            pass
+
+        if logo_path is None:
+            self.logo_image = None
+            try:
+                self.logo_label.configure(image="", text="")
+            except Exception:
+                pass
+            return
+
+        try:
+            image = PhotoImage(file=str(logo_path))
+            max_width = 140
+            max_height = 50
+            down_x = max(1, math.ceil(image.width() / max_width))
+            down_y = max(1, math.ceil(image.height() / max_height))
+            downsample = max(down_x, down_y)
+            if downsample > 1:
+                image = image.subsample(downsample, downsample)
+            self.logo_image = image
+            self.logo_label.configure(image=self.logo_image, text="")
+        except Exception:
+            self.logo_image = None
+            self.logo_label.configure(image="", text="Tech Build Solutions", fg=_THEME["muted"])
+
     def _configure_style(self) -> None:
         style = ttk.Style(self.root)
         available_themes = set(style.theme_names())
-        if "vista" in available_themes:
+        if "clam" in available_themes:
+            style.theme_use("clam")
+        elif "vista" in available_themes:
             style.theme_use("vista")
         elif "xpnative" in available_themes:
             style.theme_use("xpnative")
-        elif "clam" in available_themes:
-            style.theme_use("clam")
-        style.configure("TButton", padding=(10, 6), font=("Segoe UI", 9))
-        style.configure("Primary.TButton", padding=(12, 6), font=("Segoe UI Semibold", 9))
-        style.configure("TCheckbutton", padding=(4, 2), font=("Segoe UI", 9))
-        style.configure("TLabel", font=("Segoe UI", 9))
-        style.configure("TEntry", font=("Segoe UI", 9))
-        style.configure("TCombobox", font=("Segoe UI", 9))
-        style.configure("TNotebook", tabmargins=(8, 4, 8, 0))
-        style.configure("TNotebook.Tab", padding=(14, 7), font=("Segoe UI Semibold", 9))
-        style.configure("Section.TLabel", font=("Segoe UI", 9, "bold"))
-        style.configure("HeaderTitle.TLabel", font=("Segoe UI Semibold", 16))
-        style.configure("HeaderSub.TLabel", font=("Segoe UI", 9))
-        style.configure("SummaryChip.TLabel", font=("Segoe UI", 9, "bold"))
+
+        p = _THEME
+        self.root.configure(background=p["app_bg"])
+        self.root.option_add("*Menu.background", p["surface_2"])
+        self.root.option_add("*Menu.foreground", p["text"])
+        self.root.option_add("*Menu.activeBackground", p["cyan"])
+        self.root.option_add("*Menu.activeForeground", "#041016")
+        self.root.option_add("*TCombobox*Listbox.background", p["field"])
+        self.root.option_add("*TCombobox*Listbox.foreground", p["text"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", p["cyan"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", "#041016")
+
+        style.configure("App.TFrame", background=p["app_bg"])
+        style.configure("Hero.TFrame", background=p["app_bg"])
+        style.configure("TFrame", background=p["surface"])
+        style.configure(
+            "Panel.TFrame",
+            background=p["surface"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "Status.TFrame",
+            background=p["surface_2"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "TLabelframe",
+            background=p["surface"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "TLabelframe.Label",
+            background=p["surface"],
+            foreground=p["cyan"],
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure(
+            "TButton",
+            padding=(12, 8),
+            font=("Segoe UI Semibold", 9),
+            background=p["surface_3"],
+            foreground=p["text"],
+            bordercolor=p["line"],
+            lightcolor=p["surface_3"],
+            darkcolor=p["surface_3"],
+            borderwidth=1,
+            relief="flat",
+        )
+        style.map(
+            "TButton",
+            background=[
+                ("disabled", "#111827"),
+                ("pressed", p["cyan_dim"]),
+                ("active", "#203142"),
+            ],
+            foreground=[("disabled", "#64748B"), ("active", p["cyan"])],
+            bordercolor=[("active", p["cyan"]), ("pressed", p["cyan"])],
+            relief=[("pressed", "sunken"), ("!pressed", "flat")],
+        )
+        style.configure(
+            "Primary.TButton",
+            padding=(14, 8),
+            font=("Segoe UI Semibold", 9),
+            background=p["amber"],
+            foreground="#140E00",
+            bordercolor=p["orange"],
+            lightcolor=p["amber"],
+            darkcolor=p["amber"],
+            borderwidth=1,
+            relief="flat",
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("disabled", "#3B2D11"), ("pressed", p["orange"]), ("active", "#FFD166")],
+            foreground=[("disabled", "#8B7355"), ("active", "#05070D")],
+            bordercolor=[("active", p["lime"]), ("pressed", p["orange"])],
+            relief=[("pressed", "sunken"), ("!pressed", "flat")],
+        )
+        style.configure(
+            "Accent.TButton",
+            padding=(12, 8),
+            font=("Segoe UI Semibold", 9),
+            background=p["cyan"],
+            foreground="#041016",
+            bordercolor=p["cyan"],
+            borderwidth=1,
+            relief="flat",
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("pressed", p["cyan_dim"]), ("active", p["lime"])],
+            foreground=[("active", "#041016")],
+        )
+        style.configure(
+            "TCheckbutton",
+            padding=(4, 3),
+            font=("Segoe UI", 9),
+            background=p["surface"],
+            foreground=p["text"],
+            indicatorcolor=p["field"],
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", p["surface_2"])],
+            foreground=[("active", p["cyan"]), ("disabled", "#64748B")],
+        )
+        style.configure(
+            "TRadiobutton",
+            padding=(4, 3),
+            font=("Segoe UI", 9),
+            background=p["surface"],
+            foreground=p["text"],
+            indicatorcolor=p["field"],
+        )
+        style.map(
+            "TRadiobutton",
+            background=[("active", p["surface_2"])],
+            foreground=[("active", p["cyan"]), ("disabled", "#64748B")],
+        )
+        style.configure("TLabel", font=("Segoe UI", 9), background=p["surface"], foreground=p["text"])
+        style.configure(
+            "FormLabel.TLabel",
+            font=("Segoe UI Semibold", 9),
+            background=p["surface"],
+            foreground=p["muted"],
+        )
+        style.configure(
+            "TEntry",
+            font=("Segoe UI", 9),
+            fieldbackground=p["field"],
+            foreground=p["text"],
+            bordercolor=p["line"],
+            insertcolor=p["cyan"],
+            lightcolor=p["field"],
+            darkcolor=p["field"],
+            borderwidth=1,
+        )
+        style.map(
+            "TEntry",
+            fieldbackground=[("focus", p["field_focus"])],
+            bordercolor=[("focus", p["cyan"])],
+            foreground=[("disabled", "#64748B")],
+        )
+        style.configure(
+            "TCombobox",
+            font=("Segoe UI", 9),
+            fieldbackground=p["field"],
+            foreground=p["text"],
+            background=p["surface_3"],
+            arrowcolor=p["cyan"],
+            bordercolor=p["line"],
+            insertcolor=p["cyan"],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", p["field"]), ("focus", p["field_focus"])],
+            foreground=[("readonly", p["text"])],
+            bordercolor=[("focus", p["cyan"])],
+        )
+        style.configure(
+            "TNotebook",
+            background=p["surface"],
+            borderwidth=0,
+            tabmargins=(8, 6, 8, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            padding=(16, 8),
+            font=("Segoe UI Semibold", 9),
+            background=p["surface_3"],
+            foreground=p["muted"],
+            bordercolor=p["line"],
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", p["cyan"]), ("active", "#203142")],
+            foreground=[("selected", "#041016"), ("active", p["text"])],
+        )
+        style.configure(
+            "Horizontal.TProgressbar",
+            troughcolor=p["field"],
+            background=p["cyan"],
+            darkcolor=p["cyan"],
+            lightcolor=p["cyan"],
+            bordercolor=p["line"],
+        )
+        style.configure("TSeparator", background=p["line"])
+        style.configure(
+            "Section.TLabel",
+            font=("Segoe UI Semibold", 9),
+            foreground=p["cyan"],
+            background=p["surface"],
+        )
+        style.configure(
+            "HeaderTitle.TLabel",
+            font=("Segoe UI Semibold", 20),
+            foreground=p["text"],
+            background=p["app_bg"],
+        )
+        style.configure(
+            "HeaderSub.TLabel",
+            font=("Segoe UI", 10),
+            foreground=p["muted"],
+            background=p["app_bg"],
+        )
+        style.configure(
+            "Signal.TLabel",
+            font=("Segoe UI Semibold", 9),
+            foreground=p["lime"],
+            background=p["app_bg"],
+            padding=(10, 5),
+        )
+        style.configure(
+            "StatusLabel.TLabel",
+            font=("Segoe UI Semibold", 9),
+            foreground=p["lime"],
+            background=p["surface_2"],
+        )
+        style.configure(
+            "Footer.TLabel",
+            font=("Segoe UI", 8),
+            foreground=p["muted"],
+            background=p["surface"],
+        )
+        style.configure(
+            "SummaryChip.TLabel",
+            font=("Segoe UI Semibold", 9),
+            foreground=p["text"],
+            background="#0A1B24",
+            padding=(12, 6),
+            borderwidth=1,
+            relief="solid",
+        )
 
     def _build_menu(self) -> None:
         self.root.option_add("*tearOff", False)
-        menu = Menu(self.root)
+        menu_kwargs = {
+            "background": _THEME["surface_2"],
+            "foreground": _THEME["text"],
+            "activebackground": _THEME["cyan"],
+            "activeforeground": "#041016",
+            "borderwidth": 0,
+        }
+        menu = Menu(self.root, **menu_kwargs)
 
-        file_menu = Menu(menu)
+        file_menu = Menu(menu, **menu_kwargs)
         file_menu.add_command(label="Choose Drawing PDFs...", command=self._choose_pdfs)
         file_menu.add_command(label="Pick Overrides JSON...", command=self._choose_overrides_file)
         file_menu.add_separator()
@@ -269,7 +726,7 @@ class DesktopEstimatorApp:
         file_menu.add_command(label="Exit", command=self._on_close)
         menu.add_cascade(label="File", menu=file_menu)
 
-        run_menu = Menu(menu)
+        run_menu = Menu(menu, **menu_kwargs)
         run_menu.add_command(label="Quick Start", command=self._quick_start_run)
         run_menu.add_command(label="Submit Async Job", command=self._submit_async_job)
         run_menu.add_command(label="Run Analysis (sync)", command=self._run_analysis)
@@ -277,9 +734,12 @@ class DesktopEstimatorApp:
         run_menu.add_command(label="Refresh Job", command=self._refresh_job)
         run_menu.add_command(label="Load Latest Job", command=self._load_latest_job)
         run_menu.add_command(label="Cancel Job", command=self._cancel_job)
+        run_menu.add_separator()
+        run_menu.add_command(label="Restart Local API", command=self._restart_local_api_clicked)
+        run_menu.add_command(label="Shutdown Local API", command=self._shutdown_local_api_clicked)
         menu.add_cascade(label="Run", menu=run_menu)
 
-        view_menu = Menu(menu)
+        view_menu = Menu(menu, **menu_kwargs)
         view_menu.add_checkbutton(
             label="Beginner Mode",
             variable=self.beginner_mode,
@@ -297,34 +757,55 @@ class DesktopEstimatorApp:
         )
         menu.add_cascade(label="View", menu=view_menu)
 
-        help_menu = Menu(menu)
+        help_menu = Menu(menu, **menu_kwargs)
         help_menu.add_command(label="Control Guide", command=self._show_control_guide)
         menu.add_cascade(label="Help", menu=help_menu)
 
         self.root.configure(menu=menu)
 
     def _build_ui(self) -> None:
-        container = ttk.Frame(self.root, padding=14)
+        p = _THEME
+        container = ttk.Frame(self.root, padding=(18, 16, 18, 16), style="App.TFrame")
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(2, weight=1)
+        container.rowconfigure(3, weight=1)
 
         self._build_menu()
 
-        header = ttk.Frame(container)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        header = ttk.Frame(container, style="Hero.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="AI Estimator Desktop", style="HeaderTitle.TLabel").grid(
+        ttk.Label(header, text="AI Estimator Command Center", style="HeaderTitle.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
             header,
-            text="Office-style workflow for construction estimate extraction, review, and handoff",
+            text="AI-powered takeoff, scope intelligence, benchmark gates, and handoff-ready estimating",
             style="HeaderSub.TLabel",
         ).grid(row=1, column=0, sticky="w")
+        ttk.Label(header, text="MODEL PIPELINE ONLINE", style="Signal.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(16, 0)
+        )
+        ttk.Label(header, text="High-contrast field command UI", style="HeaderSub.TLabel").grid(
+            row=1, column=1, sticky="e", padx=(16, 0)
+        )
 
-        summary_row = ttk.Frame(container)
-        summary_row.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.construction_banner = Canvas(
+            container,
+            height=78,
+            background=p["app_bg"],
+            highlightthickness=2,
+            highlightbackground=p["cyan"],
+        )
+        self.construction_banner.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.construction_banner.bind(
+            "<Configure>",
+            lambda event: self._draw_construction_banner(event.widget),
+        )
+        self._draw_construction_banner(self.construction_banner)
+
+        summary_row = ttk.Frame(container, style="App.TFrame")
+        summary_row.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         summary_row.columnconfigure(3, weight=1)
         ttk.Label(summary_row, textvariable=self.header_mode_text, style="SummaryChip.TLabel").grid(
             row=0, column=0, sticky="w", padx=(0, 12)
@@ -336,11 +817,11 @@ class DesktopEstimatorApp:
             row=0, column=2, sticky="w"
         )
 
-        frame = ttk.Frame(container)
-        frame.grid(row=2, column=0, sticky="nsew")
+        frame = ttk.Frame(container, padding=14, style="Panel.TFrame")
+        frame.grid(row=3, column=0, sticky="nsew")
         frame.columnconfigure(1, weight=1)
 
-        self.field_label_api_url = ttk.Label(frame, text="API URL")
+        self.field_label_api_url = ttk.Label(frame, text="API URL", style="FormLabel.TLabel")
         self.field_label_api_url.grid(row=0, column=0, sticky="w")
         self._field_label_widgets["api_url"] = self.field_label_api_url
         api_row = ttk.Frame(frame)
@@ -348,32 +829,63 @@ class DesktopEstimatorApp:
         api_row.columnconfigure(0, weight=1)
         api_url_entry = ttk.Entry(api_row, textvariable=self.api_url, width=58)
         api_url_entry.grid(row=0, column=0, sticky="ew")
-        ttk.Button(api_row, text="Start Local API", command=self._start_local_api_clicked).grid(
+        ttk.Button(api_row, text="Start Local API", command=self._start_local_api_clicked, style="Accent.TButton").grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
-        ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
+        ttk.Button(api_row, text="Restart API", command=self._restart_local_api_clicked).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(api_row, text="Shutdown API", command=self._shutdown_local_api_clicked).grid(
+            row=0, column=3, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
+            row=0, column=5, sticky="w", padx=(8, 0)
         )
         ttk.Checkbutton(
             api_row,
             text="Beginner Mode",
             variable=self.beginner_mode,
             command=self._toggle_beginner_mode,
-        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
         ttk.Checkbutton(
             api_row,
             text="Advanced Tools",
             variable=self.show_advanced_tools,
             command=self._toggle_advanced_tools,
-        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
+        ttk.Label(api_row, text="Theme", style="FormLabel.TLabel").grid(
+            row=0, column=8, sticky="e", padx=(14, 4)
+        )
+        self.theme_combo = ttk.Combobox(
+            api_row,
+            textvariable=self.theme_preset,
+            state="readonly",
+            width=18,
+            values=[
+                "construction_orange",
+                "electric_blue",
+                "lime_steel",
+            ],
+        )
+        self.theme_combo.grid(row=0, column=9, sticky="w")
+        ttk.Checkbutton(
+            api_row,
+            text="Dark Mode",
+            variable=self.dark_mode_enabled,
+        ).grid(row=0, column=10, sticky="w", padx=(8, 0))
+        ttk.Checkbutton(
+            api_row,
+            text="Animate Banner",
+            variable=self.banner_animation_enabled,
+        ).grid(row=0, column=11, sticky="w", padx=(8, 0))
 
-        self.field_label_api_key = ttk.Label(frame, text="API Key (optional)")
+        self.field_label_api_key = ttk.Label(frame, text="API Key (optional)", style="FormLabel.TLabel")
         self.field_label_api_key.grid(row=1, column=0, sticky="w")
         self._field_label_widgets["api_key"] = self.field_label_api_key
         api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
         api_key_entry.grid(row=1, column=1, sticky="ew")
 
-        self.field_label_analysis_mode = ttk.Label(frame, text="Analysis Mode")
+        self.field_label_analysis_mode = ttk.Label(frame, text="Analysis Mode", style="FormLabel.TLabel")
         self.field_label_analysis_mode.grid(row=2, column=0, sticky="w")
         self._field_label_widgets["analysis_mode"] = self.field_label_analysis_mode
         self.analysis_mode_combo = ttk.Combobox(
@@ -385,7 +897,7 @@ class DesktopEstimatorApp:
         )
         self.analysis_mode_combo.grid(row=2, column=1, sticky="w")
 
-        self.field_label_selected_trades = ttk.Label(frame, text="Selected Trades (CSV)")
+        self.field_label_selected_trades = ttk.Label(frame, text="Selected Trades (CSV)", style="FormLabel.TLabel")
         self.field_label_selected_trades.grid(row=3, column=0, sticky="w")
         self._field_label_widgets["selected_trades"] = self.field_label_selected_trades
         selected_trades_row = ttk.Frame(frame)
@@ -404,7 +916,7 @@ class DesktopEstimatorApp:
             command=self._validate_selected_trades_clicked,
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
-        self.field_label_sheet_overrides = ttk.Label(frame, text="Sheet Overrides JSON")
+        self.field_label_sheet_overrides = ttk.Label(frame, text="Sheet Overrides JSON", style="FormLabel.TLabel")
         self.field_label_sheet_overrides.grid(row=4, column=0, sticky="w")
         self._field_label_widgets["overrides_path"] = self.field_label_sheet_overrides
         overrides_row = ttk.Frame(frame)
@@ -416,13 +928,13 @@ class DesktopEstimatorApp:
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
-        self.field_label_current_job = ttk.Label(frame, text="Current Job ID")
+        self.field_label_current_job = ttk.Label(frame, text="Current Job ID", style="FormLabel.TLabel")
         self.field_label_current_job.grid(row=5, column=0, sticky="w")
         self._field_label_widgets["current_job"] = self.field_label_current_job
         current_job_entry = ttk.Entry(frame, textvariable=self.current_job_id, width=68)
         current_job_entry.grid(row=5, column=1, sticky="ew")
 
-        self.field_label_notes = ttk.Label(frame, text="Notes")
+        self.field_label_notes = ttk.Label(frame, text="Notes", style="FormLabel.TLabel")
         self.field_label_notes.grid(row=6, column=0, sticky="w")
         self._field_label_widgets["notes"] = self.field_label_notes
         notes_entry = ttk.Entry(frame, textvariable=self.notes, width=68)
@@ -433,13 +945,158 @@ class DesktopEstimatorApp:
         workflow_tab = ttk.Frame(self.actions_notebook, padding=8)
         quality_tab = ttk.Frame(self.actions_notebook, padding=8)
         operations_tab = ttk.Frame(self.actions_notebook, padding=8)
+        calculators_tab = ttk.Frame(self.actions_notebook, padding=8)
         self.actions_notebook.add(workflow_tab, text="Workflow")
         self.actions_notebook.add(quality_tab, text="Quality")
         self.actions_notebook.add(operations_tab, text="Operations")
+        self.actions_notebook.add(calculators_tab, text="Calculators")
         self._advanced_tab_widgets = [(quality_tab, "Quality"), (operations_tab, "Operations")]
 
+        self.guided_flow_frame = ttk.LabelFrame(
+            workflow_tab,
+            text="Guided Start (Step-by-Step)",
+            padding=8,
+        )
+        self.guided_flow_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        for col in range(4):
+            self.guided_flow_frame.columnconfigure(col, weight=1)
+
+        ttk.Label(
+            self.guided_flow_frame,
+            textvariable=self.guided_step_title,
+            style="Section.TLabel",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
+        ttk.Label(
+            self.guided_flow_frame,
+            textvariable=self.guided_step_detail,
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 6))
+
+        strategy_row = ttk.Frame(self.guided_flow_frame)
+        strategy_row.grid(row=2, column=0, columnspan=4, sticky="ew")
+        for col in range(3):
+            strategy_row.columnconfigure(col, weight=1)
+        ttk.Radiobutton(
+            strategy_row,
+            text="All Trades",
+            variable=self.guided_trade_strategy,
+            value="all",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            strategy_row,
+            text="Analyze Drawings for Available Trades",
+            variable=self.guided_trade_strategy,
+            value="auto",
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            strategy_row,
+            text="I Will Choose Work Types",
+            variable=self.guided_trade_strategy,
+            value="selected",
+        ).grid(row=0, column=2, sticky="w")
+
+        self.guided_selected_frame = ttk.LabelFrame(
+            self.guided_flow_frame,
+            text="If choosing work types",
+            padding=6,
+        )
+        self.guided_selected_frame.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+        self.guided_selected_frame.columnconfigure(0, weight=1)
+        selected_inline_row = ttk.Frame(self.guided_selected_frame)
+        selected_inline_row.grid(row=0, column=0, sticky="ew")
+        selected_inline_row.columnconfigure(0, weight=1)
+        ttk.Entry(
+            selected_inline_row,
+            textvariable=self.selected_trades,
+            width=54,
+            state="readonly",
+        ).grid(row=0, column=0, sticky="ew")
+        self.guided_discover_button = ttk.Button(
+            selected_inline_row,
+            text="Analyze Drawings for Trade Options",
+            command=self._discover_trade_options_from_drawings,
+            style="Accent.TButton",
+        )
+        self.guided_discover_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            selected_inline_row,
+            text="Load Trades",
+            command=self._load_trade_catalog,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(
+            selected_inline_row,
+            text="Validate Trades",
+            command=self._validate_selected_trades_clicked,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+
+        self.guided_trade_options_frame = ttk.Frame(self.guided_selected_frame)
+        self.guided_trade_options_frame.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(
+            self.guided_trade_options_frame,
+            text="Selectable Work Types (click to include):",
+            style="FormLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+
+        self.guided_objective_frame = ttk.LabelFrame(
+            self.guided_flow_frame,
+            text="Run Objective",
+            padding=6,
+        )
+        self.guided_objective_frame.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+        objective_row = ttk.Frame(self.guided_objective_frame)
+        objective_row.grid(row=0, column=0, sticky="ew")
+        for col in range(3):
+            objective_row.columnconfigure(col, weight=1)
+        ttk.Radiobutton(
+            objective_row,
+            text="Takeoff + Estimation",
+            variable=self.guided_run_objective,
+            value="takeoff_and_estimation",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            objective_row,
+            text="Takeoff Only",
+            variable=self.guided_run_objective,
+            value="takeoff_only",
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        ttk.Radiobutton(
+            objective_row,
+            text="Estimate Man-Hours Only",
+            variable=self.guided_run_objective,
+            value="manhours_only",
+        ).grid(row=0, column=2, sticky="w")
+
+        guided_actions_row = ttk.Frame(self.guided_flow_frame)
+        guided_actions_row.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        guided_actions_row.columnconfigure(4, weight=1)
+        self.guided_back_button = ttk.Button(
+            guided_actions_row,
+            text="Guided Back",
+            command=self._guided_back,
+        )
+        self.guided_back_button.grid(row=0, column=0, sticky="w")
+        self.guided_proceed_button = ttk.Button(
+            guided_actions_row,
+            text="Guided Proceed",
+            style="Primary.TButton",
+            command=self._guided_proceed,
+        )
+        self.guided_proceed_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.guided_execute_button = ttk.Button(
+            guided_actions_row,
+            text="Run Guided Step",
+            style="Primary.TButton",
+            command=self._guided_execute,
+        )
+        self.guided_execute_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self.guided_skip_button = ttk.Button(
+            guided_actions_row,
+            text="Skip to Full Interface",
+            command=self._guided_skip_to_full,
+        )
+        self.guided_skip_button.grid(row=0, column=3, sticky="w", padx=(8, 0))
+
         workflow_run = ttk.LabelFrame(workflow_tab, text="Run Drawings", padding=8)
-        workflow_run.grid(row=0, column=0, sticky="ew")
+        workflow_run.grid(row=1, column=0, sticky="ew")
         for col in range(6):
             workflow_run.columnconfigure(col, weight=1)
         ttk.Button(workflow_run, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
@@ -477,7 +1134,7 @@ class DesktopEstimatorApp:
         )
 
         workflow_benchmark = ttk.LabelFrame(workflow_tab, text="Full Quality Flow", padding=8)
-        workflow_benchmark.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        workflow_benchmark.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         workflow_benchmark.columnconfigure(0, weight=1)
         ttk.Button(
             workflow_benchmark,
@@ -561,17 +1218,17 @@ class DesktopEstimatorApp:
         prune_row = ttk.LabelFrame(operations_tab, text="Data Cleanup", padding=8)
         prune_row.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         prune_row.columnconfigure(12, weight=1)
-        self.field_label_prune_statuses = ttk.Label(prune_row, text="Prune Statuses")
+        self.field_label_prune_statuses = ttk.Label(prune_row, text="Prune Statuses", style="FormLabel.TLabel")
         self.field_label_prune_statuses.grid(row=0, column=0, sticky="w")
         self._field_label_widgets["prune_statuses"] = self.field_label_prune_statuses
         prune_statuses_entry = ttk.Entry(prune_row, textvariable=self.prune_statuses, width=28)
         prune_statuses_entry.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        self.field_label_prune_older_than = ttk.Label(prune_row, text="Older Than (h)")
+        self.field_label_prune_older_than = ttk.Label(prune_row, text="Older Than (h)", style="FormLabel.TLabel")
         self.field_label_prune_older_than.grid(row=0, column=2, sticky="w", padx=(12, 0))
         self._field_label_widgets["prune_older_than"] = self.field_label_prune_older_than
         prune_older_than_entry = ttk.Entry(prune_row, textvariable=self.prune_older_than_hours, width=8)
         prune_older_than_entry.grid(row=0, column=3, sticky="w", padx=(6, 0))
-        self.field_label_prune_limit = ttk.Label(prune_row, text="Limit")
+        self.field_label_prune_limit = ttk.Label(prune_row, text="Limit", style="FormLabel.TLabel")
         self.field_label_prune_limit.grid(row=0, column=4, sticky="w", padx=(12, 0))
         self._field_label_widgets["prune_limit"] = self.field_label_prune_limit
         prune_limit_entry = ttk.Entry(prune_row, textvariable=self.prune_limit, width=8)
@@ -588,7 +1245,194 @@ class DesktopEstimatorApp:
             row=0, column=8, sticky="w", padx=(8, 0)
         )
 
-        self.files_label = ttk.Label(frame, text="No files selected.")
+        calculators_tab.columnconfigure(0, weight=1)
+        ttk.Label(
+            calculators_tab,
+            text="Trade Calculators: field math for piping, concrete, sheet metal/HVAC, earthwork, and framing.",
+            style="Section.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        pipe_frame = ttk.LabelFrame(
+            calculators_tab,
+            text="Industrial Pipe / Feet-Inches Calculator",
+            padding=10,
+        )
+        pipe_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        for col in range(8):
+            pipe_frame.columnconfigure(col, weight=1)
+        ttk.Label(pipe_frame, text="Length (ft)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(pipe_frame, textvariable=self.pipe_length_feet, width=8).grid(row=1, column=0, sticky="w")
+        ttk.Label(pipe_frame, text="Length (in)").grid(row=0, column=1, sticky="w")
+        ttk.Entry(pipe_frame, textvariable=self.pipe_length_inches, width=8).grid(row=1, column=1, sticky="w")
+        ttk.Label(pipe_frame, text="Run Count").grid(row=0, column=2, sticky="w")
+        ttk.Entry(pipe_frame, textvariable=self.pipe_run_count, width=10).grid(row=1, column=2, sticky="w")
+        ttk.Label(pipe_frame, text="Waste %").grid(row=0, column=3, sticky="w")
+        ttk.Entry(pipe_frame, textvariable=self.pipe_waste_percent, width=10).grid(row=1, column=3, sticky="w")
+        ttk.Button(
+            pipe_frame,
+            text="Calc Pipe Takeoff",
+            command=self._recalc_pipe_takeoff,
+            style="Primary.TButton",
+        ).grid(row=1, column=4, sticky="w", padx=(12, 0))
+        ttk.Button(
+            pipe_frame,
+            text="Open Full Tool",
+            command=lambda: self._open_full_calculator("pipe"),
+        ).grid(row=1, column=5, sticky="w", padx=(8, 0))
+        ttk.Label(
+            pipe_frame,
+            textvariable=self.pipe_calc_result,
+        ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
+
+        concrete_frame = ttk.LabelFrame(
+            calculators_tab,
+            text="Concrete and Gravel Calculator",
+            padding=10,
+        )
+        concrete_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        for col in range(8):
+            concrete_frame.columnconfigure(col, weight=1)
+        ttk.Label(concrete_frame, text="Length (ft)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(concrete_frame, textvariable=self.concrete_length_feet, width=10).grid(row=1, column=0, sticky="w")
+        ttk.Label(concrete_frame, text="Width (ft)").grid(row=0, column=1, sticky="w")
+        ttk.Entry(concrete_frame, textvariable=self.concrete_width_feet, width=10).grid(row=1, column=1, sticky="w")
+        ttk.Label(concrete_frame, text="Depth (in)").grid(row=0, column=2, sticky="w")
+        ttk.Entry(concrete_frame, textvariable=self.concrete_depth_inches, width=10).grid(row=1, column=2, sticky="w")
+        ttk.Label(concrete_frame, text="Waste %").grid(row=0, column=3, sticky="w")
+        ttk.Entry(concrete_frame, textvariable=self.concrete_waste_percent, width=10).grid(row=1, column=3, sticky="w")
+        ttk.Button(
+            concrete_frame,
+            text="Calc Concrete/Gravel",
+            command=self._recalc_concrete_takeoff,
+            style="Primary.TButton",
+        ).grid(row=1, column=4, sticky="w", padx=(12, 0))
+        ttk.Button(
+            concrete_frame,
+            text="Open Full Tool",
+            command=lambda: self._open_full_calculator("concrete"),
+        ).grid(row=1, column=5, sticky="w", padx=(8, 0))
+        ttk.Label(
+            concrete_frame,
+            textvariable=self.concrete_calc_result,
+        ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
+
+        hvac_frame = ttk.LabelFrame(
+            calculators_tab,
+            text="Sheet Metal / HVAC Calculator",
+            padding=10,
+        )
+        hvac_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        for col in range(8):
+            hvac_frame.columnconfigure(col, weight=1)
+        ttk.Label(hvac_frame, text="Duct Diameter (in)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(hvac_frame, textvariable=self.hvac_diameter_inches, width=10).grid(row=1, column=0, sticky="w")
+        ttk.Label(hvac_frame, text="Run Length (ft)").grid(row=0, column=1, sticky="w")
+        ttk.Entry(hvac_frame, textvariable=self.hvac_run_length_feet, width=10).grid(row=1, column=1, sticky="w")
+        ttk.Label(hvac_frame, text="Run Count").grid(row=0, column=2, sticky="w")
+        ttk.Entry(hvac_frame, textvariable=self.hvac_run_count, width=10).grid(row=1, column=2, sticky="w")
+        ttk.Label(hvac_frame, text="Waste %").grid(row=0, column=3, sticky="w")
+        ttk.Entry(hvac_frame, textvariable=self.hvac_waste_percent, width=10).grid(row=1, column=3, sticky="w")
+        ttk.Button(
+            hvac_frame,
+            text="Calc HVAC Sheet-Metal",
+            command=self._recalc_hvac_takeoff,
+            style="Primary.TButton",
+        ).grid(row=1, column=4, sticky="w", padx=(12, 0))
+        ttk.Button(
+            hvac_frame,
+            text="Open Full Tool",
+            command=lambda: self._open_full_calculator("hvac"),
+        ).grid(row=1, column=5, sticky="w", padx=(8, 0))
+        ttk.Label(
+            hvac_frame,
+            textvariable=self.hvac_calc_result,
+        ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
+
+        heavy_frame = ttk.LabelFrame(
+            calculators_tab,
+            text="Heavy Earthwork Calculator",
+            padding=10,
+        )
+        heavy_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        for col in range(8):
+            heavy_frame.columnconfigure(col, weight=1)
+        ttk.Label(heavy_frame, text="Area (sq ft)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(heavy_frame, textvariable=self.heavy_area_sqft, width=10).grid(row=1, column=0, sticky="w")
+        ttk.Label(heavy_frame, text="Depth (in)").grid(row=0, column=1, sticky="w")
+        ttk.Entry(heavy_frame, textvariable=self.heavy_depth_inches, width=10).grid(row=1, column=1, sticky="w")
+        ttk.Label(heavy_frame, text="Swell %").grid(row=0, column=2, sticky="w")
+        ttk.Entry(heavy_frame, textvariable=self.heavy_swell_percent, width=10).grid(row=1, column=2, sticky="w")
+        ttk.Button(
+            heavy_frame,
+            text="Calc Earthwork",
+            command=self._recalc_heavy_takeoff,
+            style="Primary.TButton",
+        ).grid(row=1, column=4, sticky="w", padx=(12, 0))
+        ttk.Button(
+            heavy_frame,
+            text="Open Full Tool",
+            command=lambda: self._open_full_calculator("heavy"),
+        ).grid(row=1, column=5, sticky="w", padx=(8, 0))
+        ttk.Label(
+            heavy_frame,
+            textvariable=self.heavy_calc_result,
+        ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
+
+        carpentry_frame = ttk.LabelFrame(
+            calculators_tab,
+            text="Carpentry Framing Calculator",
+            padding=10,
+        )
+        carpentry_frame.grid(row=5, column=0, sticky="ew")
+        for col in range(8):
+            carpentry_frame.columnconfigure(col, weight=1)
+        ttk.Label(carpentry_frame, text="Wall Length (ft)").grid(row=0, column=0, sticky="w")
+        ttk.Entry(
+            carpentry_frame,
+            textvariable=self.carpentry_wall_length_feet,
+            width=10,
+        ).grid(row=1, column=0, sticky="w")
+        ttk.Label(carpentry_frame, text="Wall Height (ft)").grid(row=0, column=1, sticky="w")
+        ttk.Entry(
+            carpentry_frame,
+            textvariable=self.carpentry_wall_height_feet,
+            width=10,
+        ).grid(row=1, column=1, sticky="w")
+        ttk.Label(carpentry_frame, text="Stud Spacing (in)").grid(row=0, column=2, sticky="w")
+        ttk.Entry(
+            carpentry_frame,
+            textvariable=self.carpentry_stud_spacing_inches,
+            width=10,
+        ).grid(row=1, column=2, sticky="w")
+        ttk.Label(carpentry_frame, text="Waste %").grid(row=0, column=3, sticky="w")
+        ttk.Entry(
+            carpentry_frame,
+            textvariable=self.carpentry_waste_percent,
+            width=10,
+        ).grid(row=1, column=3, sticky="w")
+        ttk.Button(
+            carpentry_frame,
+            text="Calc Carpentry",
+            command=self._recalc_carpentry_takeoff,
+            style="Primary.TButton",
+        ).grid(row=1, column=4, sticky="w", padx=(12, 0))
+        ttk.Button(
+            carpentry_frame,
+            text="Open Full Tool",
+            command=lambda: self._open_full_calculator("carpentry"),
+        ).grid(row=1, column=5, sticky="w", padx=(8, 0))
+        ttk.Label(
+            carpentry_frame,
+            textvariable=self.carpentry_calc_result,
+        ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
+
+        self._recalc_pipe_takeoff()
+        self._recalc_concrete_takeoff()
+        self._recalc_hvac_takeoff()
+        self._recalc_heavy_takeoff()
+        self._recalc_carpentry_takeoff()
+
+        self.files_label = ttk.Label(frame, text="No files selected.", style="StatusLabel.TLabel")
         self.files_label.grid(row=8, column=0, columnspan=2, sticky="w")
 
         files_summary_frame = ttk.Frame(frame)
@@ -598,9 +1442,11 @@ class DesktopEstimatorApp:
             files_summary_frame,
             height=5,
             wrap="none",
-            background="#F9FAFB",
-            foreground="#111827",
-            insertbackground="#111827",
+            background=p["field"],
+            foreground=p["text"],
+            insertbackground=p["cyan"],
+            selectbackground=p["cyan"],
+            selectforeground="#041016",
             padx=6,
             pady=6,
             font=("Segoe UI", 9),
@@ -614,11 +1460,13 @@ class DesktopEstimatorApp:
         self.files_list.configure(yscrollcommand=self.files_list_y_scroll.set)
         self.files_list.configure(state="disabled")
 
-        status_strip = ttk.Frame(frame)
+        status_strip = ttk.Frame(frame, padding=(10, 8), style="Status.TFrame")
         status_strip.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 8))
         status_strip.columnconfigure(1, weight=1)
-        ttk.Label(status_strip, text="Status:").grid(row=0, column=0, sticky="w")
-        ttk.Label(status_strip, textvariable=self.status_text).grid(row=0, column=1, sticky="w")
+        ttk.Label(status_strip, text="Status:", style="StatusLabel.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(status_strip, textvariable=self.status_text, style="StatusLabel.TLabel").grid(
+            row=0, column=1, sticky="w"
+        )
 
         progress_row = ttk.Frame(frame)
         progress_row.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -638,12 +1486,14 @@ class DesktopEstimatorApp:
         self.output = Text(
             output_frame,
             wrap="none",
-            background="#FFFFFF",
-            foreground="#111827",
-            insertbackground="#111827",
-            padx=8,
-            pady=8,
-            font=("Segoe UI", 10),
+            background=p["field"],
+            foreground=p["text"],
+            insertbackground=p["cyan"],
+            selectbackground=p["cyan"],
+            selectforeground="#041016",
+            padx=10,
+            pady=10,
+            font=("Cascadia Mono", 10),
         )
         self.output.grid(row=0, column=0, sticky="nsew")
         self.output_y_scroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.output.yview)
@@ -655,9 +1505,15 @@ class DesktopEstimatorApp:
         footer = ttk.Frame(frame)
         footer.grid(row=13, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         footer.columnconfigure(1, weight=1)
-        ttk.Separator(footer, orient="horizontal").grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-        ttk.Label(footer, text="Ready").grid(row=1, column=0, sticky="w")
-        ttk.Label(footer, text="F1 Help | Ctrl+O Open PDFs | Ctrl+Enter Submit").grid(row=1, column=1, sticky="e")
+        ttk.Separator(footer, orient="horizontal").grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+        ttk.Label(footer, text="Ready", style="Footer.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(
+            footer,
+            text="F1 Help | Ctrl+O Open PDFs | Ctrl+Enter Submit",
+            style="Footer.TLabel",
+        ).grid(row=1, column=1, sticky="e")
+        self.logo_label = Label(footer, background=p["surface"], borderwidth=0)
+        self.logo_label.grid(row=1, column=2, sticky="e", padx=(12, 0))
 
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(12, weight=1)
@@ -673,7 +1529,179 @@ class DesktopEstimatorApp:
             prune_older_than_entry=prune_older_than_entry,
             prune_limit_entry=prune_limit_entry,
         )
+        self._refresh_guided_flow()
         self._apply_advanced_tools_visibility(update_status=False)
+        self._install_company_logo()
+        self._apply_visual_theme(update_status=False)
+
+    def _draw_construction_banner(self, banner: Canvas | None) -> None:
+        if banner is None:
+            return
+        p = _THEME
+        width = max(1, int(banner.winfo_width()))
+        height = max(1, int(banner.winfo_height()))
+        phase = self._banner_phase
+        banner.delete("all")
+
+        banner.create_rectangle(0, 0, width, height, fill=p["app_bg"], outline="")
+        for x in range(0, width, 28):
+            fill = "#071018" if (x // 28) % 2 == 0 else "#0A121A"
+            banner.create_rectangle(x, 0, x + 28, height, fill=fill, outline="")
+
+        grid_offset = -((phase * 2) % 48)
+        for x in range(grid_offset, width, 48):
+            banner.create_line(x, 0, x, height, fill="#102B36", width=1)
+        for y in range(10, height, 22):
+            banner.create_line(0, y, width, y, fill="#0C222E", width=1)
+
+        beam_x = ((phase * 8) % (width + 180)) - 90
+        banner.create_rectangle(beam_x - 46, 0, beam_x + 46, height, fill=p["cyan"], stipple="gray75", outline="")
+        banner.create_line(beam_x, 0, beam_x, height, fill=p["lime"], width=2)
+
+        rail_y = height - 16
+        banner.create_rectangle(0, rail_y, width, height, fill="#100D08", outline="")
+        for offset in range(-44 + ((phase * 3) % 44), width + 44, 44):
+            banner.create_polygon(
+                offset,
+                rail_y,
+                offset + 18,
+                rail_y,
+                offset + 44,
+                height,
+                offset + 26,
+                height,
+                fill=p["amber"],
+                outline="",
+            )
+
+        center_y = (height // 2) - 2
+        icon_x = 34
+        banner.create_polygon(
+            icon_x,
+            center_y - 24,
+            icon_x + 40,
+            center_y - 24,
+            icon_x + 58,
+            center_y,
+            icon_x + 40,
+            center_y + 24,
+            icon_x,
+            center_y + 24,
+            icon_x - 18,
+            center_y,
+            fill="#06131A",
+            outline=p["cyan"],
+            width=2,
+        )
+        for level in range(3):
+            y = center_y + 13 - (level * 12)
+            banner.create_line(icon_x + 2, y, icon_x + 34, y, fill=p["cyan_dim"], width=2)
+        banner.create_line(icon_x + 43, center_y - 16, icon_x + 43, center_y + 14, fill=p["amber"], width=2)
+        banner.create_arc(
+            icon_x + 33,
+            center_y + 6,
+            icon_x + 53,
+            center_y + 26,
+            start=210,
+            extent=270,
+            style="arc",
+            outline=p["amber"],
+            width=2,
+        )
+
+        banner.create_text(
+            104,
+            center_y - 10,
+            anchor="w",
+            fill=p["text"],
+            text="AI ESTIMATING COMMAND CENTER",
+            font=("Segoe UI Semibold", 15),
+        )
+        banner.create_text(
+            106,
+            center_y + 12,
+            anchor="w",
+            fill=p["muted"],
+            text="PDFS -> TAKEOFF -> SCOPE -> PRICE -> HANDOFF",
+            font=("Segoe UI Semibold", 9),
+        )
+
+        graph_start = 470
+        graph_end = max(graph_start + 60, width - 350)
+        if graph_end > graph_start:
+            points: list[float] = []
+            for x in range(graph_start, graph_end, 14):
+                wave = math.sin((x + (phase * 10)) / 38.0) * 7
+                points.extend([float(x), float(center_y + wave)])
+            if len(points) >= 4:
+                banner.create_line(*points, fill=p["lime"], width=2, smooth=True)
+            for x in range(graph_start, graph_end, 84):
+                wave = math.sin((x + (phase * 10)) / 38.0) * 7
+                y = center_y + wave
+                banner.create_oval(x - 4, y - 4, x + 4, y + 4, fill=p["magenta"], outline="")
+
+        if width > 980:
+            panel_x = width - 318
+            banner.create_rectangle(panel_x, 12, width - 22, height - 22, fill="#071018", outline=p["cyan_dim"], width=1)
+            banner.create_text(
+                panel_x + 16,
+                28,
+                anchor="w",
+                fill=p["cyan"],
+                text="LIVE ESTIMATE INTELLIGENCE",
+                font=("Segoe UI Semibold", 9),
+            )
+            banner.create_text(
+                panel_x + 16,
+                48,
+                anchor="w",
+                fill=p["text"],
+                text="Scope validation | Job status | Benchmark signal",
+                font=("Segoe UI", 8),
+            )
+            pulse = 6 + int((math.sin(phase / 3.0) + 1) * 3)
+            banner.create_oval(width - 48 - pulse, 25 - pulse, width - 48 + pulse, 25 + pulse, outline=p["lime"], width=2)
+            banner.create_oval(width - 52, 21, width - 44, 29, fill=p["lime"], outline="")
+
+        banner.create_rectangle(0, 0, width - 1, height - 1, outline=p["cyan"], width=2)
+
+    def _start_banner_animation(self) -> None:
+        if not bool(self.banner_animation_enabled.get()):
+            self._draw_construction_banner(self.construction_banner)
+            return
+        if self._banner_after_id is not None:
+            return
+        self._animate_construction_banner()
+
+    def _animate_construction_banner(self) -> None:
+        if not bool(self.banner_animation_enabled.get()):
+            self._banner_after_id = None
+            self._draw_construction_banner(self.construction_banner)
+            return
+        if self.construction_banner is None:
+            self._banner_after_id = None
+            return
+        self._banner_phase = (self._banner_phase + 1) % 10000
+        self._draw_construction_banner(self.construction_banner)
+        self._banner_after_id = self.root.after(90, self._animate_construction_banner)
+
+    def _toggle_banner_animation(self, *, update_status: bool = True) -> None:
+        enabled = bool(self.banner_animation_enabled.get())
+        if enabled:
+            self._start_banner_animation()
+        else:
+            if self._banner_after_id is not None:
+                try:
+                    self.root.after_cancel(self._banner_after_id)
+                except Exception:
+                    pass
+                self._banner_after_id = None
+            self._draw_construction_banner(self.construction_banner)
+        if update_status:
+            self.status_text.set(
+                "Banner animation enabled." if enabled else "Banner animation paused."
+            )
+            self._save_settings()
 
     def _install_tooltips(
         self,
@@ -732,12 +1760,12 @@ class DesktopEstimatorApp:
                 ),
             },
             "analysis_mode": {
-                "pro_tip": "auto=detect trades, selected=only selected trades, all=analyze all supported trades.",
-                "beginner_tip": "Choose how wide the takeoff should run: auto, selected types, or all types.",
+                "pro_tip": "auto=detect trades from drawings, selected=only selected trades, all=analyze all supported trades.",
+                "beginner_tip": "Trade Selection Settings: auto analyzes drawings to pick trades, selected uses your trade list, all runs every trade.",
             },
             "selected_trades": {
-                "pro_tip": "Comma-separated trade tokens. Required when Analysis Mode is set to selected.",
-                "beginner_tip": "Type work types separated by commas (example: plumbing,electrical) when using selected mode.",
+                "pro_tip": "Selected trade tokens generated from checkbox options when Analysis Mode is selected.",
+                "beginner_tip": "Use the work-type checkboxes below. This line fills in automatically.",
             },
             "overrides_path": {
                 "pro_tip": "Path to JSON that overrides inferred sheet IDs and titles.",
@@ -810,6 +1838,84 @@ class DesktopEstimatorApp:
                 "pro_tip": "Start the local backend service at the API URL if it is not already running.",
                 "beginner_tip": "Turn on the local engine so this app can run jobs.",
             },
+            "restart_api": {
+                "pro_label": "Restart API",
+                "beginner_label": "Restart Server",
+                "pro_tip": "Stop and immediately restart the local backend process managed by this desktop app.",
+                "beginner_tip": "Restart the local server now if it is acting up.",
+            },
+            "shutdown_api": {
+                "pro_label": "Shutdown API",
+                "beginner_label": "Stop Server",
+                "pro_tip": "Stop the local backend process started by this desktop app.",
+                "beginner_tip": "Turn off the local server this app started.",
+            },
+            "guided_back": {
+                "pro_label": "Guided Back",
+                "beginner_label": "Go Back",
+                "pro_tip": "Return to the previous guided setup step.",
+                "beginner_tip": "Go back to the previous guided question.",
+            },
+            "guided_proceed": {
+                "pro_label": "Guided Proceed",
+                "beginner_label": "Proceed",
+                "pro_tip": "Advance to the next guided step based on selected trade strategy.",
+                "beginner_tip": "Move to the next step.",
+            },
+            "guided_execute": {
+                "pro_label": "Run Guided Step",
+                "beginner_label": "Proceed with Analysis",
+                "pro_tip": "Run Quick Start using guided trade strategy and objective marker.",
+                "beginner_tip": "Start the run using the guided choices.",
+            },
+            "discover_trade_options": {
+                "pro_label": "Analyze Drawings for Trade Options",
+                "beginner_label": "Find Work Types from Drawings",
+                "pro_tip": "Run a quick discovery pass on selected drawings and list available trades as clickable options.",
+                "beginner_tip": "Scan drawings and show work-type options so no manual typing is needed.",
+            },
+            "guided_skip": {
+                "pro_label": "Skip to Full Interface",
+                "beginner_label": "Skip Guided Setup",
+                "pro_tip": "Skip guided steps and use the full workflow controls.",
+                "beginner_tip": "Jump to all controls now.",
+            },
+            "pipe_calc": {
+                "pro_label": "Calc Pipe Takeoff",
+                "beginner_label": "Calculate Pipe Length",
+                "pro_tip": "Compute total pipe length from feet/inches, run count, and waste percentage.",
+                "beginner_tip": "Calculate total pipe amount from run length and quantity.",
+            },
+            "concrete_calc": {
+                "pro_label": "Calc Concrete/Gravel",
+                "beginner_label": "Calculate Concrete Volume",
+                "pro_tip": "Compute concrete/gravel volume in cubic yards with waste and rough tonnage estimate.",
+                "beginner_tip": "Calculate concrete or gravel volume and rough tons.",
+            },
+            "carpentry_calc": {
+                "pro_label": "Calc Carpentry",
+                "beginner_label": "Calculate Framing",
+                "pro_tip": "Estimate studs, plate linear feet, and 2x4 board feet for a framed wall.",
+                "beginner_tip": "Estimate framing material counts for a wall section.",
+            },
+            "hvac_calc": {
+                "pro_label": "Calc HVAC Sheet-Metal",
+                "beginner_label": "Calculate Duct Sheet-Metal",
+                "pro_tip": "Estimate round duct circumference, sheet area, and linear footage with waste.",
+                "beginner_tip": "Calculate duct material area and length for HVAC takeoff.",
+            },
+            "heavy_calc": {
+                "pro_label": "Calc Earthwork",
+                "beginner_label": "Calculate Earthwork",
+                "pro_tip": "Estimate bank cubic yards, loose cubic yards, and haul tonnage.",
+                "beginner_tip": "Calculate cut/fill earthwork quantity and haul estimate.",
+            },
+            "open_full_tool": {
+                "pro_label": "Open Full Tool",
+                "beginner_label": "Open Full Calculator",
+                "pro_tip": "Open a larger calculator window for the selected trade math workflow.",
+                "beginner_tip": "Open a bigger calculator screen for this trade.",
+            },
             "control_guide": {
                 "pro_label": "Control Guide",
                 "beginner_label": "Help: Button Guide",
@@ -827,6 +1933,18 @@ class DesktopEstimatorApp:
                 "beginner_label": "Show Advanced Tabs",
                 "pro_tip": "Show advanced quality and operations tabs in the ribbon area.",
                 "beginner_tip": "Turn on extra tabs with technical tools and maintenance actions.",
+            },
+            "dark_mode_toggle": {
+                "pro_label": "Dark Mode",
+                "beginner_label": "Dark Mode",
+                "pro_tip": "Switch between dark and light visual modes.",
+                "beginner_tip": "Turn dark colors on or off.",
+            },
+            "animate_banner_toggle": {
+                "pro_label": "Animate Banner",
+                "beginner_label": "Animate Header",
+                "pro_tip": "Enable or pause header animation effects.",
+                "beginner_tip": "Turn header movement on or off.",
             },
             "load_trades": {
                 "pro_label": "Load Trades",
@@ -1072,15 +2190,15 @@ class DesktopEstimatorApp:
             },
             "analysis_mode": {
                 "pro_label": "Analysis Mode",
-                "beginner_label": "Run Settings",
+                "beginner_label": "Trade Selection Settings",
                 "pro_tip": "Trade scope inference behavior for the job.",
-                "beginner_tip": "Choose what kinds of work types to include in this run.",
+                "beginner_tip": "Choose how trades are selected: all trades, auto-detect from drawings, or your own work-type list.",
             },
             "selected_trades": {
                 "pro_label": "Selected Trades (CSV)",
-                "beginner_label": "Choose Work Types (comma list)",
-                "pro_tip": "Comma-separated trade list used with selected analysis mode.",
-                "beginner_tip": "Type each work type you want to include, separated by commas.",
+                "beginner_label": "Chosen Work Types",
+                "pro_tip": "Trade list used with selected analysis mode. Populated from checkbox options.",
+                "beginner_tip": "Filled automatically from your checkbox selections.",
             },
             "overrides_path": {
                 "pro_label": "Sheet Overrides JSON",
@@ -1185,6 +2303,14 @@ class DesktopEstimatorApp:
             tip_text = spec["beginner_tip"] if use_beginner else spec["pro_tip"]
             tip.set_text(tip_text)
 
+        if self.guided_flow_frame is not None:
+            if use_beginner:
+                self.guided_flow_frame.grid()
+            else:
+                self.guided_flow_frame.grid_remove()
+            self._refresh_guided_flow()
+        self._set_trade_discovery_busy(self.trade_discovery_running)
+
         self._control_help_entries = {}
         for key, spec in self._control_specs.items():
             label = spec["beginner_label"] if use_beginner else spec["pro_label"]
@@ -1194,6 +2320,434 @@ class DesktopEstimatorApp:
         if update_status:
             mode_text = "Beginner mode enabled." if use_beginner else "Beginner mode disabled."
             self.status_text.set(mode_text)
+
+    def _sync_guided_trade_strategy(self) -> None:
+        strategy = self.guided_trade_strategy.get().strip()
+        if strategy in {"auto", "selected", "all"} and strategy != self.analysis_mode.get().strip():
+            self.analysis_mode.set(strategy)
+        if (
+            strategy == "selected"
+            and not self.trade_option_vars
+            and self.files
+            and not self.trade_discovery_running
+        ):
+            self.root.after(120, self._discover_trade_options_from_drawings)
+        self._refresh_guided_flow()
+
+    def _sync_analysis_mode_to_guided(self) -> None:
+        mode = self.analysis_mode.get().strip()
+        if mode in {"auto", "selected", "all"} and mode != self.guided_trade_strategy.get().strip():
+            self.guided_trade_strategy.set(mode)
+
+    def _refresh_guided_flow(self) -> None:
+        if self.guided_flow_frame is None:
+            return
+
+        step = self.guided_step.get().strip() or "trade"
+        strategy = self.guided_trade_strategy.get().strip() or "all"
+        use_objective = strategy in {"all", "selected"}
+
+        if step == "trade":
+            self.guided_step_title.set("Step 1: Trade Selection Settings")
+            self.guided_step_detail.set(
+                "Choose All Trades, analyze drawings for available trades, or choose work types from discovered options."
+            )
+            if self.guided_back_button is not None:
+                self.guided_back_button.state(["disabled"])
+            if self.guided_proceed_button is not None:
+                self.guided_proceed_button.state(["!disabled"])
+            if self.guided_execute_button is not None:
+                self.guided_execute_button.state(["disabled"])
+            if self.guided_selected_frame is not None:
+                if strategy == "selected":
+                    self.guided_selected_frame.grid()
+                else:
+                    self.guided_selected_frame.grid_remove()
+            if self.guided_objective_frame is not None:
+                self.guided_objective_frame.grid_remove()
+            return
+
+        # step == "run"
+        if self.guided_back_button is not None:
+            self.guided_back_button.state(["!disabled"])
+        if self.guided_proceed_button is not None:
+            self.guided_proceed_button.state(["disabled"])
+        if self.guided_execute_button is not None:
+            self.guided_execute_button.state(["!disabled"])
+
+        if strategy == "auto":
+            self.guided_step_title.set("Step 2: Proceed with Trade Discovery Analysis")
+            self.guided_step_detail.set(
+                "The app will analyze drawings and detect available trades automatically, then run the job."
+            )
+        elif strategy == "selected":
+            self.guided_step_title.set("Step 2: Confirm Chosen Work Types and Run")
+            self.guided_step_detail.set(
+                "Confirm the work-type checkboxes and run with selected trade scope. No typing required."
+            )
+        else:
+            self.guided_step_title.set("Step 2: Choose Run Objective and Proceed")
+            self.guided_step_detail.set(
+                "Choose output objective, then run the job. Use Guided Back to revise trade selection."
+            )
+
+        if self.guided_selected_frame is not None:
+            if strategy == "selected":
+                self.guided_selected_frame.grid()
+            else:
+                self.guided_selected_frame.grid_remove()
+
+        if self.guided_objective_frame is not None:
+            if use_objective:
+                self.guided_objective_frame.grid()
+            else:
+                self.guided_objective_frame.grid_remove()
+
+    def _guided_back(self) -> None:
+        self.guided_step.set("trade")
+
+    def _guided_proceed(self) -> None:
+        strategy = self.guided_trade_strategy.get().strip()
+        if strategy not in {"auto", "selected", "all"}:
+            self.status_text.set("Choose a trade selection setting first.")
+            return
+        if strategy == "selected" and not self.selected_trades.get().strip():
+            if not self.trade_discovery_running:
+                self._discover_trade_options_from_drawings()
+            self.status_text.set(
+                "Analyzing drawings to build work-type options. Choose options, then click Guided Proceed again."
+            )
+            return
+        self.analysis_mode.set(strategy)
+        self.guided_step.set("run")
+        self.status_text.set("Guided step advanced. Review options, then run.")
+
+    def _guided_objective_label(self, objective: str) -> str:
+        mapping = {
+            "takeoff_and_estimation": "takeoff_and_estimation",
+            "takeoff_only": "takeoff_only",
+            "manhours_only": "manhours_only",
+        }
+        return mapping.get(objective, "takeoff_and_estimation")
+
+    def _apply_guided_objective_note(self) -> None:
+        strategy = self.guided_trade_strategy.get().strip()
+        if strategy not in {"all", "selected"}:
+            return
+        objective = self._guided_objective_label(self.guided_run_objective.get().strip())
+        marker = f"[run_objective:{objective}]"
+        raw_notes = self.notes.get()
+        kept_lines = [
+            line
+            for line in raw_notes.splitlines()
+            if not line.strip().startswith("[run_objective:")
+        ]
+        kept_lines.append(marker)
+        self.notes.set("\n".join([line for line in kept_lines if line.strip()]))
+
+    def _guided_execute(self) -> None:
+        strategy = self.guided_trade_strategy.get().strip()
+        if strategy not in {"auto", "selected", "all"}:
+            self.status_text.set("Choose a trade selection setting first.")
+            return
+        if strategy == "selected" and not self.selected_trades.get().strip():
+            if not self.trade_discovery_running:
+                self._discover_trade_options_from_drawings()
+            self.status_text.set(
+                "No work types selected yet. Use discovered options, then run Guided Step."
+            )
+            return
+        self.analysis_mode.set(strategy)
+        self._apply_guided_objective_note()
+        self._save_settings()
+        self.status_text.set("Guided run started...")
+        self._quick_start_run()
+
+    def _guided_skip_to_full(self) -> None:
+        self.guided_step.set("trade")
+        self.show_advanced_tools.set(True)
+        self._apply_advanced_tools_visibility(update_status=False)
+        self.status_text.set("Full interface is available below. Use any workflow buttons directly.")
+
+    def _parse_positive_number(self, raw: str, *, label: str) -> float:
+        text = raw.strip()
+        if not text:
+            raise ValueError(f"{label} is required.")
+        value = float(text)
+        if value < 0:
+            raise ValueError(f"{label} must be 0 or greater.")
+        return value
+
+    def _recalc_pipe_takeoff(self) -> None:
+        try:
+            feet = self._parse_positive_number(self.pipe_length_feet.get(), label="Pipe length (ft)")
+            inches = self._parse_positive_number(self.pipe_length_inches.get(), label="Pipe length (in)")
+            run_count = self._parse_positive_number(self.pipe_run_count.get(), label="Run count")
+            waste_percent = self._parse_positive_number(self.pipe_waste_percent.get(), label="Waste %")
+
+            single_run_ft = feet + (inches / 12.0)
+            total_ft = single_run_ft * run_count * (1 + (waste_percent / 100.0))
+            total_inches = total_ft * 12.0
+            self.pipe_calc_result.set(
+                f"Single run: {single_run_ft:.2f} ft | Total: {total_ft:.2f} ft ({total_inches:.1f} in)"
+            )
+        except Exception as exc:
+            self.pipe_calc_result.set(f"Input error: {exc}")
+
+    def _recalc_concrete_takeoff(self) -> None:
+        try:
+            length_ft = self._parse_positive_number(self.concrete_length_feet.get(), label="Length (ft)")
+            width_ft = self._parse_positive_number(self.concrete_width_feet.get(), label="Width (ft)")
+            depth_in = self._parse_positive_number(self.concrete_depth_inches.get(), label="Depth (in)")
+            waste_percent = self._parse_positive_number(self.concrete_waste_percent.get(), label="Waste %")
+
+            depth_ft = depth_in / 12.0
+            cubic_feet = length_ft * width_ft * depth_ft
+            cubic_yards = cubic_feet / 27.0
+            with_waste_yards = cubic_yards * (1 + (waste_percent / 100.0))
+            # Approximation for dense-graded gravel / concrete tonnage planning.
+            tons_estimate = with_waste_yards * 1.4
+            self.concrete_calc_result.set(
+                f"Volume: {with_waste_yards:.2f} yd^3 ({cubic_feet:.1f} ft^3 base) | Approx tons: {tons_estimate:.2f}"
+            )
+        except Exception as exc:
+            self.concrete_calc_result.set(f"Input error: {exc}")
+
+    def _recalc_hvac_takeoff(self) -> None:
+        try:
+            diameter_in = self._parse_positive_number(
+                self.hvac_diameter_inches.get(),
+                label="Duct diameter (in)",
+            )
+            run_length_ft = self._parse_positive_number(
+                self.hvac_run_length_feet.get(),
+                label="Run length (ft)",
+            )
+            run_count = self._parse_positive_number(
+                self.hvac_run_count.get(),
+                label="Run count",
+            )
+            waste_percent = self._parse_positive_number(
+                self.hvac_waste_percent.get(),
+                label="Waste %",
+            )
+            if diameter_in <= 0:
+                raise ValueError("Duct diameter must be greater than zero.")
+            circumference_ft = (math.pi * diameter_in) / 12.0
+            area_sqft_per_run = circumference_ft * run_length_ft
+            total_area_sqft = area_sqft_per_run * run_count
+            total_with_waste = total_area_sqft * (1 + (waste_percent / 100.0))
+            linear_ft = run_length_ft * run_count * (1 + (waste_percent / 100.0))
+            self.hvac_calc_result.set(
+                f"Sheet area: {total_with_waste:.1f} sq ft | Linear: {linear_ft:.1f} ft | Circ: {circumference_ft:.2f} ft"
+            )
+        except Exception as exc:
+            self.hvac_calc_result.set(f"Input error: {exc}")
+
+    def _recalc_heavy_takeoff(self) -> None:
+        try:
+            area_sqft = self._parse_positive_number(
+                self.heavy_area_sqft.get(),
+                label="Area (sq ft)",
+            )
+            depth_in = self._parse_positive_number(
+                self.heavy_depth_inches.get(),
+                label="Depth (in)",
+            )
+            swell_percent = self._parse_positive_number(
+                self.heavy_swell_percent.get(),
+                label="Swell %",
+            )
+            depth_ft = depth_in / 12.0
+            bank_cuft = area_sqft * depth_ft
+            bank_cy = bank_cuft / 27.0
+            loose_cy = bank_cy * (1 + (swell_percent / 100.0))
+            # Practical planning factor for mixed native soils.
+            haul_tons = loose_cy * 1.35
+            self.heavy_calc_result.set(
+                f"Bank: {bank_cy:.2f} yd^3 | Loose: {loose_cy:.2f} yd^3 | Haul est: {haul_tons:.2f} tons"
+            )
+        except Exception as exc:
+            self.heavy_calc_result.set(f"Input error: {exc}")
+
+    def _recalc_carpentry_takeoff(self) -> None:
+        try:
+            wall_length_ft = self._parse_positive_number(
+                self.carpentry_wall_length_feet.get(),
+                label="Wall length (ft)",
+            )
+            wall_height_ft = self._parse_positive_number(
+                self.carpentry_wall_height_feet.get(),
+                label="Wall height (ft)",
+            )
+            stud_spacing_in = self._parse_positive_number(
+                self.carpentry_stud_spacing_inches.get(),
+                label="Stud spacing (in)",
+            )
+            waste_percent = self._parse_positive_number(
+                self.carpentry_waste_percent.get(),
+                label="Waste %",
+            )
+            if stud_spacing_in <= 0:
+                raise ValueError("Stud spacing (in) must be greater than zero.")
+
+            wall_length_in = wall_length_ft * 12.0
+            stud_count_base = math.ceil(wall_length_in / stud_spacing_in) + 1
+            stud_count = math.ceil(stud_count_base * (1 + (waste_percent / 100.0)))
+            plate_lf = (2.0 * wall_length_ft) * (1 + (waste_percent / 100.0))
+            stud_lf = stud_count * wall_height_ft
+            board_feet = stud_count * ((2.0 * 4.0 * wall_height_ft) / 12.0)
+            self.carpentry_calc_result.set(
+                f"Studs: {stud_count} | Plate LF: {plate_lf:.1f} | Stud LF: {stud_lf:.1f} | 2x4 BF: {board_feet:.1f}"
+            )
+        except Exception as exc:
+            self.carpentry_calc_result.set(f"Input error: {exc}")
+
+    def _open_full_calculator(self, calculator_key: str) -> None:
+        existing = self._calculator_popups.get(calculator_key)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+            self._calculator_popups.pop(calculator_key, None)
+
+        configs: dict[str, dict[str, object]] = {
+            "pipe": {
+                "title": "Pipe Trades Full Calculator",
+                "result_var": self.pipe_calc_result,
+                "compute": self._recalc_pipe_takeoff,
+                "notes": "Use this for feet/inches run math, count multipliers, and field waste.",
+                "fields": [
+                    ("Length (ft)", self.pipe_length_feet),
+                    ("Length (in)", self.pipe_length_inches),
+                    ("Run Count", self.pipe_run_count),
+                    ("Waste %", self.pipe_waste_percent),
+                ],
+            },
+            "concrete": {
+                "title": "Concrete / Gravel Full Calculator",
+                "result_var": self.concrete_calc_result,
+                "compute": self._recalc_concrete_takeoff,
+                "notes": "Use this for slab/pad volume with waste and rough tonnage planning.",
+                "fields": [
+                    ("Length (ft)", self.concrete_length_feet),
+                    ("Width (ft)", self.concrete_width_feet),
+                    ("Depth (in)", self.concrete_depth_inches),
+                    ("Waste %", self.concrete_waste_percent),
+                ],
+            },
+            "hvac": {
+                "title": "Sheet Metal / HVAC Full Calculator",
+                "result_var": self.hvac_calc_result,
+                "compute": self._recalc_hvac_takeoff,
+                "notes": "Use this for round duct sheet area, circumference wrap, and linear footage.",
+                "fields": [
+                    ("Duct Diameter (in)", self.hvac_diameter_inches),
+                    ("Run Length (ft)", self.hvac_run_length_feet),
+                    ("Run Count", self.hvac_run_count),
+                    ("Waste %", self.hvac_waste_percent),
+                ],
+            },
+            "heavy": {
+                "title": "Heavy Earthwork Full Calculator",
+                "result_var": self.heavy_calc_result,
+                "compute": self._recalc_heavy_takeoff,
+                "notes": "Use this for bank vs loose cubic yards and haul tonnage planning.",
+                "fields": [
+                    ("Area (sq ft)", self.heavy_area_sqft),
+                    ("Depth (in)", self.heavy_depth_inches),
+                    ("Swell %", self.heavy_swell_percent),
+                ],
+            },
+            "carpentry": {
+                "title": "Carpentry Framing Full Calculator",
+                "result_var": self.carpentry_calc_result,
+                "compute": self._recalc_carpentry_takeoff,
+                "notes": "Use this for framing studs, plate length, and board-feet material.",
+                "fields": [
+                    ("Wall Length (ft)", self.carpentry_wall_length_feet),
+                    ("Wall Height (ft)", self.carpentry_wall_height_feet),
+                    ("Stud Spacing (in)", self.carpentry_stud_spacing_inches),
+                    ("Waste %", self.carpentry_waste_percent),
+                ],
+            },
+        }
+        config = configs.get(calculator_key)
+        if config is None:
+            return
+
+        popup = Toplevel(self.root)
+        popup.title(str(config["title"]))
+        popup.geometry("760x440")
+        popup.minsize(700, 380)
+        popup.configure(background=_THEME["app_bg"])
+        self._calculator_popups[calculator_key] = popup
+
+        shell = ttk.Frame(popup, padding=14, style="Panel.TFrame")
+        shell.pack(fill="both", expand=True, padx=14, pady=14)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(2, weight=1)
+
+        ttk.Label(shell, text=str(config["title"]), style="HeaderTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            shell,
+            text=str(config["notes"]),
+            style="HeaderSub.TLabel",
+            wraplength=680,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 10))
+
+        form = ttk.LabelFrame(shell, text="Inputs", padding=10)
+        form.grid(row=2, column=0, sticky="nsew")
+        for col in range(4):
+            form.columnconfigure(col, weight=1)
+
+        fields = config["fields"]
+        if isinstance(fields, list):
+            for idx, item in enumerate(fields):
+                if not isinstance(item, tuple) or len(item) != 2:
+                    continue
+                label_text, value_var = item
+                row = idx // 2
+                col_base = (idx % 2) * 2
+                ttk.Label(form, text=str(label_text)).grid(row=row, column=col_base, sticky="w", pady=(0, 4))
+                ttk.Entry(form, textvariable=value_var, width=18).grid(
+                    row=row, column=col_base + 1, sticky="w", padx=(6, 16), pady=(0, 4)
+                )
+
+        action_row = ttk.Frame(shell)
+        action_row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        action_row.columnconfigure(2, weight=1)
+        compute = config["compute"]
+        if callable(compute):
+            ttk.Button(
+                action_row,
+                text="Calculate",
+                style="Primary.TButton",
+                command=compute,
+            ).grid(row=0, column=0, sticky="w")
+        close_button = ttk.Button(action_row, text="Close")
+        close_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        result_var = config["result_var"]
+        ttk.Label(
+            action_row,
+            textvariable=result_var,
+            style="Section.TLabel",
+        ).grid(row=0, column=2, sticky="e")
+
+        def _cleanup_popup() -> None:
+            self._calculator_popups.pop(calculator_key, None)
+            popup.destroy()
+
+        close_button.configure(command=_cleanup_popup)
+        popup.protocol("WM_DELETE_WINDOW", _cleanup_popup)
 
     def _walk_widgets(self, parent: object) -> list[object]:
         children = []
@@ -1269,6 +2823,8 @@ class DesktopEstimatorApp:
             heading,
             "",
             "API key is only required when your API endpoint is protected (local default usually is not).",
+            "Guided start: Step 1 sets trade strategy; selected mode auto-scans drawings and shows clickable work-type options.",
+            "Then Step 2 confirms objective and runs Quick Start.",
             "Keyboard shortcuts:",
             "- F1: Show this guide",
             f"- Ctrl+O: {choose_pdfs_label}",
@@ -1302,6 +2858,11 @@ class DesktopEstimatorApp:
         self.status_text.set("PDFs selected." if self.files else "No PDFs selected.")
         if self.files:
             self._start_selected_file_scan(self.files)
+            if (
+                self.guided_trade_strategy.get().strip() == "selected"
+                and not self.trade_discovery_running
+            ):
+                self.root.after(200, self._discover_trade_options_from_drawings)
         self._save_settings()
 
     def _start_selected_file_scan(self, file_paths: list[str]) -> None:
@@ -1435,6 +2996,224 @@ class DesktopEstimatorApp:
         self.status_text.set("Overrides file selected.")
         self._save_settings()
 
+    def _set_trade_discovery_busy(self, busy: bool) -> None:
+        self.trade_discovery_running = busy
+        if self.guided_discover_button is None:
+            return
+        idle_text = (
+            "Find Work Types from Drawings"
+            if bool(self.beginner_mode.get())
+            else "Analyze Drawings for Trade Options"
+        )
+        busy_text = "Discovering Work Types..." if bool(self.beginner_mode.get()) else "Discovering Trades..."
+        if busy:
+            self.guided_discover_button.state(["disabled"])
+            self.guided_discover_button.configure(text=busy_text)
+        else:
+            self.guided_discover_button.state(["!disabled"])
+            self.guided_discover_button.configure(text=idle_text)
+
+    def _sync_selected_trades_from_options(self) -> None:
+        tokens = [
+            trade
+            for trade, var in self.trade_option_vars.items()
+            if bool(var.get())
+        ]
+        self.selected_trades.set(",".join(tokens))
+
+    def _populate_trade_options(
+        self,
+        trades: list[str],
+        *,
+        preserve_selected: bool = True,
+        select_all: bool = False,
+    ) -> None:
+        if self.guided_trade_options_frame is None:
+            return
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in trades:
+            token = str(raw).strip()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            normalized.append(token)
+        normalized.sort()
+
+        existing = set(parse_selected_trade_tokens(self.selected_trades.get()))
+
+        for child in self.guided_trade_options_frame.winfo_children():
+            child.destroy()
+
+        ttk.Label(
+            self.guided_trade_options_frame,
+            text="Selectable Work Types (click to include):",
+            style="FormLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+
+        self.trade_option_vars = {}
+        if not normalized:
+            ttk.Label(
+                self.guided_trade_options_frame,
+                text="No trade options loaded yet. Use Analyze Drawings for Trade Options or Load Trades.",
+            ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+            return
+
+        options_row = ttk.Frame(self.guided_trade_options_frame)
+        options_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        for col in range(4):
+            options_row.columnconfigure(col, weight=1)
+
+        actions_row = ttk.Frame(self.guided_trade_options_frame)
+        actions_row.grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        def _set_all_trades(enabled: bool) -> None:
+            for var in self.trade_option_vars.values():
+                var.set(enabled)
+            self._sync_selected_trades_from_options()
+
+        for index, trade in enumerate(normalized):
+            col = index % 4
+            row = index // 4
+            initial = select_all or (preserve_selected and trade in existing)
+            var = BooleanVar(value=initial)
+            self.trade_option_vars[trade] = var
+            ttk.Checkbutton(
+                options_row,
+                text=trade,
+                variable=var,
+                command=self._sync_selected_trades_from_options,
+            ).grid(row=row, column=col, sticky="w", padx=(0, 12), pady=(0, 2))
+
+        ttk.Button(
+            actions_row,
+            text="Select All",
+            command=lambda: _set_all_trades(True),
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            actions_row,
+            text="Clear All",
+            command=lambda: _set_all_trades(False),
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        self._sync_selected_trades_from_options()
+
+    def _extract_trade_options_from_job_result(self, payload: dict) -> list[str]:
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return []
+        options: list[str] = []
+        trade_scope = result.get("trade_scope")
+        if isinstance(trade_scope, dict):
+            for key in ("detected_trades", "analyzed_trades"):
+                value = trade_scope.get(key)
+                if isinstance(value, list):
+                    options.extend(str(item).strip() for item in value if str(item).strip())
+        sheets = result.get("sheets_detected")
+        if isinstance(sheets, list):
+            for item in sheets:
+                if not isinstance(item, dict):
+                    continue
+                discipline = str(item.get("discipline", "")).strip()
+                if discipline:
+                    options.append(discipline)
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for token in options:
+            if token and token not in seen:
+                seen.add(token)
+                deduped.append(token)
+        return deduped
+
+    def _discover_trade_options_from_drawings(self) -> None:
+        if self.trade_discovery_running:
+            self.status_text.set("Trade option discovery is already running.")
+            return
+        if self.request_task_running:
+            self.status_text.set("Another request is running. Wait for it to finish first.")
+            return
+        if not self.files:
+            self.status_text.set("Select drawing PDFs first.")
+            self._choose_pdfs()
+            if not self.files:
+                return
+        api_base = self.api_url.get().strip().rstrip("/")
+        if not api_base:
+            self.status_text.set("API URL is required.")
+            return
+        self._set_trade_discovery_busy(True)
+        self.status_text.set("Analyzing drawings to discover available trades...")
+        worker = Thread(
+            target=self._discover_trade_options_worker,
+            args=(api_base, list(self.files)),
+            daemon=True,
+        )
+        worker.start()
+
+    def _discover_trade_options_worker(self, api_base: str, file_paths: list[str]) -> None:
+        try:
+            create_payload = self._post_files_to_base(
+                api_base=api_base,
+                path="/v1/jobs",
+                data={"analysis_mode": "auto", "selected_trades": ""},
+                file_paths=file_paths,
+                timeout=1800,
+                progress_callback=lambda message: self.root.after(
+                    0, lambda: self._append_output_line(message)
+                ),
+            )
+            job_id = str(create_payload.get("job_id", "")).strip()
+            if not job_id:
+                raise RuntimeError("Trade discovery job did not return a job_id.")
+
+            payload = self._poll_job_until_terminal(
+                api_base=api_base,
+                job_id=job_id,
+                max_wait_seconds=1800,
+                poll_interval_seconds=2,
+                progress_callback=lambda message: self.root.after(
+                    0, lambda: self._append_output_line(message)
+                ),
+            )
+            status = str(payload.get("status", "")).strip()
+            if status != "completed":
+                raise RuntimeError(f"Trade discovery job ended with status: {status}")
+
+            trades = self._extract_trade_options_from_job_result(payload)
+            if not trades:
+                fallback = self._request_json_from_base(
+                    "GET",
+                    api_base=api_base,
+                    path="/v1/meta/trades",
+                    timeout=60,
+                )
+                entries = fallback.get("trades")
+                if isinstance(entries, list):
+                    trades = [
+                        str(entry.get("trade", "")).strip()
+                        for entry in entries
+                        if isinstance(entry, dict) and str(entry.get("trade", "")).strip()
+                    ]
+            self.root.after(0, lambda: self._on_discover_trade_options_success(job_id, trades))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_discover_trade_options_failure(exc))
+
+    def _on_discover_trade_options_success(self, job_id: str, trades: list[str]) -> None:
+        self._set_trade_discovery_busy(False)
+        self.current_job_id.set(job_id)
+        self._populate_trade_options(trades, preserve_selected=False, select_all=False)
+        trade_count = len(self.trade_option_vars)
+        self.status_text.set(
+            f"Trade options discovered from drawings: {trade_count} option(s). Select and proceed."
+        )
+        self._save_settings()
+
+    def _on_discover_trade_options_failure(self, exc: Exception) -> None:
+        self._set_trade_discovery_busy(False)
+        self.status_text.set("Trade discovery failed.")
+        self._set_output_text(f"Failed to discover trade options:\n{exc}")
+
     def _quick_start_run(self) -> None:
         if self.request_task_running:
             self.status_text.set("Another request is already running. Wait for it to finish.")
@@ -1453,8 +3232,8 @@ class DesktopEstimatorApp:
         try:
             payload = self._refresh_trade_catalog_from_api(update_output=True)
             trade_count = len(self.trade_catalog)
+            self._populate_trade_options(self.trade_catalog, preserve_selected=True, select_all=False)
             self.status_text.set(f"Loaded trade catalog: {trade_count} trade(s).")
-            self._set_output_json(payload)
         except Exception as exc:
             self._set_output_text(f"Failed to load trade catalog:\n{exc}")
 
@@ -2300,6 +4079,7 @@ class DesktopEstimatorApp:
         self.analysis_mode_combo["values"] = self.analysis_mode_catalog
         if self.analysis_mode.get().strip() not in self.analysis_mode_catalog:
             self.analysis_mode.set(self.analysis_mode_catalog[0])
+        self._populate_trade_options(self.trade_catalog, preserve_selected=True, select_all=False)
 
         if update_output:
             self._set_output_json(payload)
@@ -2714,6 +4494,7 @@ class DesktopEstimatorApp:
         analysis_mode = loaded.get("analysis_mode")
         if isinstance(analysis_mode, str) and analysis_mode in {"auto", "selected", "all"}:
             self.analysis_mode.set(analysis_mode)
+            self.guided_trade_strategy.set(analysis_mode)
 
         selected_trades = loaded.get("selected_trades")
         if isinstance(selected_trades, str):
@@ -2767,6 +4548,38 @@ class DesktopEstimatorApp:
         if isinstance(prune_cleanup_uploads, bool):
             self.prune_cleanup_uploads.set(prune_cleanup_uploads)
 
+        guided_step = loaded.get("guided_step")
+        if isinstance(guided_step, str) and guided_step in {"trade", "run"}:
+            self.guided_step.set(guided_step)
+
+        guided_trade_strategy = loaded.get("guided_trade_strategy")
+        if isinstance(guided_trade_strategy, str) and guided_trade_strategy in {
+            "auto",
+            "selected",
+            "all",
+        }:
+            self.guided_trade_strategy.set(guided_trade_strategy)
+
+        guided_run_objective = loaded.get("guided_run_objective")
+        if isinstance(guided_run_objective, str) and guided_run_objective in {
+            "takeoff_and_estimation",
+            "takeoff_only",
+            "manhours_only",
+        }:
+            self.guided_run_objective.set(guided_run_objective)
+
+        theme_preset = loaded.get("theme_preset")
+        if isinstance(theme_preset, str) and theme_preset in _THEME_PRESETS:
+            self.theme_preset.set(theme_preset)
+
+        dark_mode_enabled = loaded.get("dark_mode_enabled")
+        if isinstance(dark_mode_enabled, bool):
+            self.dark_mode_enabled.set(dark_mode_enabled)
+
+        banner_animation_enabled = loaded.get("banner_animation_enabled")
+        if isinstance(banner_animation_enabled, bool):
+            self.banner_animation_enabled.set(banner_animation_enabled)
+
         file_list = loaded.get("files")
         if isinstance(file_list, list):
             restored: list[str] = []
@@ -2778,6 +4591,7 @@ class DesktopEstimatorApp:
             self.files = restored
 
         self._apply_beginner_mode(update_status=False)
+        self._refresh_guided_flow()
         self._apply_advanced_tools_visibility(update_status=False)
         self._file_scan_meta = {}
         self._file_scan_token += 1
@@ -2804,6 +4618,12 @@ class DesktopEstimatorApp:
             "prune_older_than_hours": self.prune_older_than_hours.get().strip(),
             "prune_limit": self.prune_limit.get().strip(),
             "prune_cleanup_uploads": bool(self.prune_cleanup_uploads.get()),
+            "guided_step": self.guided_step.get().strip(),
+            "guided_trade_strategy": self.guided_trade_strategy.get().strip(),
+            "guided_run_objective": self.guided_run_objective.get().strip(),
+            "theme_preset": self.theme_preset.get().strip(),
+            "dark_mode_enabled": bool(self.dark_mode_enabled.get()),
+            "banner_animation_enabled": bool(self.banner_animation_enabled.get()),
             "files": self.files,
         }
         try:
@@ -2827,7 +4647,69 @@ class DesktopEstimatorApp:
     def _on_close(self) -> None:
         self._save_settings()
         self._stop_auto_poll()
+        if self._banner_after_id is not None:
+            try:
+                self.root.after_cancel(self._banner_after_id)
+            except Exception:
+                pass
+            self._banner_after_id = None
+        for popup in list(self._calculator_popups.values()):
+            try:
+                popup.destroy()
+            except Exception:
+                pass
+        self._calculator_popups.clear()
         self.root.destroy()
+
+    def _shutdown_local_api_clicked(self) -> None:
+        if not self._is_local_api_base(self.api_url.get()):
+            self.status_text.set("Shutdown API is only available for local host URLs.")
+            return
+        try:
+            stopped = self._shutdown_local_api_process()
+            if stopped:
+                self.status_text.set("Local API has been stopped.")
+            else:
+                self.status_text.set("No local API process was tracked by this app.")
+        except Exception as exc:
+            self._set_output_text(f"Failed to shut down local API:\n{exc}")
+
+    def _restart_local_api_clicked(self) -> None:
+        if not self._is_local_api_base(self.api_url.get()):
+            self.status_text.set("Restart API is only available for local host URLs.")
+            return
+        self.status_text.set("Restarting local API...")
+        worker = Thread(target=self._restart_local_api_worker, daemon=True)
+        worker.start()
+
+    def _restart_local_api_worker(self) -> None:
+        base = self.api_url.get().strip().rstrip("/")
+        if not base:
+            self.root.after(0, lambda: self.status_text.set("API URL is required."))
+            return
+        try:
+            try:
+                self._shutdown_local_api_process()
+            except Exception as exc:
+                self.root.after(
+                    0,
+                    lambda: self._append_output_line(f"Local API shutdown warning: {exc}"),
+                )
+            started = self._ensure_local_api_running(base, force_start=True)
+            if started:
+                self.root.after(0, lambda: self._append_output_line("Local API restarted."))
+                self.root.after(0, lambda: self.status_text.set("Local API restarted."))
+            elif self._can_reach_health(base, timeout_seconds=2):
+                self.root.after(0, lambda: self._append_output_line("Local API restart skipped: server was still reachable."))
+                self.root.after(0, lambda: self.status_text.set("Local API already running."))
+            else:
+                self.root.after(
+                    0,
+                    lambda: self.status_text.set("Local API restart did not start a healthy service."),
+                )
+        except Exception as exc:
+            self.root.after(0, lambda: self._set_output_text(f"Local API restart failed:\n{exc}"))
+
 
     def _resolve_completed_job_id(self) -> str:
         requested = self.current_job_id.get().strip()
@@ -2946,6 +4828,8 @@ class DesktopEstimatorApp:
         if not force_start and self._can_reach_health(api_base, timeout_seconds=2):
             return False
 
+        if force_start:
+            self._shutdown_local_api_process()
         self._spawn_local_api_process()
         return self._wait_for_health(api_base, wait_seconds=8)
 
@@ -2981,7 +4865,25 @@ class DesktopEstimatorApp:
         else:
             popen_kwargs["start_new_session"] = True
 
-        subprocess.Popen(cmd, **popen_kwargs)
+        self._local_api_process = subprocess.Popen(cmd, **popen_kwargs)
+
+    def _shutdown_local_api_process(self) -> bool:
+        process = self._local_api_process
+        if process is None:
+            return False
+
+        if process.poll() is not None:
+            self._local_api_process = None
+            return False
+
+        process.terminate()
+        try:
+            process.wait(timeout=4)
+        except Exception:
+            process.kill()
+            process.wait(timeout=2)
+        self._local_api_process = None
+        return True
 
     def _wait_for_health(self, api_base: str, wait_seconds: int) -> bool:
         deadline = time.time() + max(1, wait_seconds)
