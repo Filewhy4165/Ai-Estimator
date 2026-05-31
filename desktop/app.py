@@ -242,6 +242,9 @@ class DesktopEstimatorApp:
         self.analysis_mode = StringVar(value="auto")
         self.selected_trades = StringVar(value="")
         self.sheet_overrides_path = StringVar(value="")
+        self.spec_profile_ids = StringVar(value="")
+        self.spec_organization = StringVar(value="NASA")
+        self.include_public_specs = BooleanVar(value=True)
         self.current_job_id = StringVar(value="")
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
@@ -345,6 +348,7 @@ class DesktopEstimatorApp:
         self.logo_image: PhotoImage | None = None
         self.logo_label: Label | None = None
         self.project_selector_combo: ttk.Combobox | None = None
+        self.spec_org_combo: ttk.Combobox | None = None
         self.setup_project_combo: ttk.Combobox | None = None
         self.setup_window: Toplevel | None = None
         self._setup_window_is_open = False
@@ -353,6 +357,8 @@ class DesktopEstimatorApp:
         self._native_menu_visible = True
         self._menu_hide_after_id: str | None = None
         self.project_profiles: dict[str, dict[str, object]] = {}
+        self.spec_catalog: list[dict[str, object]] = []
+        self.spec_org_catalog: list[str] = []
         self.logo_path_candidates: list[Path] = [
             Path(__file__).resolve().parents[1] / "desktop" / "assets" / "tech_build_logo.png",
             Path(r"C:\Users\sthom\OneDrive\----!!!!TechBuild!!!!----\Tech Build Solutions Logos\1.png"),
@@ -1787,6 +1793,12 @@ class DesktopEstimatorApp:
             "analysis_mode": analysis_mode,
             "selected_trades": str(payload.get("selected_trades", "")).strip(),
             "sheet_overrides_path": str(payload.get("sheet_overrides_path", "")).strip(),
+            "spec_profile_ids": str(payload.get("spec_profile_ids", "")).strip(),
+            "spec_organization": str(payload.get("spec_organization", "")).strip(),
+            "include_public_specs": _as_bool(
+                payload.get("include_public_specs"),
+                bool(self.include_public_specs.get()),
+            ),
             "notes": str(payload.get("notes", "")),
             "files": files,
             "include_all_template": _as_bool(
@@ -1817,6 +1829,9 @@ class DesktopEstimatorApp:
             "analysis_mode": self.analysis_mode.get().strip(),
             "selected_trades": self.selected_trades.get().strip(),
             "sheet_overrides_path": self.sheet_overrides_path.get().strip(),
+            "spec_profile_ids": self.spec_profile_ids.get().strip(),
+            "spec_organization": self.spec_organization.get().strip(),
+            "include_public_specs": bool(self.include_public_specs.get()),
             "notes": self.notes.get(),
             "files": [str(path).strip() for path in self.files if str(path).strip()],
             "include_all_template": bool(self.include_all_template.get()),
@@ -1836,6 +1851,9 @@ class DesktopEstimatorApp:
         self.analysis_mode.set(str(normalized.get("analysis_mode", "all")).strip())
         self.selected_trades.set(str(normalized.get("selected_trades", "")).strip())
         self.sheet_overrides_path.set(str(normalized.get("sheet_overrides_path", "")).strip())
+        self.spec_profile_ids.set(str(normalized.get("spec_profile_ids", "")).strip())
+        self.spec_organization.set(str(normalized.get("spec_organization", "")).strip())
+        self.include_public_specs.set(bool(normalized.get("include_public_specs", True)))
         self.notes.set(str(normalized.get("notes", "")))
         self.include_all_template.set(bool(normalized.get("include_all_template", False)))
         self.include_unmapped_benchmark.set(bool(normalized.get("include_unmapped_benchmark", True)))
@@ -1954,6 +1972,9 @@ class DesktopEstimatorApp:
         self.notes.set("")
         self.selected_trades.set("")
         self.sheet_overrides_path.set("")
+        self.spec_profile_ids.set("")
+        self.spec_organization.set("NASA")
+        self.include_public_specs.set(True)
         self.files = []
         self._file_scan_meta = {}
         self._file_scan_token += 1
@@ -2124,18 +2145,69 @@ class DesktopEstimatorApp:
             style="Accent.TButton",
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
-        ttk.Label(container, text="Project Notes", style="FormLabel.TLabel").grid(
+        ttk.Label(container, text="Step 4: Standards and Specs", style="Section.TLabel").grid(
             row=9, column=0, sticky="w", pady=(10, 0)
         )
+        specs_row = ttk.Frame(container)
+        specs_row.grid(row=9, column=1, columnspan=3, sticky="ew", pady=(10, 0))
+        ttk.Label(specs_row, text="Agency / Company").grid(row=0, column=0, sticky="w")
+        self.spec_org_combo = ttk.Combobox(
+            specs_row,
+            textvariable=self.spec_organization,
+            state="normal",
+            width=30,
+            values=[],
+        )
+        self.spec_org_combo.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Checkbutton(
+            specs_row,
+            text="Use Public Specs for Selected Agency",
+            variable=self.include_public_specs,
+        ).grid(row=0, column=2, sticky="w", padx=(10, 0))
+        ttk.Button(
+            specs_row,
+            text="Load Agencies",
+            command=self._refresh_spec_organizations,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Button(
+            specs_row,
+            text="Load Matching Specs",
+            command=self._load_spec_catalog_for_org,
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+
+        ttk.Label(container, text="Selected Spec Profile IDs", style="FormLabel.TLabel").grid(
+            row=10, column=0, sticky="w", pady=(8, 0)
+        )
+        spec_ids_row = ttk.Frame(container)
+        spec_ids_row.grid(row=10, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        spec_ids_row.columnconfigure(0, weight=1)
+        ttk.Entry(spec_ids_row, textvariable=self.spec_profile_ids, width=84).grid(
+            row=0, column=0, sticky="ew"
+        )
+        ttk.Button(
+            spec_ids_row,
+            text="Upload Spec File",
+            command=self._upload_spec_file,
+            style="Accent.TButton",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            spec_ids_row,
+            text="Find Compliant Submittal Links",
+            command=self._search_spec_submittals,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+
+        ttk.Label(container, text="Project Notes", style="FormLabel.TLabel").grid(
+            row=11, column=0, sticky="w", pady=(10, 0)
+        )
         ttk.Entry(container, textvariable=self.notes, width=84).grid(
-            row=9, column=1, columnspan=3, sticky="ew", pady=(10, 0)
+            row=11, column=1, columnspan=3, sticky="ew", pady=(10, 0)
         )
 
-        ttk.Label(container, text="Step 4: Run", style="Section.TLabel").grid(
-            row=10, column=0, sticky="w", pady=(12, 0)
+        ttk.Label(container, text="Step 5: Run", style="Section.TLabel").grid(
+            row=12, column=0, sticky="w", pady=(12, 0)
         )
         run_row = ttk.Frame(container)
-        run_row.grid(row=10, column=1, columnspan=3, sticky="ew", pady=(12, 0))
+        run_row.grid(row=12, column=1, columnspan=3, sticky="ew", pady=(12, 0))
         ttk.Button(
             run_row,
             text="Start Background Run",
@@ -2159,7 +2231,7 @@ class DesktopEstimatorApp:
         ).grid(row=0, column=3, sticky="w", padx=(8, 0))
 
         training_row = ttk.Frame(container)
-        training_row.grid(row=11, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        training_row.grid(row=13, column=1, columnspan=3, sticky="ew", pady=(8, 0))
         ttk.Button(
             training_row,
             text="Run Job Again with Current Fix File",
@@ -2185,7 +2257,9 @@ class DesktopEstimatorApp:
             wraplength=980,
             justify="left",
             style="HeaderSub.TLabel",
-        ).grid(row=12, column=0, columnspan=4, sticky="w", pady=(14, 0))
+        ).grid(row=14, column=0, columnspan=4, sticky="w", pady=(14, 0))
+
+        self._refresh_spec_organizations()
 
     def _draw_construction_banner(self, banner: Canvas | None) -> None:
         if banner is None:
@@ -4319,6 +4393,124 @@ class DesktopEstimatorApp:
         except Exception as exc:
             self._set_output_text(f"Failed to load trade catalog:\n{exc}")
 
+    def _refresh_spec_organizations(self) -> None:
+        try:
+            payload = self._request_json("GET", "/v1/specs/organizations", timeout=45)
+            organizations = payload.get("organizations", [])
+            if not isinstance(organizations, list):
+                raise RuntimeError("Unexpected organizations payload format.")
+            cleaned = [
+                str(item).strip() for item in organizations if isinstance(item, str) and str(item).strip()
+            ]
+            self.spec_org_catalog = cleaned
+            if self.spec_org_combo is not None:
+                self.spec_org_combo.configure(values=self.spec_org_catalog)
+            if not self.spec_organization.get().strip() and self.spec_org_catalog:
+                self.spec_organization.set(self.spec_org_catalog[0])
+            self.status_text.set(f"Loaded {len(self.spec_org_catalog)} spec organization(s).")
+        except Exception as exc:
+            self._set_output_text(f"Failed to load spec organizations:\n{exc}")
+
+    def _load_spec_catalog_for_org(self) -> None:
+        org = self.spec_organization.get().strip()
+        params = [f"public_only={'true' if self.include_public_specs.get() else 'false'}", "limit=200", "offset=0"]
+        if org:
+            from urllib.parse import quote_plus
+
+            params.append(f"organization={quote_plus(org)}")
+        path = f"/v1/specs/catalog?{'&'.join(params)}"
+        try:
+            payload = self._request_json("GET", path, timeout=60)
+            items = payload.get("items", [])
+            if not isinstance(items, list):
+                raise RuntimeError("Unexpected spec catalog payload format.")
+            self.spec_catalog = [item for item in items if isinstance(item, dict)]
+            spec_ids = [
+                str(item.get("spec_id", "")).strip()
+                for item in self.spec_catalog
+                if str(item.get("spec_id", "")).strip()
+            ]
+            if spec_ids:
+                self.spec_profile_ids.set(",".join(spec_ids))
+            self._set_output_json(payload)
+            self.status_text.set(
+                f"Loaded {len(self.spec_catalog)} spec profile(s) for '{org or 'all organizations'}'."
+            )
+            self._save_settings()
+        except Exception as exc:
+            self._set_output_text(f"Failed to load spec catalog:\n{exc}")
+
+    def _upload_spec_file(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select project spec file",
+            filetypes=[
+                ("Spec files", "*.pdf *.txt *.md *.csv *.json"),
+                ("PDF files", "*.pdf"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not selected:
+            self.status_text.set("Spec upload canceled.")
+            return
+        org = self.spec_organization.get().strip() or "General"
+        title = Path(selected).stem
+        tags_csv = "construction,specifications"
+        try:
+            with open(selected, "rb") as handle:
+                files = [("spec_file", (Path(selected).name, handle, "application/octet-stream"))]
+                data = {
+                    "organization": org,
+                    "agency": org,
+                    "title": title,
+                    "standard_name": "",
+                    "project_type": "",
+                    "tags_csv": tags_csv,
+                    "is_public": "true",
+                    "notes": "Uploaded from desktop setup window.",
+                }
+                payload = self._request_json(
+                    "POST",
+                    "/v1/specs/upload",
+                    data=data,
+                    files=files,
+                    timeout=300,
+                )
+            item = payload.get("item", {})
+            if isinstance(item, dict):
+                spec_id = str(item.get("spec_id", "")).strip()
+                if spec_id:
+                    existing_ids = [
+                        token.strip()
+                        for token in self.spec_profile_ids.get().replace(";", ",").split(",")
+                        if token.strip()
+                    ]
+                    existing = {token.lower() for token in existing_ids}
+                    if spec_id.lower() not in existing:
+                        existing_ids.append(spec_id)
+                        self.spec_profile_ids.set(",".join(existing_ids))
+            self._set_output_json(payload)
+            self.status_text.set("Spec file uploaded and added to selected spec IDs.")
+            self._refresh_spec_organizations()
+            self._save_settings()
+        except Exception as exc:
+            self._set_output_text(f"Failed to upload spec file:\n{exc}")
+
+    def _search_spec_submittals(self) -> None:
+        spec_ids = self.spec_profile_ids.get().strip()
+        if not spec_ids:
+            self.status_text.set("Select or load at least one spec profile ID first.")
+            return
+        from urllib.parse import quote_plus
+
+        path = f"/v1/specs/submittals/search?spec_profile_ids={quote_plus(spec_ids)}&max_results=20"
+        try:
+            payload = self._request_json("GET", path, timeout=120)
+            self._set_output_json(payload)
+            item_count = len(payload.get("items", [])) if isinstance(payload.get("items"), list) else 0
+            self.status_text.set(f"Submittal lookup complete: {item_count} result link(s).")
+        except Exception as exc:
+            self._set_output_text(f"Failed to search submittals:\n{exc}")
+
     def _validate_selected_trades_clicked(self) -> None:
         try:
             normalized_csv = self._validate_scope_inputs_before_submit()
@@ -5188,6 +5380,13 @@ class DesktopEstimatorApp:
             "analysis_mode": self.analysis_mode.get(),
             "selected_trades": selected_trades_csv,
         }
+        spec_profile_ids = self.spec_profile_ids.get().strip()
+        spec_organization = self.spec_organization.get().strip()
+        data["include_public_specs"] = "true" if bool(self.include_public_specs.get()) else "false"
+        if spec_profile_ids:
+            data["spec_profile_ids"] = spec_profile_ids
+        if spec_organization:
+            data["spec_organization"] = spec_organization
         notes = self.notes.get().strip()
         if notes:
             data["notes"] = notes
@@ -5590,6 +5789,18 @@ class DesktopEstimatorApp:
         if isinstance(sheet_overrides_path, str):
             self.sheet_overrides_path.set(sheet_overrides_path)
 
+        spec_profile_ids = loaded.get("spec_profile_ids")
+        if isinstance(spec_profile_ids, str):
+            self.spec_profile_ids.set(spec_profile_ids)
+
+        spec_organization = loaded.get("spec_organization")
+        if isinstance(spec_organization, str):
+            self.spec_organization.set(spec_organization)
+
+        include_public_specs = loaded.get("include_public_specs")
+        if isinstance(include_public_specs, bool):
+            self.include_public_specs.set(include_public_specs)
+
         current_job_id = loaded.get("current_job_id")
         if isinstance(current_job_id, str):
             self.current_job_id.set(current_job_id)
@@ -5699,6 +5910,9 @@ class DesktopEstimatorApp:
             "selected_trades": self.selected_trades.get(),
             "notes": self.notes.get(),
             "sheet_overrides_path": self.sheet_overrides_path.get().strip(),
+            "spec_profile_ids": self.spec_profile_ids.get().strip(),
+            "spec_organization": self.spec_organization.get().strip(),
+            "include_public_specs": bool(self.include_public_specs.get()),
             "current_job_id": self.current_job_id.get().strip(),
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),

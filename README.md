@@ -219,6 +219,11 @@ Desktop async workflow:
 24. Use `Load Trades` to fetch canonical analysis modes and valid trade tokens from the API
 25. Use `Validate Trades` to pre-check selected trade input before submit/rerun
 26. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
+27. In `Project Setup`, use `Load Agencies` and `Load Matching Specs` to attach public agency/company specs (for example NASA TSRC) to the run
+28. Use `Upload Spec File` to add your own spec package into the shared spec catalog on the API host
+29. Use `Find Compliant Submittal Links` to generate spec-informed product submittal queries and optional web links
+30. API applies authority order: drawings first, then specifications, then assumptions
+31. `spec_context` is included in output payload to show applied specs, standards detected, and trades requested by specs
 
 ## Run CLI directly
 

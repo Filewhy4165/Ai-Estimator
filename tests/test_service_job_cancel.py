@@ -110,6 +110,7 @@ def test_run_job_skips_pipeline_when_job_no_longer_queued(monkeypatch, tmp_path)
         analysis_mode="auto",
         selected_trades=[],
         sheet_overrides=None,
+        spec_profiles=None,
         notes=None,
         upload_dir=None,
     )
@@ -145,6 +146,7 @@ def test_run_job_does_not_overwrite_canceled_state(monkeypatch, tmp_path):
         analysis_mode="auto",
         selected_trades=[],
         sheet_overrides=None,
+        spec_profiles=None,
         notes=None,
         upload_dir=None,
     )

@@ -7,6 +7,7 @@
   "required": [
     "sheets_detected",
     "trade_scope",
+    "spec_context",
     "scale_analysis",
     "legend_and_symbols",
     "geometry",
@@ -25,6 +26,9 @@
     },
     "trade_scope": {
       "$ref": "#/$defs/tradeScope"
+    },
+    "spec_context": {
+      "$ref": "#/$defs/specContext"
     },
     "scale_analysis": {
       "type": "object"
@@ -344,6 +348,73 @@
         }
       }
     },
+    "specContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_order",
+        "conflict_policy",
+        "applied_spec_count",
+        "applied_spec_profiles",
+        "detected_standard_refs",
+        "required_trades_from_specs",
+        "detected_trades_from_drawings",
+        "overlap_with_drawings",
+        "missing_from_drawings"
+      ],
+      "properties": {
+        "authority_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflict_policy": {
+          "type": "string"
+        },
+        "applied_spec_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "applied_spec_profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "detected_standard_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_trades_from_specs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        },
+        "detected_trades_from_drawings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        },
+        "overlap_with_drawings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        },
+        "missing_from_drawings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tradeName"
+          }
+        }
+      }
+    },
     "element": {
       "type": "object",
       "required": [
@@ -498,4 +569,3 @@
     }
   }
 }
-
