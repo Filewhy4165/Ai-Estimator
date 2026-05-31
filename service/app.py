@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import re
@@ -174,6 +174,8 @@ _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
 _ACTIVE_JOB_STATUSES = {"queued", "running"}
 _LISTABLE_JOB_STATUSES = _ACTIVE_JOB_STATUSES | _TERMINAL_JOB_STATUSES
 _UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
+_DEFAULT_TENANT_ID = "default"
+_TENANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 
 
 class TradeRecommendationResponse(BaseModel):
@@ -566,14 +568,16 @@ async def create_job(
     spec_organization: str = Form(""),
     include_public_specs: bool = Form(False),
     notes: str | None = Form(None),
+    request: Request = None,
 ) -> JobCreateResponse:
+    tenant_id = _tenant_id_for_request(request)
     selected_trade_list = sanitize_selected_trades(selected_trades)
     try:
         _validate_analysis_scope(analysis_mode=analysis_mode, selected_trades=selected_trade_list)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _maybe_auto_prune_jobs()
-    _enforce_queued_job_limit()
+    _maybe_auto_prune_jobs(tenant_id=tenant_id)
+    _enforce_queued_job_limit(tenant_id=tenant_id)
 
     job_id = str(uuid.uuid4())
     job_upload_dir = _get_upload_root() / "jobs" / job_id
@@ -595,6 +599,7 @@ async def create_job(
     now = _utc_now()
     record = JobRecord(
         job_id=job_id,
+        tenant_id=tenant_id,
         status="queued",
         created_at=now,
         updated_at=now,
@@ -606,6 +611,7 @@ async def create_job(
             "spec_organization": spec_organization.strip(),
             "include_public_specs": bool(include_public_specs),
             "notes": normalized_notes,
+            "tenant_id": tenant_id,
             "uploaded_files": [
                 {
                     "file_name": Path(path).name,
@@ -628,6 +634,7 @@ async def create_job(
             "spec_profiles": resolved_spec_profiles,
             "notes": normalized_notes,
             "upload_dir": str(job_upload_dir),
+            "tenant_id": tenant_id,
         },
         daemon=True,
     )
@@ -645,10 +652,12 @@ async def rerun_job(
     spec_organization: str | None = Form(None),
     include_public_specs: bool | None = Form(None),
     notes: str | None = Form(None),
+    request: Request = None,
 ) -> JobCreateResponse:
-    _maybe_auto_prune_jobs()
-    _enforce_queued_job_limit()
-    source_record = _get_job_store().get_job(job_id)
+    tenant_id = _tenant_id_for_request(request)
+    _maybe_auto_prune_jobs(tenant_id=tenant_id)
+    _enforce_queued_job_limit(tenant_id=tenant_id)
+    source_record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not source_record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -698,6 +707,7 @@ async def rerun_job(
 
     rerun_job_id = _queue_rerun_job(
         source_job_id=job_id,
+        tenant_id=tenant_id,
         pdf_paths=pdf_paths,
         analysis_mode=resolved_mode,
         selected_trades=resolved_trades,
@@ -716,9 +726,13 @@ async def rerun_job(
 
 
 @app.post("/v1/jobs/{job_id}/cancel", response_model=JobCancelResponse)
-def cancel_job(job_id: str) -> JobCancelResponse:
+def cancel_job(
+    job_id: str,
+    request: Request = None,
+) -> JobCancelResponse:
+    tenant_id = _tenant_id_for_request(request)
     store = _get_job_store()
-    record = store.get_job(job_id)
+    record = store.get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -745,6 +759,7 @@ def cancel_job(job_id: str) -> JobCancelResponse:
             updated_at=now,
             completed_at=now,
             error="Job canceled by user before execution.",
+            tenant_id=tenant_id,
         )
         message = "Queued job canceled."
     elif current_status == "running":
@@ -758,6 +773,7 @@ def cancel_job(job_id: str) -> JobCancelResponse:
                 "Job canceled by user while running. "
                 "Worker completion updates will be ignored."
             ),
+            tenant_id=tenant_id,
         )
         message = "Running job marked canceled."
     else:
@@ -774,7 +790,7 @@ def cancel_job(job_id: str) -> JobCancelResponse:
             message=message,
         )
 
-    latest = store.get_job(job_id)
+    latest = store.get_job(job_id, tenant_id=tenant_id)
     latest_status = str(latest.status).strip().lower() if latest else "unknown"
     if latest_status == "canceled":
         return JobCancelResponse(
@@ -795,9 +811,14 @@ def cancel_job(job_id: str) -> JobCancelResponse:
 
 
 @app.delete("/v1/jobs/{job_id}", response_model=JobDeleteResponse)
-def delete_job(job_id: str, cleanup_uploads: bool = False) -> JobDeleteResponse:
+def delete_job(
+    job_id: str,
+    cleanup_uploads: bool = False,
+    request: Request = None,
+) -> JobDeleteResponse:
+    tenant_id = _tenant_id_for_request(request)
     store = _get_job_store()
-    record = store.get_job(job_id)
+    record = store.get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -816,7 +837,7 @@ def delete_job(job_id: str, cleanup_uploads: bool = False) -> JobDeleteResponse:
     if cleanup_uploads:
         removed_dirs, skipped_dirs = _cleanup_upload_dirs_for_job(record)
 
-    deleted = store.delete_job(job_id)
+    deleted = store.delete_job(job_id, tenant_id=tenant_id)
     if not deleted:
         raise HTTPException(
             status_code=409,
@@ -839,7 +860,10 @@ def prune_jobs(
     limit: int = 100,
     dry_run: bool = True,
     cleanup_uploads: bool = False,
+    tenant_id: str | None = None,
+    request: Request = None,
 ) -> JobPruneResponse:
+    resolved_tenant_id = _tenant_id_for_request(request, explicit_tenant_id=tenant_id)
     status_tokens = _parse_prune_statuses_csv(statuses)
     if older_than_hours is not None and older_than_hours < 1:
         raise HTTPException(status_code=400, detail="older_than_hours must be at least 1 when provided.")
@@ -854,6 +878,7 @@ def prune_jobs(
         statuses=status_tokens,
         updated_before=cutoff_updated_at,
         limit=limit_applied,
+        tenant_id=resolved_tenant_id,
     )
     eligible_job_ids = [record.job_id for record in candidates]
     if dry_run:
@@ -880,7 +905,7 @@ def prune_jobs(
     skipped_seen: set[str] = set()
 
     for candidate in candidates:
-        latest = store.get_job(candidate.job_id)
+        latest = store.get_job(candidate.job_id, tenant_id=resolved_tenant_id)
         if not latest:
             skipped_jobs.append({"job_id": candidate.job_id, "reason": "Job not found during prune."})
             continue
@@ -909,7 +934,7 @@ def prune_jobs(
                 skipped_seen.add(key)
                 skipped_upload_dirs.append(path)
 
-        deleted = store.delete_job(latest.job_id)
+        deleted = store.delete_job(latest.job_id, tenant_id=resolved_tenant_id)
         if deleted:
             deleted_job_ids.append(latest.job_id)
         else:
@@ -936,10 +961,14 @@ def prune_jobs(
     status_code=202,
     response_model=JobRerunRecommendationResponse,
 )
-def rerun_job_with_recommendation(job_id: str) -> JobRerunRecommendationResponse:
-    _maybe_auto_prune_jobs()
-    _enforce_queued_job_limit()
-    source_record = _get_job_store().get_job(job_id)
+def rerun_job_with_recommendation(
+    job_id: str,
+    request: Request = None,
+) -> JobRerunRecommendationResponse:
+    tenant_id = _tenant_id_for_request(request)
+    _maybe_auto_prune_jobs(tenant_id=tenant_id)
+    _enforce_queued_job_limit(tenant_id=tenant_id)
+    source_record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not source_record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1001,6 +1030,7 @@ def rerun_job_with_recommendation(job_id: str) -> JobRerunRecommendationResponse
 
     rerun_job_id = _queue_rerun_job(
         source_job_id=job_id,
+        tenant_id=tenant_id,
         pdf_paths=pdf_paths,
         analysis_mode=recommended_mode,
         selected_trades=recommended_trades,
@@ -1031,9 +1061,13 @@ def rerun_job_with_recommendation(job_id: str) -> JobRerunRecommendationResponse
 
 
 @app.get("/v1/jobs/metrics", response_model=JobMetricsResponse)
-def get_job_metrics(window: int = 200) -> JobMetricsResponse:
+def get_job_metrics(
+    window: int = 200,
+    request: Request = None,
+) -> JobMetricsResponse:
+    tenant_id = _tenant_id_for_request(request)
     window_applied = max(1, min(window, 5000))
-    records = _get_job_store().list_recent_jobs(limit=window_applied)
+    records = _get_job_store().list_recent_jobs(limit=window_applied, tenant_id=tenant_id)
     payload = build_job_metrics_snapshot(
         records,
         window_requested=window,
@@ -1051,9 +1085,11 @@ def get_job_metrics_gate(
     max_missing_scale_rate: float | None = None,
     max_unmapped_sheet_rate: float | None = None,
     min_jobs_per_hour_24h: float | None = None,
+    request: Request = None,
 ) -> JobMetricsGateResponse:
+    tenant_id = _tenant_id_for_request(request)
     window_applied = max(1, min(window, 5000))
-    records = _get_job_store().list_recent_jobs(limit=window_applied)
+    records = _get_job_store().list_recent_jobs(limit=window_applied, tenant_id=tenant_id)
     snapshot = build_job_metrics_snapshot(
         records,
         window_requested=window,
@@ -1072,11 +1108,14 @@ def get_job_metrics_gate(
 
 
 @app.get("/v1/jobs/capacity", response_model=JobCapacityResponse)
-def get_job_capacity() -> JobCapacityResponse:
+def get_job_capacity(
+    request: Request = None,
+) -> JobCapacityResponse:
+    tenant_id = _tenant_id_for_request(request)
     store = _get_job_store()
     worker_limit = _resolve_job_worker_limit()
-    running_jobs = store.count_jobs(status="running")
-    queued_jobs = store.count_jobs(status="queued")
+    running_jobs = store.count_jobs(status="running", tenant_id=tenant_id)
+    queued_jobs = store.count_jobs(status="queued", tenant_id=tenant_id)
     max_queued_jobs = _resolve_max_queued_jobs()
     queue_capacity_remaining = (
         max(0, max_queued_jobs - queued_jobs) if max_queued_jobs is not None else None
@@ -1092,8 +1131,12 @@ def get_job_capacity() -> JobCapacityResponse:
 
 
 @app.get("/v1/jobs/{job_id}")
-def get_job(job_id: str) -> dict[str, Any]:
-    record = _get_job_store().get_job(job_id)
+def get_job(
+    job_id: str,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     return record.model_dump()
@@ -1104,10 +1147,12 @@ def get_job_review_queue(
     job_id: str,
     low_confidence_threshold: float = 0.75,
     include_only_flagged: bool = True,
+    request: Request = None,
 ) -> ReviewQueueResponse:
     if low_confidence_threshold < 0 or low_confidence_threshold > 1:
         raise HTTPException(status_code=400, detail="low_confidence_threshold must be between 0 and 1.")
-    record = _get_job_store().get_job(job_id)
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     payload = build_review_queue(
@@ -1123,8 +1168,10 @@ def get_job_review_queue(
 def get_sheet_overrides_template(
     job_id: str,
     include_all: bool = False,
+    request: Request = None,
 ) -> SheetOverridesTemplateResponse:
-    record = _get_job_store().get_job(job_id)
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     payload = build_sheet_overrides_template(
@@ -1136,8 +1183,12 @@ def get_sheet_overrides_template(
 
 
 @app.get("/v1/jobs/{job_id}/trade-recommendation", response_model=TradeRecommendationResponse)
-def get_trade_recommendation(job_id: str) -> TradeRecommendationResponse:
-    record = _get_job_store().get_job(job_id)
+def get_trade_recommendation(
+    job_id: str,
+    request: Request = None,
+) -> TradeRecommendationResponse:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     payload = build_trade_recommendation(
@@ -1148,8 +1199,12 @@ def get_trade_recommendation(job_id: str) -> TradeRecommendationResponse:
 
 
 @app.get("/v1/jobs/{job_id}/trade-coverage", response_model=TradeCoverageResponse)
-def get_trade_coverage(job_id: str) -> TradeCoverageResponse:
-    record = _get_job_store().get_job(job_id)
+def get_trade_coverage(
+    job_id: str,
+    request: Request = None,
+) -> TradeCoverageResponse:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     payload = build_trade_coverage_report(
@@ -1160,8 +1215,12 @@ def get_trade_coverage(job_id: str) -> TradeCoverageResponse:
 
 
 @app.get("/v1/jobs/{job_id}/readiness-report", response_model=JobReadinessReportResponse)
-def get_job_readiness_report(job_id: str) -> JobReadinessReportResponse:
-    record = _get_job_store().get_job(job_id)
+def get_job_readiness_report(
+    job_id: str,
+    request: Request = None,
+) -> JobReadinessReportResponse:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1175,7 +1234,7 @@ def get_job_readiness_report(job_id: str) -> JobReadinessReportResponse:
     trade_recommendation = build_trade_recommendation(job_id=job_id, result=result_payload)
     trade_coverage = build_trade_coverage_report(job_id=job_id, result=result_payload)
 
-    recent_records = _get_job_store().list_recent_jobs(limit=500)
+    recent_records = _get_job_store().list_recent_jobs(limit=500, tenant_id=tenant_id)
     snapshot = build_job_metrics_snapshot(
         recent_records,
         window_requested=500,
@@ -1213,8 +1272,10 @@ def get_benchmark_template(
     job_id: str,
     include_unmapped: bool = False,
     case_id: str | None = None,
+    request: Request = None,
 ) -> BenchmarkTemplateResponse:
-    record = _get_job_store().get_job(job_id)
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found")
     payload = build_benchmark_manifest_template(
@@ -1368,13 +1429,20 @@ def list_jobs(
     limit: int = 50,
     offset: int = 0,
     status: str | None = None,
+    request: Request = None,
 ) -> JobListResponse:
     if status and status not in _LISTABLE_JOB_STATUSES:
         raise HTTPException(
             status_code=400,
             detail="status filter must be one of: queued, running, completed, failed, canceled",
         )
-    items = _get_job_store().list_jobs(limit=limit, offset=offset, status=status)
+    tenant_id = _tenant_id_for_request(request)
+    items = _get_job_store().list_jobs(
+        limit=limit,
+        offset=offset,
+        status=status,
+        tenant_id=tenant_id,
+    )
     return JobListResponse(
         items=items,
         total_returned=len(items),
@@ -1392,6 +1460,7 @@ def _run_job(
     spec_profiles: list[dict[str, object]] | None,
     notes: str | None,
     upload_dir: str | None,
+    tenant_id: str = _DEFAULT_TENANT_ID,
 ) -> None:
     run_semaphore = _get_job_run_semaphore()
     run_semaphore.acquire()
@@ -1404,6 +1473,7 @@ def _run_job(
             status="running",
             updated_at=started_at,
             started_at=started_at,
+            tenant_id=tenant_id,
         )
         if not claimed:
             return
@@ -1426,6 +1496,7 @@ def _run_job(
                 completed_at=now,
                 result=result,
                 error=None,
+                tenant_id=tenant_id,
             )
         except Exception as exc:  # pragma: no cover - defensive
             now = _utc_now()
@@ -1437,6 +1508,7 @@ def _run_job(
                 completed_at=now,
                 result=None,
                 error=str(exc),
+                tenant_id=tenant_id,
             )
     finally:
         run_semaphore.release()
@@ -1632,16 +1704,21 @@ def _resolve_auto_prune_cleanup_uploads() -> bool:
     return _parse_bool_env(raw)
 
 
-def _maybe_auto_prune_jobs() -> dict[str, Any] | None:
+def _maybe_auto_prune_jobs(*, tenant_id: str | None = None) -> dict[str, Any] | None:
     if not _resolve_auto_prune_on_submit():
         return None
     try:
+        prune_kwargs: dict[str, Any] = {
+            "statuses": "completed,failed,canceled",
+            "older_than_hours": _resolve_auto_prune_older_than_hours(),
+            "limit": _resolve_auto_prune_limit(),
+            "dry_run": False,
+            "cleanup_uploads": _resolve_auto_prune_cleanup_uploads(),
+        }
+        if tenant_id is not None:
+            prune_kwargs["tenant_id"] = tenant_id
         payload = prune_jobs(
-            statuses="completed,failed,canceled",
-            older_than_hours=_resolve_auto_prune_older_than_hours(),
-            limit=_resolve_auto_prune_limit(),
-            dry_run=False,
-            cleanup_uploads=_resolve_auto_prune_cleanup_uploads(),
+            **prune_kwargs,
         )
         return payload.model_dump()
     except Exception:
@@ -1649,11 +1726,11 @@ def _maybe_auto_prune_jobs() -> dict[str, Any] | None:
         return None
 
 
-def _enforce_queued_job_limit() -> None:
+def _enforce_queued_job_limit(*, tenant_id: str | None = None) -> None:
     max_queued = _resolve_max_queued_jobs()
     if max_queued is None:
         return
-    queued = _get_job_store().count_jobs(status="queued")
+    queued = _get_job_store().count_jobs(status="queued", tenant_id=tenant_id)
     if queued >= max_queued:
         raise HTTPException(
             status_code=429,
@@ -1776,6 +1853,7 @@ def _cleanup_upload_dirs_for_job(record: JobRecord) -> tuple[list[str], list[str
 def _queue_rerun_job(
     *,
     source_job_id: str,
+    tenant_id: str,
     pdf_paths: list[str],
     analysis_mode: str,
     selected_trades: list[str],
@@ -1792,6 +1870,7 @@ def _queue_rerun_job(
         "sheet_overrides": sheet_overrides or [],
         "spec_profile_ids": [str(item.get("spec_id", "")).strip() for item in (spec_profiles or [])],
         "notes": notes,
+        "tenant_id": tenant_id,
         "uploaded_files": [
             {
                 "file_name": Path(path).name,
@@ -1805,6 +1884,7 @@ def _queue_rerun_job(
 
     record = JobRecord(
         job_id=rerun_job_id,
+        tenant_id=tenant_id,
         status="queued",
         created_at=now,
         updated_at=now,
@@ -1823,6 +1903,7 @@ def _queue_rerun_job(
             "spec_profiles": spec_profiles,
             "notes": notes,
             "upload_dir": None,
+            "tenant_id": tenant_id,
         },
         daemon=True,
     )
@@ -1842,6 +1923,53 @@ def _append_note(*, source_notes: str | None, marker: str) -> str:
 
 def _is_api_key_authorized(*, expected: str, provided: str) -> bool:
     return bool(expected.strip()) and expected.strip() == provided.strip()
+
+
+def _resolve_default_tenant_id() -> str:
+    raw = os.environ.get("AI_ESTIMATOR_DEFAULT_TENANT_ID", _DEFAULT_TENANT_ID)
+    token = str(raw).strip() or _DEFAULT_TENANT_ID
+    try:
+        return _normalize_tenant_id(token)
+    except ValueError:
+        return _DEFAULT_TENANT_ID
+
+
+def _normalize_tenant_id(raw: str) -> str:
+    token = str(raw).strip()
+    if not token:
+        raise ValueError("Tenant ID cannot be empty.")
+    if not _TENANT_ID_PATTERN.match(token):
+        raise ValueError(
+            "Invalid tenant ID. Use 1-80 characters: letters, numbers, '.', '-', or '_'."
+        )
+    return token
+
+
+def _tenant_id_for_request(
+    request: Request | None,
+    *,
+    explicit_tenant_id: str | None = None,
+) -> str:
+    tenant_candidate = str(explicit_tenant_id or "").strip()
+    if not tenant_candidate and request is not None:
+        tenant_candidate = str(request.headers.get("x-tenant-id", "")).strip()
+
+    if not tenant_candidate:
+        require_header = _parse_bool_env(os.environ.get("AI_ESTIMATOR_REQUIRE_TENANT_ID", ""))
+        if request is not None and require_header and explicit_tenant_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Tenant ID is required. Provide header 'x-tenant-id' or configure "
+                    "AI_ESTIMATOR_DEFAULT_TENANT_ID."
+                ),
+            )
+        return _resolve_default_tenant_id()
+
+    try:
+        return _normalize_tenant_id(tenant_candidate)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _build_handoff_recommendation(
@@ -2181,3 +2309,5 @@ def _get_upload_root() -> Path:
                 _upload_root = Path(_resolve_upload_root())
                 _upload_root.mkdir(parents=True, exist_ok=True)
     return _upload_root
+
+

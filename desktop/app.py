@@ -247,6 +247,7 @@ class DesktopEstimatorApp:
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
         self.api_key = StringVar(value=os.environ.get("AI_ESTIMATOR_API_KEY", ""))
+        self.tenant_id = StringVar(value=os.environ.get("AI_ESTIMATOR_TENANT_ID", "default"))
         self.analysis_mode = StringVar(value="auto")
         self.selected_trades = StringVar(value="")
         self.sheet_overrides_path = StringVar(value="")
@@ -1201,8 +1202,16 @@ class DesktopEstimatorApp:
         self.field_label_api_key = ttk.Label(frame, text="API Key (optional)", style="FormLabel.TLabel")
         self.field_label_api_key.grid(row=1, column=0, sticky="w")
         self._field_label_widgets["api_key"] = self.field_label_api_key
-        api_key_entry = ttk.Entry(frame, textvariable=self.api_key, width=68, show="*")
-        api_key_entry.grid(row=1, column=1, sticky="ew")
+        security_row = ttk.Frame(frame)
+        security_row.grid(row=1, column=1, sticky="ew")
+        security_row.columnconfigure(0, weight=1)
+        api_key_entry = ttk.Entry(security_row, textvariable=self.api_key, width=46, show="*")
+        api_key_entry.grid(row=0, column=0, sticky="ew")
+        self.field_label_tenant_id = ttk.Label(security_row, text="Tenant ID", style="FormLabel.TLabel")
+        self.field_label_tenant_id.grid(row=0, column=1, sticky="w", padx=(10, 4))
+        self._field_label_widgets["tenant_id"] = self.field_label_tenant_id
+        tenant_id_entry = ttk.Entry(security_row, textvariable=self.tenant_id, width=22)
+        tenant_id_entry.grid(row=0, column=2, sticky="w")
 
         self.field_label_analysis_mode = ttk.Label(frame, text="Analysis Mode", style="FormLabel.TLabel")
         self.field_label_analysis_mode.grid(row=2, column=0, sticky="w")
@@ -1263,7 +1272,7 @@ class DesktopEstimatorApp:
             self.field_label_api_url,
             api_row,
             self.field_label_api_key,
-            api_key_entry,
+            security_row,
             self.field_label_analysis_mode,
             self.analysis_mode_combo,
             self.field_label_selected_trades,
@@ -2086,6 +2095,7 @@ class DesktopEstimatorApp:
             frame=frame,
             api_url_entry=api_url_entry,
             api_key_entry=api_key_entry,
+            tenant_id_entry=tenant_id_entry,
             selected_trades_entry=selected_trades_entry,
             overrides_entry=overrides_entry,
             current_job_entry=current_job_entry,
@@ -2195,6 +2205,7 @@ class DesktopEstimatorApp:
 
         return {
             "api_url": str(payload.get("api_url", self.api_url.get())).strip(),
+            "tenant_id": str(payload.get("tenant_id", self.tenant_id.get())).strip() or "default",
             "analysis_mode": analysis_mode,
             "selected_trades": str(payload.get("selected_trades", "")).strip(),
             "sheet_overrides_path": str(payload.get("sheet_overrides_path", "")).strip(),
@@ -2235,6 +2246,7 @@ class DesktopEstimatorApp:
     def _project_payload_from_current(self) -> dict[str, object]:
         payload = {
             "api_url": self.api_url.get().strip(),
+            "tenant_id": self.tenant_id.get().strip() or "default",
             "analysis_mode": self.analysis_mode.get().strip(),
             "selected_trades": self.selected_trades.get().strip(),
             "sheet_overrides_path": self.sheet_overrides_path.get().strip(),
@@ -2258,6 +2270,7 @@ class DesktopEstimatorApp:
     def _apply_project_payload(self, payload: object, *, project_name: str) -> None:
         normalized = self._normalize_project_payload(payload)
         self.api_url.set(str(normalized.get("api_url", "")).strip() or "http://127.0.0.1:8000")
+        self.tenant_id.set(str(normalized.get("tenant_id", "default")).strip() or "default")
         self.analysis_mode.set(str(normalized.get("analysis_mode", "all")).strip())
         self.selected_trades.set(str(normalized.get("selected_trades", "")).strip())
         self.sheet_overrides_path.set(str(normalized.get("sheet_overrides_path", "")).strip())
@@ -2884,6 +2897,7 @@ class DesktopEstimatorApp:
         frame: ttk.Frame,
         api_url_entry: ttk.Entry,
         api_key_entry: ttk.Entry,
+        tenant_id_entry: ttk.Entry,
         selected_trades_entry: ttk.Entry,
         overrides_entry: ttk.Entry,
         current_job_entry: ttk.Entry,
@@ -2934,6 +2948,10 @@ class DesktopEstimatorApp:
                     "Optional security key. Leave empty for local server; use one for protected remote servers."
                 ),
             },
+            "tenant_id": {
+                "pro_tip": "Tenant/company scope sent as x-tenant-id for job isolation and access boundaries.",
+                "beginner_tip": "Company workspace ID. Keep this consistent so jobs stay grouped to your company.",
+            },
             "analysis_mode": {
                 "pro_tip": "auto=detect trades from drawings, selected=only selected trades, all=analyze all supported trades.",
                 "beginner_tip": "Trade Selection Settings: auto analyzes drawings to pick trades, selected uses your trade list, all runs every trade.",
@@ -2977,6 +2995,7 @@ class DesktopEstimatorApp:
         field_widgets: dict[str, object] = {
             "api_url": api_url_entry,
             "api_key": api_key_entry,
+            "tenant_id": tenant_id_entry,
             "analysis_mode": self.analysis_mode_combo,
             "selected_trades": selected_trades_entry,
             "overrides_path": overrides_entry,
@@ -3386,6 +3405,12 @@ class DesktopEstimatorApp:
                 "beginner_tip": (
                     "Leave blank for local server. For protected APIs, paste the key here so jobs can connect."
                 ),
+            },
+            "tenant_id": {
+                "pro_label": "Tenant ID",
+                "beginner_label": "Company Workspace",
+                "pro_tip": "Tenant scope sent as x-tenant-id to keep jobs and results isolated by company/workspace.",
+                "beginner_tip": "Use your company workspace ID so only your jobs/results are shown.",
             },
             "analysis_mode": {
                 "pro_label": "Analysis Mode",
@@ -6737,6 +6762,10 @@ class DesktopEstimatorApp:
         if isinstance(api_url, str) and api_url.strip():
             self.api_url.set(api_url.strip())
 
+        tenant_id = loaded.get("tenant_id")
+        if isinstance(tenant_id, str) and tenant_id.strip():
+            self.tenant_id.set(tenant_id.strip())
+
         analysis_mode = loaded.get("analysis_mode")
         if isinstance(analysis_mode, str) and analysis_mode in {"auto", "selected", "all"}:
             self.analysis_mode.set(analysis_mode)
@@ -6875,6 +6904,7 @@ class DesktopEstimatorApp:
     def _save_settings(self) -> None:
         payload = {
             "api_url": self.api_url.get().strip(),
+            "tenant_id": self.tenant_id.get().strip() or "default",
             "analysis_mode": self.analysis_mode.get().strip(),
             "selected_trades": self.selected_trades.get(),
             "notes": self.notes.get(),
@@ -6926,6 +6956,9 @@ class DesktopEstimatorApp:
         api_key = self.api_key.get().strip()
         if api_key:
             headers["x-api-key"] = api_key
+        tenant_id = self.tenant_id.get().strip()
+        if tenant_id:
+            headers["x-tenant-id"] = tenant_id
         return headers
 
     def _on_close(self) -> None:

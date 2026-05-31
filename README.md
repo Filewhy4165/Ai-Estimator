@@ -180,6 +180,7 @@ It also remembers your last API URL, selected PDFs, overrides file, and current 
 When API URL points to `127.0.0.1` or `localhost`, the app can auto-start the local API if the connection is refused.
 If API key auth is enabled on the service, populate `API Key (optional)` in the desktop app so it sends `x-api-key`.
 For security, the desktop app does not persist API keys to disk; set `AI_ESTIMATOR_API_KEY` in your shell to prefill each session.
+Set `Tenant ID` (beginner label: `Company Workspace`) in the desktop app so requests include `x-tenant-id` and stay isolated to that company scope.
 
 Common startup issues:
 
@@ -423,6 +424,8 @@ Environment variables:
 - `AI_ESTIMATOR_PRUNE_LIMIT` max jobs pruned per auto-prune run (default `200`, clamped `1..1000`)
 - `AI_ESTIMATOR_PRUNE_CLEANUP_UPLOADS` when `true`, auto-prune also removes safe upload directories
 - `AI_ESTIMATOR_API_KEY` when set, all endpoints except `/health` require header `x-api-key: <value>`
+- `AI_ESTIMATOR_DEFAULT_TENANT_ID` default tenant/company scope when `x-tenant-id` is not provided (default `default`)
+- `AI_ESTIMATOR_REQUIRE_TENANT_ID` when `true`, reject requests missing `x-tenant-id` header
 - `AI_ESTIMATOR_CLEANUP_UPLOADS` set global cleanup `true|false` for both sync/async
 - `AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS` set cleanup for `/v1/analyze` uploads (default `true`)
 - `AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS` set cleanup for async job uploads (default `false`)
@@ -436,6 +439,7 @@ Example (PowerShell):
 $env:AI_ESTIMATOR_DB_PATH = "C:\data\ai-estimator\jobs.db"
 $env:AI_ESTIMATOR_UPLOAD_DIR = "C:\data\ai-estimator\uploads"
 $env:AI_ESTIMATOR_API_KEY = "replace-with-strong-token"
+$env:AI_ESTIMATOR_DEFAULT_TENANT_ID = "techbuild-main"
 $env:AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS = "true"
 $env:AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS = "false"
 ai-estimator-api
@@ -449,13 +453,12 @@ iOS/Android apps should call the same `/v1/jobs` and `/v1/jobs/{job_id}` endpoin
 - move processing to worker queue (Celery/RQ/Arq)
 - store PDFs/results in object storage
 - add auth (JWT/OAuth)
-- add tenant/project boundaries
 
 ## Current limitations
 
 - Geometry extraction is text-driven in this MVP and requires CV/OCR modules for full plan accuracy.
 - Job execution currently runs in-process in the API server; production scale should move execution to a worker queue.
-- No authentication yet.
+- API security is currently API-key + tenant-header scoped; enterprise SSO/JWT is not yet implemented.
 
 ## Dependency and mirror setup
 

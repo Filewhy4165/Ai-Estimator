@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 class JobRecord(BaseModel):
     job_id: str
+    tenant_id: str = "default"
     status: str
     created_at: str
     updated_at: str
@@ -43,6 +44,7 @@ class JobStore:
                 """
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT 'default',
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -54,11 +56,29 @@ class JobStore:
                 )
                 """
             )
+            _ensure_column_exists(
+                conn,
+                table_name="jobs",
+                column_name="tenant_id",
+                column_type="TEXT NOT NULL DEFAULT 'default'",
+            )
             _ensure_column_exists(conn, table_name="jobs", column_name="started_at", column_type="TEXT")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_jobs_status_created
                 ON jobs(status, created_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_tenant_status_created
+                ON jobs(tenant_id, status, created_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_jobs_tenant_created
+                ON jobs(tenant_id, created_at DESC)
                 """
             )
             conn.commit()
@@ -68,12 +88,13 @@ class JobStore:
             conn.execute(
                 """
                 INSERT INTO jobs (
-                    job_id, status, created_at, updated_at, started_at, completed_at, input_json, result_json, error
+                    job_id, tenant_id, status, created_at, updated_at, started_at, completed_at, input_json, result_json, error
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.job_id,
+                    _normalize_tenant_id_token(record.tenant_id),
                     record.status,
                     record.created_at,
                     record.updated_at,
@@ -96,10 +117,18 @@ class JobStore:
         completed_at: str | None = None,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        tenant_id: str | None = None,
     ) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
+        params: list[object] = [
+            status,
+            updated_at,
+            started_at,
+            completed_at,
+            json.dumps(result) if result is not None else None,
+            error,
+            job_id,
+        ]
+        query = """
                 UPDATE jobs
                 SET status = ?,
                     updated_at = ?,
@@ -108,17 +137,12 @@ class JobStore:
                     result_json = ?,
                     error = ?
                 WHERE job_id = ?
-                """,
-                (
-                    status,
-                    updated_at,
-                    started_at,
-                    completed_at,
-                    json.dumps(result) if result is not None else None,
-                    error,
-                    job_id,
-                ),
-            )
+                """
+        if tenant_id is not None:
+            query += " AND tenant_id = ?"
+            params.append(_normalize_tenant_id_token(tenant_id))
+        with self._connect() as conn:
+            conn.execute(query, tuple(params))
             conn.commit()
 
     def transition_job_if_current(
@@ -132,10 +156,19 @@ class JobStore:
         completed_at: str | None = None,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        tenant_id: str | None = None,
     ) -> bool:
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
+        params: list[object] = [
+            status,
+            updated_at,
+            started_at,
+            completed_at,
+            json.dumps(result) if result is not None else None,
+            error,
+            job_id,
+            current_status,
+        ]
+        query = """
                 UPDATE jobs
                 SET status = ?,
                     updated_at = ?,
@@ -145,35 +178,51 @@ class JobStore:
                     error = ?
                 WHERE job_id = ?
                   AND status = ?
-                """,
-                (
-                    status,
-                    updated_at,
-                    started_at,
-                    completed_at,
-                    json.dumps(result) if result is not None else None,
-                    error,
-                    job_id,
-                    current_status,
-                ),
-            )
+                """
+        if tenant_id is not None:
+            query += " AND tenant_id = ?"
+            params.append(_normalize_tenant_id_token(tenant_id))
+        with self._connect() as conn:
+            cursor = conn.execute(query, tuple(params))
             conn.commit()
             return cursor.rowcount > 0
 
-    def get_job(self, job_id: str) -> JobRecord | None:
+    def get_job(self, job_id: str, *, tenant_id: str | None = None) -> JobRecord | None:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if tenant_id is None:
+                row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE job_id = ? AND tenant_id = ?",
+                    (job_id, _normalize_tenant_id_token(tenant_id)),
+                ).fetchone()
         if row is None:
             return None
         return _row_to_job_record(row)
 
     def list_jobs(
-        self, *, limit: int = 50, offset: int = 0, status: str | None = None
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+        tenant_id: str | None = None,
     ) -> list[JobRecord]:
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
         with self._connect() as conn:
-            if status:
+            if status and tenant_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status = ?
+                      AND tenant_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (status, _normalize_tenant_id_token(tenant_id), limit, offset),
+                ).fetchall()
+            elif status:
                 rows = conn.execute(
                     """
                     SELECT * FROM jobs
@@ -182,6 +231,16 @@ class JobStore:
                     LIMIT ? OFFSET ?
                     """,
                     (status, limit, offset),
+                ).fetchall()
+            elif tenant_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE tenant_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (_normalize_tenant_id_token(tenant_id), limit, offset),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -194,23 +253,44 @@ class JobStore:
                 ).fetchall()
         return [_row_to_job_record(row) for row in rows]
 
-    def list_recent_jobs(self, *, limit: int = 200) -> list[JobRecord]:
+    def list_recent_jobs(self, *, limit: int = 200, tenant_id: str | None = None) -> list[JobRecord]:
         # Internal analytics path can inspect a wider window than list endpoint pagination.
         limit = max(1, min(limit, 5000))
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM jobs
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+            if tenant_id is None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE tenant_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (_normalize_tenant_id_token(tenant_id), limit),
+                ).fetchall()
         return [_row_to_job_record(row) for row in rows]
 
-    def count_jobs(self, *, status: str | None = None) -> int:
+    def count_jobs(self, *, status: str | None = None, tenant_id: str | None = None) -> int:
         with self._connect() as conn:
-            if status:
+            if status and tenant_id is not None:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM jobs
+                    WHERE status = ?
+                      AND tenant_id = ?
+                    """,
+                    (status, _normalize_tenant_id_token(tenant_id)),
+                ).fetchone()
+            elif status:
                 row = conn.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -218,6 +298,15 @@ class JobStore:
                     WHERE status = ?
                     """,
                     (status,),
+                ).fetchone()
+            elif tenant_id is not None:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM jobs
+                    WHERE tenant_id = ?
+                    """,
+                    (_normalize_tenant_id_token(tenant_id),),
                 ).fetchone()
             else:
                 row = conn.execute(
@@ -236,6 +325,7 @@ class JobStore:
         statuses: list[str],
         updated_before: str | None,
         limit: int,
+        tenant_id: str | None = None,
     ) -> list[JobRecord]:
         if not statuses:
             return []
@@ -246,6 +336,9 @@ class JobStore:
             SELECT * FROM jobs
             WHERE status IN ({placeholders})
         """
+        if tenant_id is not None:
+            query += " AND tenant_id = ?"
+            params.append(_normalize_tenant_id_token(tenant_id))
         if updated_before:
             query += " AND updated_at <= ?"
             params.append(updated_before)
@@ -255,9 +348,15 @@ class JobStore:
             rows = conn.execute(query, tuple(params)).fetchall()
         return [_row_to_job_record(row) for row in rows]
 
-    def delete_job(self, job_id: str) -> bool:
+    def delete_job(self, job_id: str, *, tenant_id: str | None = None) -> bool:
         with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            if tenant_id is None:
+                cursor = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM jobs WHERE job_id = ? AND tenant_id = ?",
+                    (job_id, _normalize_tenant_id_token(tenant_id)),
+                )
             conn.commit()
             return cursor.rowcount > 0
 
@@ -276,6 +375,7 @@ def _row_to_job_record(row: sqlite3.Row) -> JobRecord:
 
     return JobRecord(
         job_id=row["job_id"],
+        tenant_id=_normalize_tenant_id_token(row["tenant_id"] if "tenant_id" in row.keys() else "default"),
         status=row["status"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -338,3 +438,8 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(token)
     except ValueError:
         return None
+
+
+def _normalize_tenant_id_token(value: str | None) -> str:
+    token = str(value or "").strip()
+    return token or "default"
