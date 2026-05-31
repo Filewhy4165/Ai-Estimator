@@ -98,6 +98,7 @@ _LIGHT_SURFACES = {
     "line": "#9FB2CC",
 }
 _OUTPUT_JSON_PREVIEW_MAX_CHARS = 240_000
+_OUTPUT_JSON_FULL_RENDER_MAX_CHARS = 1_500_000
 _OUTPUT_LOG_MAX_CHARS = 180_000
 _OUTPUT_TRIM_NOTICE = "[Output trimmed to keep the latest activity visible.]"
 _BACKGROUND_BUSY_MESSAGE = "Another request is already running. Wait for it to finish."
@@ -6353,7 +6354,16 @@ class DesktopEstimatorApp:
         if mode not in {"preview", "full"}:
             mode = "preview"
 
-        body = render.full_text if mode == "full" else render.text
+        if mode == "full" and render.total_chars > _OUTPUT_JSON_FULL_RENDER_MAX_CHARS:
+            body = (
+                f"[Full JSON view skipped: payload is {render.total_chars:,} chars, "
+                f"which exceeds UI safety limit of {_OUTPUT_JSON_FULL_RENDER_MAX_CHARS:,} chars.]\n\n"
+                "Use Save Output to export the full JSON payload to disk.\n\n"
+                f"{render.text}"
+            )
+            mode = "preview"
+        else:
+            body = render.full_text if mode == "full" else render.text
         summary_lines = summarize_payload(self._json_source_payload)
         preface = "\n".join(summary_lines)
         composed = f"{preface}\n\n{body}" if preface else body
