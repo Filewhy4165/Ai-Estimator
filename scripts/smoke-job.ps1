@@ -7,7 +7,8 @@ param(
     [string]$SelectedTrades = "",
     [string]$AnalysisMode = "auto",
     [string]$Notes = "",
-    [switch]$StartApi
+    [switch]$StartApi,
+    [switch]$ShowLauncherWindow
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,13 +52,19 @@ function Test-ApiHealth {
 
 function Start-Api {
     $apiExe = Join-Path $venv "Scripts\ai-estimator-api.exe"
+    $pythonw = Join-Path $venv "Scripts\pythonw.exe"
+    $windowStyle = if ($ShowLauncherWindow) { "Normal" } else { "Hidden" }
+    if ((-not $ShowLauncherWindow) -and (Test-Path -LiteralPath $pythonw)) {
+        Start-Process -FilePath $pythonw -ArgumentList "-m", "service.run_api" -WorkingDirectory $root
+        return
+    }
     if (Test-Path -LiteralPath $apiExe) {
-        Start-Process -FilePath $apiExe -WorkingDirectory $root -WindowStyle Normal
+        Start-Process -FilePath $apiExe -WorkingDirectory $root -WindowStyle $windowStyle
         return
     }
 
     if (Test-Path -LiteralPath $python) {
-        Start-Process -FilePath $python -ArgumentList "-m", "service.run_api" -WorkingDirectory $root -WindowStyle Normal
+        Start-Process -FilePath $python -ArgumentList "-m", "service.run_api" -WorkingDirectory $root -WindowStyle $windowStyle
         return
     }
 

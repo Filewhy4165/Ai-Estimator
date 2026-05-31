@@ -435,7 +435,7 @@ async def upload_spec_profile(
     standard_name: str = Form(""),
     project_type: str = Form(""),
     tags_csv: str = Form(""),
-    is_public: bool = Form(True),
+    is_public: bool = Form(False),
     notes: str = Form(""),
 ) -> SpecUploadResponse:
     organization_clean = organization.strip()
@@ -1445,19 +1445,72 @@ def _run_job(
 
 
 async def _save_uploads(files: list[UploadFile], target_dir: Path) -> list[str]:
+    max_files = _resolve_max_upload_files()
+    max_file_bytes = _resolve_max_upload_file_bytes()
+    max_total_bytes = _resolve_max_upload_total_bytes()
+    if len(files) > max_files:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Upload rejected: {len(files)} files exceeds limit of {max_files}. "
+                "Reduce the number of files or increase AI_ESTIMATOR_MAX_UPLOAD_FILES."
+            ),
+        )
+
     target_dir.mkdir(parents=True, exist_ok=True)
     pdf_paths: list[str] = []
+    total_written = 0
     for index, upload in enumerate(files):
         suffix = Path(upload.filename or "drawing.pdf").suffix or ".pdf"
         clean_name = _safe_file_name(Path(upload.filename or f"drawing_{index + 1}.pdf").stem)
         target_path = target_dir / f"{index + 1:03d}_{clean_name}{suffix}"
-        with target_path.open("wb") as handle:
-            while True:
-                chunk = await upload.read(_UPLOAD_CHUNK_SIZE_BYTES)
-                if not chunk:
-                    break
-                handle.write(chunk)
-        pdf_paths.append(str(target_path))
+        file_written = 0
+        try:
+            with target_path.open("wb") as handle:
+                while True:
+                    chunk = await upload.read(_UPLOAD_CHUNK_SIZE_BYTES)
+                    if not chunk:
+                        break
+                    chunk_size = len(chunk)
+                    file_written += chunk_size
+                    total_written += chunk_size
+                    if file_written > max_file_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                f"Upload rejected: '{upload.filename or target_path.name}' is too large "
+                                f"({file_written // (1024 * 1024)} MB). Limit is "
+                                f"{max_file_bytes // (1024 * 1024)} MB per file "
+                                "(AI_ESTIMATOR_MAX_UPLOAD_FILE_MB)."
+                            ),
+                        )
+                    if total_written > max_total_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "Upload rejected: total upload size exceeded limit "
+                                f"of {max_total_bytes // (1024 * 1024)} MB "
+                                "(AI_ESTIMATOR_MAX_UPLOAD_TOTAL_MB)."
+                            ),
+                        )
+                    handle.write(chunk)
+            if file_written <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Upload rejected: '{upload.filename or target_path.name}' is empty.",
+                )
+            pdf_paths.append(str(target_path))
+        except HTTPException:
+            if target_path.exists():
+                target_path.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            if target_path.exists():
+                target_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Upload failed while saving '{upload.filename or target_path.name}': {exc}",
+            ) from exc
     return pdf_paths
 
 
@@ -1484,6 +1537,52 @@ def _resolve_spec_store_path() -> str:
     if override:
         return override
     return str(Path.cwd() / ".ai_estimator" / "spec_store.json")
+
+
+def _resolve_positive_int_env(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _resolve_max_upload_files() -> int:
+    return _resolve_positive_int_env(
+        "AI_ESTIMATOR_MAX_UPLOAD_FILES",
+        default=20,
+        minimum=1,
+        maximum=500,
+    )
+
+
+def _resolve_max_upload_file_bytes() -> int:
+    mb = _resolve_positive_int_env(
+        "AI_ESTIMATOR_MAX_UPLOAD_FILE_MB",
+        default=200,
+        minimum=1,
+        maximum=10_000,
+    )
+    return mb * 1024 * 1024
+
+
+def _resolve_max_upload_total_bytes() -> int:
+    mb = _resolve_positive_int_env(
+        "AI_ESTIMATOR_MAX_UPLOAD_TOTAL_MB",
+        default=1_000,
+        minimum=1,
+        maximum=50_000,
+    )
+    return mb * 1024 * 1024
 
 
 def _resolve_max_queued_jobs() -> int | None:

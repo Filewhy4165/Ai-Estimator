@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from service.app import _save_uploads
 
 
@@ -38,3 +41,55 @@ def test_save_uploads_writes_file_chunks(tmp_path: Path) -> None:
     assert Path(saved_paths[1]).read_bytes() == b"B" * 7
     assert Path(saved_paths[0]).name.startswith("001_drawing_one")
     assert Path(saved_paths[1]).name.startswith("002_drawing_two")
+
+
+def test_save_uploads_rejects_when_file_count_exceeds_limit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AI_ESTIMATOR_MAX_UPLOAD_FILES", "1")
+    uploads = [
+        _UploadStub(filename="one.pdf", content=b"A"),
+        _UploadStub(filename="two.pdf", content=b"B"),
+    ]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_save_uploads(uploads, tmp_path / "uploads"))
+
+    assert exc.value.status_code == 413
+    assert "exceeds limit" in str(exc.value.detail).lower()
+
+
+def test_save_uploads_rejects_file_larger_than_limit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AI_ESTIMATOR_MAX_UPLOAD_FILE_MB", "1")
+    oversized = (1024 * 1024) + 1
+    uploads = [_UploadStub(filename="big.pdf", content=b"A" * oversized, read_chunk=65536)]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_save_uploads(uploads, tmp_path / "uploads"))
+
+    assert exc.value.status_code == 413
+    assert "too large" in str(exc.value.detail).lower()
+
+
+def test_save_uploads_rejects_when_total_size_exceeds_limit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AI_ESTIMATOR_MAX_UPLOAD_TOTAL_MB", "1")
+    chunk = (1024 * 512) + 256  # two files exceed 1 MB total
+    uploads = [
+        _UploadStub(filename="a.pdf", content=b"A" * chunk, read_chunk=16384),
+        _UploadStub(filename="b.pdf", content=b"B" * chunk, read_chunk=16384),
+    ]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_save_uploads(uploads, tmp_path / "uploads"))
+
+    assert exc.value.status_code == 413
+    assert "total upload size exceeded" in str(exc.value.detail).lower()
+
+
+def test_save_uploads_rejects_empty_file(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AI_ESTIMATOR_MAX_UPLOAD_FILES", "10")
+    uploads = [_UploadStub(filename="empty.pdf", content=b"")]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(_save_uploads(uploads, tmp_path / "uploads"))
+
+    assert exc.value.status_code == 400
+    assert "empty" in str(exc.value.detail).lower()

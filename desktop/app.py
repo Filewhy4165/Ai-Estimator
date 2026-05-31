@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Callable
+from typing import Any, Callable, TypeVar
 from threading import Thread
 from tkinter import END, BooleanVar, Button, Canvas, DoubleVar, Frame, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
@@ -27,6 +27,8 @@ from ai_estimator.benchmark_compare import (
     compare_reports_from_paths,
 )
 from ai_estimator.sheet_overrides import parse_sheet_overrides_json
+from desktop.output_presenter import JsonRenderResult, render_json_preview, summarize_payload
+from desktop.runtime_logging import DesktopRuntimeLogger
 
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
 _THEME = {
@@ -95,6 +97,11 @@ _LIGHT_SURFACES = {
     "muted": "#334155",
     "line": "#9FB2CC",
 }
+_OUTPUT_JSON_PREVIEW_MAX_CHARS = 240_000
+_OUTPUT_LOG_MAX_CHARS = 180_000
+_OUTPUT_TRIM_NOTICE = "[Output trimmed to keep the latest activity visible.]"
+_BACKGROUND_BUSY_MESSAGE = "Another request is already running. Wait for it to finish."
+_BGTaskT = TypeVar("_BGTaskT")
 
 
 def parse_selected_trade_tokens(selected_trades_csv: str) -> list[str]:
@@ -245,6 +252,7 @@ class DesktopEstimatorApp:
         self.spec_profile_ids = StringVar(value="")
         self.spec_organization = StringVar(value="NASA")
         self.include_public_specs = BooleanVar(value=True)
+        self.publish_uploaded_specs = BooleanVar(value=False)
         self.current_job_id = StringVar(value="")
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
@@ -309,6 +317,7 @@ class DesktopEstimatorApp:
         self._progress_bar_running = False
         self._auto_poll_cycle = 0
         self.status_text = StringVar(value="Ready.")
+        self.json_view_status_text = StringVar(value="JSON preview mode.")
         self.header_mode_text = StringVar(value="Mode: auto")
         self.header_job_text = StringVar(value="Job: none")
         self.header_files_text = StringVar(value="Files: none")
@@ -364,12 +373,23 @@ class DesktopEstimatorApp:
         self._native_menu: Menu | None = None
         self._native_menu_visible = True
         self._menu_hide_after_id: str | None = None
+        self._menu_show_after_id: str | None = None
         self._menu_hover_zone_px = 36
-        self._menu_hide_delay_ms = 900
+        self._menu_hover_zone_top_px = 0
+        self._menu_show_delay_ms = 180
+        self._menu_hide_delay_ms = 1300
+        self._menu_min_visible_ms = 900
         self._menu_last_activity_monotonic = 0.0
+        self._menu_visible_since_monotonic = 0.0
         self.project_profiles: dict[str, dict[str, object]] = {}
         self.spec_catalog: list[dict[str, object]] = []
         self.spec_org_catalog: list[str] = []
+        self._background_action_token = 0
+        self._json_render_result: JsonRenderResult | None = None
+        self._json_source_payload: dict[str, Any] = {}
+        self._json_view_mode = "preview"
+        self._settings_io_warning_active = False
+        self.runtime_logger = DesktopRuntimeLogger("EstimateForge")
         self.logo_path_candidates: list[Path] = [
             Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_small.png",
             Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_complete_logo.png",
@@ -865,9 +885,40 @@ class DesktopEstimatorApp:
             self.root.configure(menu=self._native_menu if visible else "")
             self._native_menu_visible = visible
             if visible:
-                self._menu_last_activity_monotonic = time.monotonic()
+                now = time.monotonic()
+                self._menu_visible_since_monotonic = now
+                self._menu_last_activity_monotonic = now
+            else:
+                self._menu_visible_since_monotonic = 0.0
         except Exception:
             return
+
+    def _cancel_native_menu_show(self) -> None:
+        if self._menu_show_after_id is None:
+            return
+        try:
+            self.root.after_cancel(self._menu_show_after_id)
+        except Exception:
+            pass
+        self._menu_show_after_id = None
+
+    def _schedule_native_menu_show(self) -> None:
+        if self._native_menu_visible:
+            return
+        if self._menu_show_after_id is not None:
+            return
+        self._menu_show_after_id = self.root.after(
+            int(self._menu_show_delay_ms),
+            self._attempt_native_menu_show,
+        )
+
+    def _attempt_native_menu_show(self) -> None:
+        self._menu_show_after_id = None
+        if self._native_menu_visible:
+            return
+        if not self._pointer_in_menu_hover_zone():
+            return
+        self._set_native_menu_visible(True)
 
     def _cancel_native_menu_hide(self) -> None:
         if self._menu_hide_after_id is None:
@@ -890,7 +941,7 @@ class DesktopEstimatorApp:
             pointer_y = int(self.root.winfo_pointery()) - int(self.root.winfo_rooty())
         except Exception:
             return False
-        return -24 <= pointer_y <= int(self._menu_hover_zone_px)
+        return int(self._menu_hover_zone_top_px) <= pointer_y <= int(self._menu_hover_zone_px)
 
     def _attempt_native_menu_hide(self) -> None:
         self._menu_hide_after_id = None
@@ -902,23 +953,32 @@ class DesktopEstimatorApp:
         if elapsed < (float(self._menu_hide_delay_ms) / 1000.0):
             self._schedule_native_menu_hide()
             return
+        visible_elapsed = time.monotonic() - float(self._menu_visible_since_monotonic)
+        if visible_elapsed < (float(self._menu_min_visible_ms) / 1000.0):
+            self._schedule_native_menu_hide()
+            return
         self._set_native_menu_visible(False)
 
     def _on_native_menu_activity(self, _event: object = None) -> None:
         self._menu_last_activity_monotonic = time.monotonic()
+        self._cancel_native_menu_show()
         self._cancel_native_menu_hide()
         self._set_native_menu_visible(True)
 
     def _on_root_motion_menu(self, event: object) -> None:
         if self._pointer_in_menu_hover_zone():
-            self._menu_last_activity_monotonic = time.monotonic()
             self._cancel_native_menu_hide()
-            self._set_native_menu_visible(True)
+            if self._native_menu_visible:
+                self._menu_last_activity_monotonic = time.monotonic()
+                return
+            self._schedule_native_menu_show()
             return
+        self._cancel_native_menu_show()
         if self._native_menu_visible:
             self._schedule_native_menu_hide()
 
     def _on_root_leave_menu(self, _event: object = None) -> None:
+        self._cancel_native_menu_show()
         if self._native_menu_visible:
             self._schedule_native_menu_hide()
 
@@ -1968,7 +2028,25 @@ class DesktopEstimatorApp:
         )
 
         json_tab.columnconfigure(0, weight=1)
-        json_tab.rowconfigure(0, weight=1)
+        json_tab.rowconfigure(1, weight=1)
+        json_controls = ttk.Frame(json_tab, padding=(8, 6, 8, 4))
+        json_controls.grid(row=0, column=0, columnspan=2, sticky="ew")
+        json_controls.columnconfigure(2, weight=1)
+        ttk.Button(
+            json_controls,
+            text="Show JSON Preview",
+            command=self._show_json_preview,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            json_controls,
+            text="Show Full JSON",
+            command=self._show_full_json,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(
+            json_controls,
+            textvariable=self.json_view_status_text,
+            style="FormLabel.TLabel",
+        ).grid(row=0, column=2, sticky="e", padx=(10, 0))
         self.output = Text(
             json_tab,
             wrap="none",
@@ -1981,11 +2059,11 @@ class DesktopEstimatorApp:
             pady=10,
             font=("Cascadia Mono", 10),
         )
-        self.output.grid(row=0, column=0, sticky="nsew")
+        self.output.grid(row=1, column=0, sticky="nsew")
         self.output_y_scroll = ttk.Scrollbar(json_tab, orient="vertical", command=self.output.yview)
-        self.output_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.output_y_scroll.grid(row=1, column=1, sticky="ns")
         self.output_x_scroll = ttk.Scrollbar(json_tab, orient="horizontal", command=self.output.xview)
-        self.output_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.output_x_scroll.grid(row=2, column=0, sticky="ew")
         self.output.configure(yscrollcommand=self.output_y_scroll.set, xscrollcommand=self.output_x_scroll.set)
 
         footer = ttk.Frame(frame)
@@ -2125,6 +2203,10 @@ class DesktopEstimatorApp:
                 payload.get("include_public_specs"),
                 bool(self.include_public_specs.get()),
             ),
+            "publish_uploaded_specs": _as_bool(
+                payload.get("publish_uploaded_specs"),
+                bool(self.publish_uploaded_specs.get()),
+            ),
             "notes": str(payload.get("notes", "")),
             "files": files,
             "include_all_template": _as_bool(
@@ -2158,6 +2240,7 @@ class DesktopEstimatorApp:
             "spec_profile_ids": self.spec_profile_ids.get().strip(),
             "spec_organization": self.spec_organization.get().strip(),
             "include_public_specs": bool(self.include_public_specs.get()),
+            "publish_uploaded_specs": bool(self.publish_uploaded_specs.get()),
             "notes": self.notes.get(),
             "files": [str(path).strip() for path in self.files if str(path).strip()],
             "include_all_template": bool(self.include_all_template.get()),
@@ -2180,6 +2263,7 @@ class DesktopEstimatorApp:
         self.spec_profile_ids.set(str(normalized.get("spec_profile_ids", "")).strip())
         self.spec_organization.set(str(normalized.get("spec_organization", "")).strip())
         self.include_public_specs.set(bool(normalized.get("include_public_specs", True)))
+        self.publish_uploaded_specs.set(bool(normalized.get("publish_uploaded_specs", False)))
         self.notes.set(str(normalized.get("notes", "")))
         self.include_all_template.set(bool(normalized.get("include_all_template", False)))
         self.include_unmapped_benchmark.set(bool(normalized.get("include_unmapped_benchmark", True)))
@@ -2220,7 +2304,11 @@ class DesktopEstimatorApp:
         if self.projects_store_path.exists():
             try:
                 loaded = json.loads(self.projects_store_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as exc:
+                self.runtime_logger.warn(f"Project profile load failed ({self.projects_store_path}): {exc}")
+                self.status_text.set(
+                    f"Could not read saved project profiles. Using defaults. ({self.projects_store_path.name})"
+                )
                 loaded = {}
             if isinstance(loaded, dict):
                 active_name = str(loaded.get("active_project_name", "")).strip()
@@ -2248,7 +2336,11 @@ class DesktopEstimatorApp:
         }
         try:
             self.projects_store_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        except Exception:
+        except Exception as exc:
+            self.runtime_logger.warn(f"Project profile save failed ({self.projects_store_path}): {exc}")
+            self.status_text.set(
+                f"Could not save project profiles. Check file permissions: {self.projects_store_path.name}"
+            )
             return
 
     def _save_project_profile_from_current(self) -> None:
@@ -2301,6 +2393,7 @@ class DesktopEstimatorApp:
         self.spec_profile_ids.set("")
         self.spec_organization.set("NASA")
         self.include_public_specs.set(True)
+        self.publish_uploaded_specs.set(False)
         self.files = []
         self._file_scan_meta = {}
         self._file_scan_token += 1
@@ -2506,6 +2599,11 @@ class DesktopEstimatorApp:
             text="Load Matching Specs",
             command=self._load_spec_catalog_for_org,
         ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Checkbutton(
+            specs_row,
+            text="Share Uploaded Spec Files Publicly",
+            variable=self.publish_uploaded_specs,
+        ).grid(row=1, column=1, columnspan=3, sticky="w", pady=(6, 0))
 
         ttk.Label(container, text="Selected Spec Profile IDs", style="FormLabel.TLabel").grid(
             row=10, column=0, sticky="w", pady=(8, 0)
@@ -2548,7 +2646,7 @@ class DesktopEstimatorApp:
         ).grid(row=0, column=0, sticky="w")
         ttk.Button(
             run_row,
-            text="Run Now (Wait)",
+            text="Run Now (Stay Here)",
             command=self._run_analysis,
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
         ttk.Button(
@@ -3058,6 +3156,12 @@ class DesktopEstimatorApp:
                 "pro_tip": "Select a sheet-overrides JSON file to apply authoritative sheet IDs/titles.",
                 "beginner_tip": "Choose a fix file for sheet names and numbers.",
             },
+            "publish_uploaded_specs": {
+                "pro_label": "Share Uploaded Spec Files Publicly",
+                "beginner_label": "Make Uploaded Specs Public",
+                "pro_tip": "If enabled, newly uploaded specs are visible to other users of the same API host.",
+                "beginner_tip": "Turn this on only if you want everyone on this server to reuse the uploaded spec.",
+            },
             "choose_pdfs": {
                 "pro_label": "Choose PDFs",
                 "beginner_label": "Pick Drawing Files",
@@ -3072,7 +3176,7 @@ class DesktopEstimatorApp:
             },
             "run_analysis": {
                 "pro_label": "Run Analysis",
-                "beginner_label": "Run Now (Wait)",
+                "beginner_label": "Run Now (Stay Here)",
                 "pro_tip": "Run synchronous analysis and return results directly in this window.",
                 "beginner_tip": "Run now and wait here until results finish.",
             },
@@ -4746,32 +4850,154 @@ class DesktopEstimatorApp:
         self.status_text.set("Quick start: submitting background job with auto-poll.")
         self._submit_async_job()
 
-    def _load_trade_catalog(self) -> None:
+    def _start_background_action(
+        self,
+        *,
+        message: str,
+        worker: Callable[[], _BGTaskT],
+        on_success: Callable[[_BGTaskT], None],
+        failure_heading: str,
+        failure_status: str,
+    ) -> None:
+        if self.request_task_running:
+            self.status_text.set(_BACKGROUND_BUSY_MESSAGE)
+            return
+
+        self._background_action_token += 1
+        token = self._background_action_token
+        self._set_request_busy(busy=True, message=message)
+        self.status_text.set(message)
+
+        def _run() -> None:
+            try:
+                result = worker()
+            except Exception as exc:
+                self.root.after(
+                    0,
+                    lambda: self._finish_background_action_failure(
+                        token=token,
+                        exc=exc,
+                        failure_heading=failure_heading,
+                        failure_status=failure_status,
+                    ),
+                )
+                return
+            self.root.after(
+                0,
+                lambda: self._finish_background_action_success(
+                    token=token,
+                    result=result,
+                    on_success=on_success,
+                    failure_heading=failure_heading,
+                    failure_status=failure_status,
+                ),
+            )
+
+        Thread(target=_run, daemon=True).start()
+
+    def _finish_background_action_success(
+        self,
+        *,
+        token: int,
+        result: _BGTaskT,
+        on_success: Callable[[_BGTaskT], None],
+        failure_heading: str,
+        failure_status: str,
+    ) -> None:
+        if token != self._background_action_token:
+            return
+        self._set_request_busy(busy=False)
         try:
-            payload = self._refresh_trade_catalog_from_api(update_output=True)
-            trade_count = len(self.trade_catalog)
-            self._populate_trade_options(self.trade_catalog, preserve_selected=True, select_all=False)
-            self.status_text.set(f"Loaded trade catalog: {trade_count} trade(s).")
+            on_success(result)
         except Exception as exc:
-            self._set_output_text(f"Failed to load trade catalog:\n{exc}")
+            self._finish_background_action_failure(
+                token=token,
+                exc=exc,
+                failure_heading=failure_heading,
+                failure_status=failure_status,
+            )
+
+    def _finish_background_action_failure(
+        self,
+        *,
+        token: int,
+        exc: Exception,
+        failure_heading: str,
+        failure_status: str,
+    ) -> None:
+        if token != self._background_action_token:
+            return
+        self._set_request_busy(busy=False)
+        self.runtime_logger.error(f"{failure_heading}: {exc}")
+        self.status_text.set(failure_status)
+        self._set_output_text(f"{failure_heading}:\n{exc}")
+
+    def _apply_trade_catalog_payload(self, payload: dict, *, update_output: bool) -> None:
+        analysis_modes = payload.get("analysis_modes", [])
+        trades = payload.get("trades", [])
+        if not isinstance(analysis_modes, list) or not isinstance(trades, list):
+            raise RuntimeError("Unexpected trade catalog format from API.")
+
+        parsed_modes: list[str] = []
+        for item in analysis_modes:
+            token = str(item).strip()
+            if token:
+                parsed_modes.append(token)
+
+        parsed_trades: list[str] = []
+        for item in trades:
+            if not isinstance(item, dict):
+                continue
+            token = str(item.get("trade", "")).strip()
+            if token:
+                parsed_trades.append(token)
+
+        if not parsed_modes or not parsed_trades:
+            raise RuntimeError("Trade catalog response did not include usable modes/trades.")
+
+        self.analysis_mode_catalog = parsed_modes
+        self.trade_catalog = parsed_trades
+        self.analysis_mode_combo["values"] = self.analysis_mode_catalog
+        if self.analysis_mode.get().strip() not in self.analysis_mode_catalog:
+            self.analysis_mode.set(self.analysis_mode_catalog[0])
+        self._populate_trade_options(self.trade_catalog, preserve_selected=True, select_all=False)
+        if update_output:
+            self._set_output_json(payload)
+
+    def _load_trade_catalog(self) -> None:
+        self._start_background_action(
+            message="Loading work-type catalog from API...",
+            worker=lambda: self._request_json("GET", "/v1/meta/trades", timeout=30),
+            on_success=self._on_load_trade_catalog_success,
+            failure_heading="Failed to load trade catalog",
+            failure_status="Trade catalog load failed.",
+        )
+
+    def _on_load_trade_catalog_success(self, payload: dict) -> None:
+        self._apply_trade_catalog_payload(payload, update_output=True)
+        trade_count = len(self.trade_catalog)
+        self.status_text.set(f"Loaded work-type catalog: {trade_count} trade(s).")
 
     def _refresh_spec_organizations(self) -> None:
-        try:
-            payload = self._request_json("GET", "/v1/specs/organizations", timeout=45)
-            organizations = payload.get("organizations", [])
-            if not isinstance(organizations, list):
-                raise RuntimeError("Unexpected organizations payload format.")
-            cleaned = [
-                str(item).strip() for item in organizations if isinstance(item, str) and str(item).strip()
-            ]
-            self.spec_org_catalog = cleaned
-            if self.spec_org_combo is not None:
-                self.spec_org_combo.configure(values=self.spec_org_catalog)
-            if not self.spec_organization.get().strip() and self.spec_org_catalog:
-                self.spec_organization.set(self.spec_org_catalog[0])
-            self.status_text.set(f"Loaded {len(self.spec_org_catalog)} spec organization(s).")
-        except Exception as exc:
-            self._set_output_text(f"Failed to load spec organizations:\n{exc}")
+        self._start_background_action(
+            message="Loading agencies and spec organizations...",
+            worker=lambda: self._request_json("GET", "/v1/specs/organizations", timeout=45),
+            on_success=self._on_refresh_spec_organizations_success,
+            failure_heading="Failed to load spec organizations",
+            failure_status="Spec organization load failed.",
+        )
+
+    def _on_refresh_spec_organizations_success(self, payload: dict) -> None:
+        organizations = payload.get("organizations", [])
+        if not isinstance(organizations, list):
+            raise RuntimeError("Unexpected organizations payload format.")
+        cleaned = [str(item).strip() for item in organizations if isinstance(item, str) and str(item).strip()]
+        self.spec_org_catalog = cleaned
+        if self.spec_org_combo is not None:
+            self.spec_org_combo.configure(values=self.spec_org_catalog)
+        if not self.spec_organization.get().strip() and self.spec_org_catalog:
+            self.spec_organization.set(self.spec_org_catalog[0])
+        self.status_text.set(f"Loaded {len(self.spec_org_catalog)} spec organization(s).")
 
     def _load_spec_catalog_for_org(self) -> None:
         org = self.spec_organization.get().strip()
@@ -4781,28 +5007,36 @@ class DesktopEstimatorApp:
 
             params.append(f"organization={quote_plus(org)}")
         path = f"/v1/specs/catalog?{'&'.join(params)}"
-        try:
-            payload = self._request_json("GET", path, timeout=60)
-            items = payload.get("items", [])
-            if not isinstance(items, list):
-                raise RuntimeError("Unexpected spec catalog payload format.")
-            self.spec_catalog = [item for item in items if isinstance(item, dict)]
-            spec_ids = [
-                str(item.get("spec_id", "")).strip()
-                for item in self.spec_catalog
-                if str(item.get("spec_id", "")).strip()
-            ]
-            if spec_ids:
-                self.spec_profile_ids.set(",".join(spec_ids))
-            self._set_output_json(payload)
-            self.status_text.set(
-                f"Loaded {len(self.spec_catalog)} spec profile(s) for '{org or 'all organizations'}'."
-            )
-            self._save_settings()
-        except Exception as exc:
-            self._set_output_text(f"Failed to load spec catalog:\n{exc}")
+        self._start_background_action(
+            message=f"Loading matching specs for '{org or 'all organizations'}'...",
+            worker=lambda: self._request_json("GET", path, timeout=60),
+            on_success=lambda payload: self._on_load_spec_catalog_success(payload, org=org),
+            failure_heading="Failed to load spec catalog",
+            failure_status="Spec catalog load failed.",
+        )
+
+    def _on_load_spec_catalog_success(self, payload: dict, *, org: str) -> None:
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            raise RuntimeError("Unexpected spec catalog payload format.")
+        self.spec_catalog = [item for item in items if isinstance(item, dict)]
+        spec_ids = [
+            str(item.get("spec_id", "")).strip()
+            for item in self.spec_catalog
+            if str(item.get("spec_id", "")).strip()
+        ]
+        if spec_ids:
+            self.spec_profile_ids.set(",".join(spec_ids))
+        self._set_output_json(payload)
+        self.status_text.set(
+            f"Loaded {len(self.spec_catalog)} spec profile(s) for '{org or 'all organizations'}'."
+        )
+        self._save_settings()
 
     def _upload_spec_file(self) -> None:
+        if self.request_task_running:
+            self.status_text.set(_BACKGROUND_BUSY_MESSAGE)
+            return
         selected = filedialog.askopenfilename(
             title="Select project spec file",
             filetypes=[
@@ -4816,10 +5050,13 @@ class DesktopEstimatorApp:
             return
         org = self.spec_organization.get().strip() or "General"
         title = Path(selected).stem
+        is_public = bool(self.publish_uploaded_specs.get())
         tags_csv = "construction,specifications"
-        try:
-            with open(selected, "rb") as handle:
-                files = [("spec_file", (Path(selected).name, handle, "application/octet-stream"))]
+        selected_path = Path(selected)
+
+        def _worker() -> dict:
+            with selected_path.open("rb") as handle:
+                files = [("spec_file", (selected_path.name, handle, "application/octet-stream"))]
                 data = {
                     "organization": org,
                     "agency": org,
@@ -4827,35 +5064,44 @@ class DesktopEstimatorApp:
                     "standard_name": "",
                     "project_type": "",
                     "tags_csv": tags_csv,
-                    "is_public": "true",
+                    "is_public": "true" if is_public else "false",
                     "notes": "Uploaded from desktop setup window.",
                 }
-                payload = self._request_json(
+                return self._request_json(
                     "POST",
                     "/v1/specs/upload",
                     data=data,
                     files=files,
                     timeout=300,
                 )
-            item = payload.get("item", {})
-            if isinstance(item, dict):
-                spec_id = str(item.get("spec_id", "")).strip()
-                if spec_id:
-                    existing_ids = [
-                        token.strip()
-                        for token in self.spec_profile_ids.get().replace(";", ",").split(",")
-                        if token.strip()
-                    ]
-                    existing = {token.lower() for token in existing_ids}
-                    if spec_id.lower() not in existing:
-                        existing_ids.append(spec_id)
-                        self.spec_profile_ids.set(",".join(existing_ids))
-            self._set_output_json(payload)
-            self.status_text.set("Spec file uploaded and added to selected spec IDs.")
-            self._refresh_spec_organizations()
-            self._save_settings()
-        except Exception as exc:
-            self._set_output_text(f"Failed to upload spec file:\n{exc}")
+
+        self._start_background_action(
+            message=f"Uploading spec file: {selected_path.name}...",
+            worker=_worker,
+            on_success=self._on_upload_spec_file_success,
+            failure_heading="Failed to upload spec file",
+            failure_status="Spec upload failed.",
+        )
+
+    def _on_upload_spec_file_success(self, payload: dict) -> None:
+        item = payload.get("item", {})
+        if isinstance(item, dict):
+            spec_id = str(item.get("spec_id", "")).strip()
+            if spec_id:
+                existing_ids = [
+                    token.strip()
+                    for token in self.spec_profile_ids.get().replace(";", ",").split(",")
+                    if token.strip()
+                ]
+                existing = {token.lower() for token in existing_ids}
+                if spec_id.lower() not in existing:
+                    existing_ids.append(spec_id)
+                    self.spec_profile_ids.set(",".join(existing_ids))
+        self._set_output_json(payload)
+        scope_text = "public catalog" if bool(self.publish_uploaded_specs.get()) else "private catalog"
+        self.status_text.set(f"Spec file uploaded to {scope_text} and added to selected spec IDs.")
+        self._save_settings()
+        self._refresh_spec_organizations()
 
     def _search_spec_submittals(self) -> None:
         spec_ids = self.spec_profile_ids.get().strip()
@@ -4865,13 +5111,18 @@ class DesktopEstimatorApp:
         from urllib.parse import quote_plus
 
         path = f"/v1/specs/submittals/search?spec_profile_ids={quote_plus(spec_ids)}&max_results=20"
-        try:
-            payload = self._request_json("GET", path, timeout=120)
-            self._set_output_json(payload)
-            item_count = len(payload.get("items", [])) if isinstance(payload.get("items"), list) else 0
-            self.status_text.set(f"Submittal lookup complete: {item_count} result link(s).")
-        except Exception as exc:
-            self._set_output_text(f"Failed to search submittals:\n{exc}")
+        self._start_background_action(
+            message="Searching compliant submittal links...",
+            worker=lambda: self._request_json("GET", path, timeout=120),
+            on_success=self._on_search_spec_submittals_success,
+            failure_heading="Failed to search submittals",
+            failure_status="Submittal lookup failed.",
+        )
+
+    def _on_search_spec_submittals_success(self, payload: dict) -> None:
+        self._set_output_json(payload)
+        item_count = len(payload.get("items", [])) if isinstance(payload.get("items"), list) else 0
+        self.status_text.set(f"Submittal lookup complete: {item_count} result link(s).")
 
     def _validate_selected_trades_clicked(self) -> None:
         try:
@@ -5699,37 +5950,7 @@ class DesktopEstimatorApp:
 
     def _refresh_trade_catalog_from_api(self, *, update_output: bool) -> dict:
         payload = self._request_json("GET", "/v1/meta/trades", timeout=30)
-        analysis_modes = payload.get("analysis_modes", [])
-        trades = payload.get("trades", [])
-        if not isinstance(analysis_modes, list) or not isinstance(trades, list):
-            raise RuntimeError("Unexpected trade catalog format from API.")
-
-        parsed_modes: list[str] = []
-        for item in analysis_modes:
-            token = str(item).strip()
-            if token:
-                parsed_modes.append(token)
-
-        parsed_trades: list[str] = []
-        for item in trades:
-            if not isinstance(item, dict):
-                continue
-            token = str(item.get("trade", "")).strip()
-            if token:
-                parsed_trades.append(token)
-
-        if not parsed_modes or not parsed_trades:
-            raise RuntimeError("Trade catalog response did not include usable modes/trades.")
-
-        self.analysis_mode_catalog = parsed_modes
-        self.trade_catalog = parsed_trades
-        self.analysis_mode_combo["values"] = self.analysis_mode_catalog
-        if self.analysis_mode.get().strip() not in self.analysis_mode_catalog:
-            self.analysis_mode.set(self.analysis_mode_catalog[0])
-        self._populate_trade_options(self.trade_catalog, preserve_selected=True, select_all=False)
-
-        if update_output:
-            self._set_output_json(payload)
+        self._apply_trade_catalog_payload(payload, update_output=update_output)
         return payload
 
     def _validate_scope_inputs_before_submit(self) -> str:
@@ -6119,25 +6340,98 @@ class DesktopEstimatorApp:
                 filtered_sheets.append(row)
         if filtered_sheets:
             filtered["sheets_detected"] = filtered_sheets
+        self._set_output_json(filtered, sync_views=False, prefer_json_tab=True)
+
+    def _render_json_panel(self) -> None:
+        render = self._json_render_result
+        if render is None:
+            self.json_view_status_text.set("No JSON payload loaded yet.")
+            self._write_output_text("")
+            return
+
+        mode = self._json_view_mode
+        if mode not in {"preview", "full"}:
+            mode = "preview"
+
+        body = render.full_text if mode == "full" else render.text
+        summary_lines = summarize_payload(self._json_source_payload)
+        preface = "\n".join(summary_lines)
+        composed = f"{preface}\n\n{body}" if preface else body
+        self._write_output_text(composed)
+
+        if mode == "full":
+            self.json_view_status_text.set(f"Full JSON: {render.total_chars:,} chars shown.")
+        elif render.truncated:
+            self.json_view_status_text.set(
+                f"Preview JSON: {render.shown_chars:,}/{render.total_chars:,} chars shown."
+            )
+        else:
+            self.json_view_status_text.set(f"Preview JSON: full payload fits ({render.total_chars:,} chars).")
+
+    def _show_json_preview(self) -> None:
+        self._json_view_mode = "preview"
+        self._render_json_panel()
         if self.results_notebook is not None:
             self.results_notebook.select(2)
-        self.output.delete("1.0", END)
-        self.output.insert(END, json.dumps(filtered, indent=2))
 
-    def _set_output_json(self, payload: dict) -> None:
+    def _show_full_json(self) -> None:
+        self._json_view_mode = "full"
+        self._render_json_panel()
+        if self.results_notebook is not None:
+            self.results_notebook.select(2)
+
+    def _write_output_text(self, text: str, *, cap_chars: int | None = None) -> None:
+        rendered = text
+        if isinstance(cap_chars, int) and cap_chars > 0 and len(rendered) > cap_chars:
+            rendered = f"{_OUTPUT_TRIM_NOTICE}\n{rendered[-cap_chars:]}"
         self.output.delete("1.0", END)
-        self.output.insert(END, json.dumps(payload, indent=2))
-        self._sync_visual_result_views(payload)
+        self.output.insert(END, rendered)
+
+    def _trim_output_to_recent_chars(self, *, max_chars: int) -> None:
+        if max_chars < 1:
+            return
+        current = self.output.get("1.0", "end-1c")
+        if len(current) <= max_chars:
+            return
+        trimmed = current[-max_chars:]
+        self.output.delete("1.0", END)
+        self.output.insert(END, f"{_OUTPUT_TRIM_NOTICE}\n{trimmed}")
+
+    def _set_output_json(
+        self,
+        payload: dict,
+        *,
+        sync_views: bool = True,
+        prefer_json_tab: bool = False,
+    ) -> None:
+        self._json_source_payload = payload if isinstance(payload, dict) else {}
+        self._json_render_result = render_json_preview(
+            self._json_source_payload,
+            max_chars=_OUTPUT_JSON_PREVIEW_MAX_CHARS,
+        )
+        self._json_view_mode = "preview"
+        self._render_json_panel()
+
+        if sync_views:
+            self._sync_visual_result_views(payload)
+            if self.results_notebook is not None:
+                result_payload = self._extract_result_payload(payload)
+                self.results_notebook.select(0 if result_payload else 2)
+        elif prefer_json_tab and self.results_notebook is not None:
+            self.results_notebook.select(2)
 
     def _set_output_text(self, text: str) -> None:
-        self.output.delete("1.0", END)
-        self.output.insert(END, text)
+        self._json_source_payload = {}
+        self._json_render_result = None
+        self.json_view_status_text.set("Text output.")
+        self._write_output_text(text, cap_chars=_OUTPUT_LOG_MAX_CHARS)
         self._sync_visual_result_views({})
 
     def _append_output_line(self, text: str) -> None:
         if not text:
             return
         self.output.insert(END, f"{text}\n")
+        self._trim_output_to_recent_chars(max_chars=_OUTPUT_LOG_MAX_CHARS)
         self.output.see(END)
 
     def _make_job_poll_message(self, job_id: str, status: str) -> str:
@@ -6416,10 +6710,18 @@ class DesktopEstimatorApp:
         try:
             raw = self.settings_path.read_text(encoding="utf-8")
             loaded = json.loads(raw)
-        except Exception:
+        except Exception as exc:
+            self.runtime_logger.warn(f"Settings load failed ({self.settings_path}): {exc}")
+            self._settings_io_warning_active = True
+            self.status_text.set(
+                f"Could not read saved settings. Defaults were loaded. ({self.settings_path.name})"
+            )
             return
         if not isinstance(loaded, dict):
             return
+        if self._settings_io_warning_active:
+            self._settings_io_warning_active = False
+            self.status_text.set("Saved settings loaded.")
 
         api_url = loaded.get("api_url")
         if isinstance(api_url, str) and api_url.strip():
@@ -6453,6 +6755,10 @@ class DesktopEstimatorApp:
         include_public_specs = loaded.get("include_public_specs")
         if isinstance(include_public_specs, bool):
             self.include_public_specs.set(include_public_specs)
+
+        publish_uploaded_specs = loaded.get("publish_uploaded_specs")
+        if isinstance(publish_uploaded_specs, bool):
+            self.publish_uploaded_specs.set(publish_uploaded_specs)
 
         current_job_id = loaded.get("current_job_id")
         if isinstance(current_job_id, str):
@@ -6566,6 +6872,7 @@ class DesktopEstimatorApp:
             "spec_profile_ids": self.spec_profile_ids.get().strip(),
             "spec_organization": self.spec_organization.get().strip(),
             "include_public_specs": bool(self.include_public_specs.get()),
+            "publish_uploaded_specs": bool(self.publish_uploaded_specs.get()),
             "current_job_id": self.current_job_id.get().strip(),
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
@@ -6588,9 +6895,16 @@ class DesktopEstimatorApp:
         }
         try:
             self.settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        except Exception:
-            # Non-fatal: app should continue even if settings write fails.
+        except Exception as exc:
+            self.runtime_logger.warn(f"Settings save failed ({self.settings_path}): {exc}")
+            self._settings_io_warning_active = True
+            self.status_text.set(
+                f"Could not save desktop settings. Check permissions: {self.settings_path.name}"
+            )
             return
+        if self._settings_io_warning_active:
+            self._settings_io_warning_active = False
+            self.status_text.set("Settings save restored.")
 
     def _request_headers(self, *, extra: object = None) -> dict[str, str]:
         headers: dict[str, str] = {}
@@ -6821,8 +7135,11 @@ class DesktopEstimatorApp:
         }
         if os.name == "nt":
             create_no_window = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            detached = int(getattr(subprocess, "DETACHED_PROCESS", 0))
-            popen_kwargs["creationflags"] = create_no_window | detached
+            popen_kwargs["creationflags"] = create_no_window
+            startup_info = subprocess.STARTUPINFO()
+            startup_info.dwFlags |= int(getattr(subprocess, "STARTF_USESHOWWINDOW", 0))
+            startup_info.wShowWindow = int(getattr(subprocess, "SW_HIDE", 0))
+            popen_kwargs["startupinfo"] = startup_info
         else:
             popen_kwargs["start_new_session"] = True
 
@@ -6868,7 +7185,10 @@ class DesktopEstimatorApp:
             return False
 
     def _save_output(self) -> None:
-        content = self.output.get("1.0", END).strip()
+        if self._json_render_result is not None and self._json_source_payload:
+            content = self._json_render_result.full_text.strip()
+        else:
+            content = self.output.get("1.0", END).strip()
         if not content:
             self.status_text.set("Nothing to save.")
             return

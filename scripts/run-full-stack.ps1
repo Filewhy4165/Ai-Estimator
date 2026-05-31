@@ -1,6 +1,7 @@
 param(
     [switch]$SkipApi,
-    [switch]$SkipDesktop
+    [switch]$SkipDesktop,
+    [switch]$ShowLauncherWindows
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +13,7 @@ if (-not (Test-Path -LiteralPath $venv)) {
 }
 
 $python = Join-Path $venv "Scripts\python.exe"
+$pythonw = Join-Path $venv "Scripts\pythonw.exe"
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Python executable not found in $venv."
 }
@@ -25,10 +27,11 @@ function Start-Command {
         [string]$command,
         [string]$arguments = ""
     )
+    $windowStyle = if ($ShowLauncherWindows) { "Normal" } else { "Hidden" }
     if ([string]::IsNullOrWhiteSpace($arguments)) {
-        Start-Process -FilePath $command -WorkingDirectory $root
+        Start-Process -FilePath $command -WorkingDirectory $root -WindowStyle $windowStyle
     } else {
-        Start-Process -FilePath $command -ArgumentList $arguments -WorkingDirectory $root
+        Start-Process -FilePath $command -ArgumentList $arguments -WorkingDirectory $root -WindowStyle $windowStyle
     }
 }
 
@@ -63,8 +66,12 @@ function Invoke-LaunchCommand {
 }
 
 if (-not $SkipApi) {
-    $apiCmd = Resolve-Command -primaryExe (Join-Path $venv "Scripts\ai-estimator-api.exe") -fallbackModule "-m service.run_api"
-    Invoke-LaunchCommand -name "API" -exe $apiCmd[0] -arguments $apiCmd[1]
+    if ((-not $ShowLauncherWindows) -and (Test-Path -LiteralPath $pythonw)) {
+        Invoke-LaunchCommand -name "API" -exe $pythonw -arguments "-m service.run_api"
+    } else {
+        $apiCmd = Resolve-Command -primaryExe (Join-Path $venv "Scripts\ai-estimator-api.exe") -fallbackModule "-m service.run_api"
+        Invoke-LaunchCommand -name "API" -exe $apiCmd[0] -arguments $apiCmd[1]
+    }
     $api_started = $true
 } else {
     $api_started = $false
@@ -74,8 +81,16 @@ if (-not $SkipDesktop) {
     if ($api_started) {
         Start-Sleep -Seconds 2
     }
-    $desktopCmd = Resolve-Command -primaryExe (Join-Path $venv "Scripts\ai-estimator-desktop.exe") -fallbackModule "-m desktop.app"
-    Invoke-LaunchCommand -name "Desktop" -exe $desktopCmd[0] -arguments $desktopCmd[1]
+    if ((-not $ShowLauncherWindows) -and (Test-Path -LiteralPath $pythonw)) {
+        Invoke-LaunchCommand -name "Desktop" -exe $pythonw -arguments "-m desktop.app"
+    } else {
+        $desktopCmd = Resolve-Command -primaryExe (Join-Path $venv "Scripts\ai-estimator-desktop.exe") -fallbackModule "-m desktop.app"
+        Invoke-LaunchCommand -name "Desktop" -exe $desktopCmd[0] -arguments $desktopCmd[1]
+    }
 }
 
-Write-Output "Launched full stack. API window and desktop window were started in separate windows."
+if ($ShowLauncherWindows) {
+    Write-Output "Launched full stack with visible launcher windows."
+} else {
+    Write-Output "Launched full stack with hidden launcher windows."
+}
