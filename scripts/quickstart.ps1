@@ -9,7 +9,8 @@ param(
     [bool]$AutoStartApi = $true,
     [switch]$SkipApi,
     [switch]$SkipDesktop,
-    [switch]$SkipSmoke
+    [switch]$SkipSmoke,
+    [switch]$ShowLauncherWindows
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,13 +58,19 @@ function Test-ApiHealth {
 function Start-Api {
     $apiExe = Join-Path $venv "Scripts\ai-estimator-api.exe"
     $python = Join-Path $venv "Scripts\python.exe"
+    $pythonw = Join-Path $venv "Scripts\pythonw.exe"
+    $windowStyle = if ($ShowLauncherWindows) { "Normal" } else { "Hidden" }
+    if ((-not $ShowLauncherWindows) -and (Test-Path -LiteralPath $pythonw)) {
+        Start-Process -FilePath $pythonw -ArgumentList "-m", "service.run_api" -WorkingDirectory $root
+        return
+    }
     if (Test-Path -LiteralPath $apiExe) {
-        Start-Process -FilePath $apiExe -WorkingDirectory $root -WindowStyle Normal
+        Start-Process -FilePath $apiExe -WorkingDirectory $root -WindowStyle $windowStyle
         return
     }
 
     if (Test-Path -LiteralPath $python) {
-        Start-Process -FilePath $python -ArgumentList "-m", "service.run_api" -WorkingDirectory $root -WindowStyle Normal
+        Start-Process -FilePath $python -ArgumentList "-m", "service.run_api" -WorkingDirectory $root -WindowStyle $windowStyle
         return
     }
 
@@ -73,14 +80,21 @@ function Start-Api {
 function Start-Desktop {
     $desktopExe = Join-Path $venv "Scripts\ai-estimator-desktop.exe"
     $python = Join-Path $venv "Scripts\python.exe"
+    $pythonw = Join-Path $venv "Scripts\pythonw.exe"
+    $windowStyle = if ($ShowLauncherWindows) { "Normal" } else { "Hidden" }
+
+    if ((-not $ShowLauncherWindows) -and (Test-Path -LiteralPath $pythonw)) {
+        Start-Process -FilePath $pythonw -ArgumentList "-m", "desktop.app" -WorkingDirectory $root
+        return
+    }
 
     if (Test-Path -LiteralPath $desktopExe) {
-        Start-Process -FilePath $desktopExe -WorkingDirectory $root -WindowStyle Normal
+        Start-Process -FilePath $desktopExe -WorkingDirectory $root -WindowStyle $windowStyle
         return
     }
 
     if (Test-Path -LiteralPath $python) {
-        Start-Process -FilePath $python -ArgumentList "-m", "desktop.app" -WorkingDirectory $root -WindowStyle Normal
+        Start-Process -FilePath $python -ArgumentList "-m", "desktop.app" -WorkingDirectory $root -WindowStyle $windowStyle
         return
     }
 

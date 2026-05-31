@@ -220,7 +220,7 @@ Desktop async workflow:
 25. Use `Validate Trades` to pre-check selected trade input before submit/rerun
 26. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
 27. In `Project Setup`, use `Load Agencies` and `Load Matching Specs` to attach public agency/company specs (for example NASA TSRC) to the run
-28. Use `Upload Spec File` to add your own spec package into the shared spec catalog on the API host
+28. Use `Upload Spec File` to add your own spec package (private by default unless `Share Uploaded Spec Files Publicly` is enabled)
 29. Use `Find Compliant Submittal Links` to generate spec-informed product submittal queries and optional web links
 30. API applies authority order: drawings first, then specifications, then assumptions
 31. `spec_context` is included in output payload to show applied specs, standards detected, and trades requested by specs
@@ -426,6 +426,9 @@ Environment variables:
 - `AI_ESTIMATOR_CLEANUP_UPLOADS` set global cleanup `true|false` for both sync/async
 - `AI_ESTIMATOR_CLEANUP_SYNC_UPLOADS` set cleanup for `/v1/analyze` uploads (default `true`)
 - `AI_ESTIMATOR_CLEANUP_ASYNC_UPLOADS` set cleanup for async job uploads (default `false`)
+- `AI_ESTIMATOR_MAX_UPLOAD_FILES` max files per upload request (default `20`, clamped `1..500`)
+- `AI_ESTIMATOR_MAX_UPLOAD_FILE_MB` max size per uploaded file in MB (default `200`, clamped `1..2048`)
+- `AI_ESTIMATOR_MAX_UPLOAD_TOTAL_MB` max total size per upload request in MB (default `1000`, clamped `1..8192`)
 
 Example (PowerShell):
 

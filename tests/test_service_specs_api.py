@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import service.app as service_app
 from service.spec_store import SpecStore
 
@@ -65,3 +67,8 @@ def test_search_spec_submittals_returns_queries_when_web_disabled(monkeypatch, t
     assert payload["query_count"] > 0
     assert payload["web_lookup_enabled"] is False
     assert payload["items"] == []
+
+
+def test_spec_upload_route_defaults_to_private() -> None:
+    default = inspect.signature(service_app.upload_spec_profile).parameters["is_public"].default
+    assert getattr(default, "default", None) is False
