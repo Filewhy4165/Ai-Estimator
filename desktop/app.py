@@ -231,7 +231,7 @@ class HoverTooltip:
 class DesktopEstimatorApp:
     def __init__(self) -> None:
         self.root = Tk()
-        self.root.title("AI Estimator Command Center")
+        self.root.title("EstimateForge Command Center")
         self.root.geometry("1440x900")
         self.root.minsize(1200, 740)
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
@@ -351,6 +351,7 @@ class DesktopEstimatorApp:
         self.calculators_canvas: Canvas | None = None
         self._calculator_popups: dict[str, Toplevel] = {}
         self.logo_image: PhotoImage | None = None
+        self.app_icon_image: PhotoImage | None = None
         self.logo_label: Label | None = None
         self.main_scroll_canvas: Canvas | None = None
         self.setup_scroll_canvas: Canvas | None = None
@@ -370,8 +371,14 @@ class DesktopEstimatorApp:
         self.spec_catalog: list[dict[str, object]] = []
         self.spec_org_catalog: list[str] = []
         self.logo_path_candidates: list[Path] = [
+            Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_small.png",
+            Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_complete_logo.png",
+            Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_e_logo.png",
             Path(__file__).resolve().parents[1] / "desktop" / "assets" / "tech_build_logo.png",
-            Path(r"C:\Users\sthom\OneDrive\----!!!!TechBuild!!!!----\Tech Build Solutions Logos\1.png"),
+        ]
+        self.icon_path_candidates: list[Path] = [
+            Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_e_logo.png",
+            Path(__file__).resolve().parents[1] / "desktop" / "assets" / "estimate_forge_small.png",
         ]
         self.output_y_scroll: ttk.Scrollbar | None = None
         self.output_x_scroll: ttk.Scrollbar | None = None
@@ -393,6 +400,7 @@ class DesktopEstimatorApp:
 
         self._configure_style()
         self._build_ui()
+        self._install_app_icon()
         self._bind_shortcuts()
         self._load_project_profiles()
         self._load_settings()
@@ -474,38 +482,48 @@ class DesktopEstimatorApp:
     def _install_company_logo(self) -> None:
         if self.logo_label is None:
             return
-        logo_path: Path | None = None
-        for candidate in self.logo_path_candidates:
-            if candidate.exists():
-                logo_path = candidate
-                break
         try:
             self.logo_label.configure(background=_THEME["surface"])
         except Exception:
             pass
 
-        if logo_path is None:
-            self.logo_image = None
+        for candidate in self.logo_path_candidates:
+            if not candidate.exists():
+                continue
             try:
-                self.logo_label.configure(image="", text="")
+                image = PhotoImage(file=str(candidate))
+                max_width = 200
+                max_height = 56
+                down_x = max(1, math.ceil(image.width() / max_width))
+                down_y = max(1, math.ceil(image.height() / max_height))
+                downsample = max(down_x, down_y)
+                if downsample > 1:
+                    image = image.subsample(downsample, downsample)
+                self.logo_image = image
+                self.logo_label.configure(image=self.logo_image, text="")
+                return
             except Exception:
-                pass
-            return
+                continue
 
-        try:
-            image = PhotoImage(file=str(logo_path))
-            max_width = 140
-            max_height = 50
-            down_x = max(1, math.ceil(image.width() / max_width))
-            down_y = max(1, math.ceil(image.height() / max_height))
-            downsample = max(down_x, down_y)
-            if downsample > 1:
-                image = image.subsample(downsample, downsample)
-            self.logo_image = image
-            self.logo_label.configure(image=self.logo_image, text="")
-        except Exception:
-            self.logo_image = None
-            self.logo_label.configure(image="", text="Tech Build Solutions", fg=_THEME["muted"])
+        self.logo_image = None
+        self.logo_label.configure(image="", text="EstimateForge", fg=_THEME["muted"])
+
+    def _install_app_icon(self) -> None:
+        for candidate in self.icon_path_candidates:
+            if not candidate.exists():
+                continue
+            try:
+                icon_image = PhotoImage(file=str(candidate))
+                down_x = max(1, math.ceil(icon_image.width() / 128))
+                down_y = max(1, math.ceil(icon_image.height() / 128))
+                downsample = max(down_x, down_y)
+                if downsample > 1:
+                    icon_image = icon_image.subsample(downsample, downsample)
+                self.app_icon_image = icon_image
+                self.root.iconphoto(True, self.app_icon_image)
+                return
+            except Exception:
+                continue
 
     def _configure_style(self) -> None:
         style = ttk.Style(self.root)
@@ -977,12 +995,12 @@ class DesktopEstimatorApp:
         header = ttk.Frame(container, style="Hero.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="AI Estimator Command Center", style="HeaderTitle.TLabel").grid(
+        ttk.Label(header, text="EstimateForge Command Center", style="HeaderTitle.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
             header,
-            text="AI-powered takeoff, scope intelligence, benchmark gates, and handoff-ready estimating",
+            text="Construction takeoff, scope intelligence, benchmark gates, and handoff-ready estimating",
             style="HeaderSub.TLabel",
         ).grid(row=1, column=0, sticky="w")
         ttk.Label(header, text="MODEL PIPELINE ONLINE", style="Signal.TLabel").grid(
@@ -2307,7 +2325,7 @@ class DesktopEstimatorApp:
         setup = Toplevel(self.root)
         self.setup_window = setup
         self._setup_window_is_open = True
-        setup.title("Project Setup")
+        setup.title("EstimateForge Project Setup")
         setup.geometry("1120x720")
         setup.minsize(1000, 620)
         setup.configure(background=_THEME["surface"])
@@ -2323,7 +2341,7 @@ class DesktopEstimatorApp:
         )
         container.columnconfigure(1, weight=1)
 
-        ttk.Label(container, text="Project Setup", style="HeaderTitle.TLabel").grid(
+        ttk.Label(container, text="EstimateForge Project Setup", style="HeaderTitle.TLabel").grid(
             row=0, column=0, columnspan=4, sticky="w"
         )
         ttk.Label(
@@ -4311,7 +4329,7 @@ class DesktopEstimatorApp:
 
     def _show_control_guide(self) -> None:
         use_beginner = bool(self.beginner_mode.get())
-        heading = "AI Estimator Desktop - Beginner Guide" if use_beginner else "AI Estimator Desktop - Control Guide"
+        heading = "EstimateForge - Beginner Guide" if use_beginner else "EstimateForge - Control Guide"
         label_mode = "beginner_label" if use_beginner else "pro_label"
         choose_pdfs_label = self._control_specs.get("choose_pdfs", {}).get(label_mode, "Choose PDFs")
         submit_job_label = self._control_specs.get("submit_async_job", {}).get(label_mode, "Submit Async Job")
