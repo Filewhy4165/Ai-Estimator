@@ -10,7 +10,7 @@ import subprocess
 import sys
 from typing import Callable
 from threading import Thread
-from tkinter import END, BooleanVar, Button, Canvas, Frame, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
+from tkinter import END, BooleanVar, Button, Canvas, DoubleVar, Frame, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
 import time
 
@@ -303,6 +303,8 @@ class DesktopEstimatorApp:
         self._api_bootstrap_in_progress = False
         self._local_api_process: subprocess.Popen[object] | None = None
         self.request_progress_text = StringVar(value="")
+        self.run_phase_text = StringVar(value="")
+        self.run_progress_value = DoubleVar(value=0.0)
         self.job_progress_message = ""
         self._progress_bar_running = False
         self._auto_poll_cycle = 0
@@ -310,6 +312,9 @@ class DesktopEstimatorApp:
         self.header_mode_text = StringVar(value="Mode: auto")
         self.header_job_text = StringVar(value="Job: none")
         self.header_files_text = StringVar(value="Files: none")
+        self.summary_banner_text = StringVar(value="Estimator summary will appear after a completed run.")
+        self.sheet_banner_text = StringVar(value="Sheet navigator will appear after a completed run.")
+        self.trade_selection_hint_text = StringVar(value="All work types will be analyzed.")
         self.trade_catalog: list[str] = []
         self.analysis_mode_catalog: list[str] = ["auto", "selected", "all"]
         self.files: list[str] = []
@@ -370,9 +375,15 @@ class DesktopEstimatorApp:
         ]
         self.output_y_scroll: ttk.Scrollbar | None = None
         self.output_x_scroll: ttk.Scrollbar | None = None
+        self.results_notebook: ttk.Notebook | None = None
+        self.summary_result_tree: ttk.Treeview | None = None
+        self.sheet_navigator_tree: ttk.Treeview | None = None
+        self.latest_payload: dict[str, object] = {}
+        self.last_result_payload: dict[str, object] = {}
 
         self.analysis_mode.trace_add("write", lambda *_: self._refresh_header_summary())
         self.analysis_mode.trace_add("write", lambda *_: self._sync_analysis_mode_to_guided())
+        self.analysis_mode.trace_add("write", lambda *_: self._refresh_trade_selection_hint())
         self.current_job_id.trace_add("write", lambda *_: self._refresh_header_summary())
         self.guided_step.trace_add("write", lambda *_: self._refresh_guided_flow())
         self.guided_trade_strategy.trace_add("write", lambda *_: self._sync_guided_trade_strategy())
@@ -694,6 +705,33 @@ class DesktopEstimatorApp:
             darkcolor=p["cyan"],
             lightcolor=p["cyan"],
             bordercolor=p["line"],
+        )
+        style.configure(
+            "Treeview",
+            background=p["field"],
+            foreground=p["text"],
+            fieldbackground=p["field"],
+            bordercolor=p["line"],
+            rowheight=24,
+            font=("Segoe UI", 9),
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", p["cyan"])],
+            foreground=[("selected", "#041016")],
+        )
+        style.configure(
+            "Treeview.Heading",
+            background=p["surface_3"],
+            foreground=p["cyan"],
+            font=("Segoe UI Semibold", 9),
+            bordercolor=p["line"],
+            relief="flat",
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("active", "#203142")],
+            foreground=[("active", p["text"])],
         )
         style.configure("TSeparator", background=p["line"])
         style.configure(
@@ -1171,12 +1209,49 @@ class DesktopEstimatorApp:
         self.actions_notebook.add(calculators_tab, text="Calculators")
         self._advanced_tab_widgets = [(quality_tab, "Quality"), (operations_tab, "Operations")]
 
+        workflow_quick_path = ttk.LabelFrame(
+            workflow_tab,
+            text="Estimator Run Path",
+            padding=8,
+        )
+        workflow_quick_path.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        for col in range(4):
+            workflow_quick_path.columnconfigure(col, weight=1)
+        ttk.Label(
+            workflow_quick_path,
+            text="Use this order for fastest estimating: load drawings, confirm work types, then run.",
+            style="FormLabel.TLabel",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+        ttk.Button(
+            workflow_quick_path,
+            text="1) Load Drawings",
+            command=self._choose_pdfs,
+            style="Primary.TButton",
+        ).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Button(
+            workflow_quick_path,
+            text="2) Confirm Work Types",
+            command=self._discover_trade_options_from_drawings,
+            style="Accent.TButton",
+        ).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Button(
+            workflow_quick_path,
+            text="3) Run Takeoff",
+            command=self._quick_start_run,
+            style="Primary.TButton",
+        ).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
+        ttk.Label(
+            workflow_quick_path,
+            textvariable=self.trade_selection_hint_text,
+            style="SummaryChip.TLabel",
+        ).grid(row=1, column=3, sticky="ew", padx=4, pady=4)
+
         self.guided_flow_frame = ttk.LabelFrame(
             workflow_tab,
             text="Guided Start (Step-by-Step)",
             padding=8,
         )
-        self.guided_flow_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.guided_flow_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         for col in range(4):
             self.guided_flow_frame.columnconfigure(col, weight=1)
 
@@ -1315,7 +1390,7 @@ class DesktopEstimatorApp:
         self.guided_skip_button.grid(row=0, column=3, sticky="w", padx=(8, 0))
 
         workflow_run = ttk.LabelFrame(workflow_tab, text="Run Drawings", padding=8)
-        workflow_run.grid(row=1, column=0, sticky="ew")
+        workflow_run.grid(row=2, column=0, sticky="ew")
         for col in range(6):
             workflow_run.columnconfigure(col, weight=1)
         ttk.Button(workflow_run, text="Choose PDFs", command=self._choose_pdfs).grid(row=0, column=0, sticky="ew", padx=4, pady=4)
@@ -1353,7 +1428,7 @@ class DesktopEstimatorApp:
         )
 
         workflow_benchmark = ttk.LabelFrame(workflow_tab, text="Full Quality Flow", padding=8)
-        workflow_benchmark.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        workflow_benchmark.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         workflow_benchmark.columnconfigure(0, weight=1)
         ttk.Button(
             workflow_benchmark,
@@ -1744,20 +1819,140 @@ class DesktopEstimatorApp:
         progress_row = ttk.Frame(frame)
         progress_row.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         progress_row.columnconfigure(1, weight=1)
+        progress_row.columnconfigure(2, weight=1)
         self.request_progress_label = ttk.Label(progress_row, textvariable=self.request_progress_text)
         self.request_progress_label.grid(row=0, column=0, sticky="w")
         self.request_progress_bar = ttk.Progressbar(progress_row, mode="indeterminate", length=260)
         self.request_progress_bar.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.run_phase_label = ttk.Label(progress_row, textvariable=self.run_phase_text, style="FormLabel.TLabel")
+        self.run_phase_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.run_phase_progress = ttk.Progressbar(
+            progress_row,
+            mode="determinate",
+            length=360,
+            maximum=100,
+            variable=self.run_progress_value,
+        )
+        self.run_phase_progress.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(4, 0))
         self.request_progress_label.grid_remove()
         self.request_progress_bar.grid_remove()
+        self.run_phase_label.grid_remove()
+        self.run_phase_progress.grid_remove()
 
         output_frame = ttk.Frame(frame)
         output_frame.grid(row=12, column=0, columnspan=2, sticky="nsew")
         output_frame.columnconfigure(0, weight=1)
         output_frame.rowconfigure(0, weight=1)
 
+        self.results_notebook = ttk.Notebook(output_frame)
+        self.results_notebook.grid(row=0, column=0, sticky="nsew")
+        summary_tab = ttk.Frame(self.results_notebook, padding=(8, 8, 8, 8))
+        sheets_tab = ttk.Frame(self.results_notebook, padding=(8, 8, 8, 8))
+        json_tab = ttk.Frame(self.results_notebook)
+        self.results_notebook.add(summary_tab, text="Estimator Summary")
+        self.results_notebook.add(sheets_tab, text="Sheet Navigator")
+        self.results_notebook.add(json_tab, text="Raw JSON")
+
+        summary_tab.columnconfigure(0, weight=1)
+        summary_tab.rowconfigure(1, weight=1)
+        ttk.Label(summary_tab, textvariable=self.summary_banner_text, style="FormLabel.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        summary_table_frame = ttk.Frame(summary_tab)
+        summary_table_frame.grid(row=1, column=0, sticky="nsew")
+        summary_table_frame.columnconfigure(0, weight=1)
+        summary_table_frame.rowconfigure(0, weight=1)
+        self.summary_result_tree = ttk.Treeview(
+            summary_table_frame,
+            columns=("trade", "linear", "area", "volume", "counts", "status"),
+            show="headings",
+            height=10,
+        )
+        self.summary_result_tree.grid(row=0, column=0, sticky="nsew")
+        for key, title, width, anchor in [
+            ("trade", "Work Type", 180, "w"),
+            ("linear", "Linear", 150, "e"),
+            ("area", "Area", 150, "e"),
+            ("volume", "Volume", 150, "e"),
+            ("counts", "Counts", 180, "w"),
+            ("status", "Review Status", 140, "w"),
+        ]:
+            self.summary_result_tree.heading(key, text=title)
+            self.summary_result_tree.column(key, width=width, minwidth=80, stretch=True, anchor=anchor)
+        summary_y_scroll = ttk.Scrollbar(
+            summary_table_frame,
+            orient="vertical",
+            command=self.summary_result_tree.yview,
+        )
+        summary_y_scroll.grid(row=0, column=1, sticky="ns")
+        summary_x_scroll = ttk.Scrollbar(
+            summary_table_frame,
+            orient="horizontal",
+            command=self.summary_result_tree.xview,
+        )
+        summary_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.summary_result_tree.configure(
+            yscrollcommand=summary_y_scroll.set,
+            xscrollcommand=summary_x_scroll.set,
+        )
+
+        sheets_tab.columnconfigure(0, weight=1)
+        sheets_tab.rowconfigure(2, weight=1)
+        ttk.Label(sheets_tab, textvariable=self.sheet_banner_text, style="FormLabel.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        sheet_actions = ttk.Frame(sheets_tab)
+        sheet_actions.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(sheet_actions, text="Show Review Queue", command=self._get_review_queue).grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Button(sheet_actions, text="Refresh Current Job", command=self._refresh_job).grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
+        sheet_table_frame = ttk.Frame(sheets_tab)
+        sheet_table_frame.grid(row=2, column=0, sticky="nsew")
+        sheet_table_frame.columnconfigure(0, weight=1)
+        sheet_table_frame.rowconfigure(0, weight=1)
+        self.sheet_navigator_tree = ttk.Treeview(
+            sheet_table_frame,
+            columns=("page", "sheet", "discipline", "type", "confidence", "flags"),
+            show="headings",
+            height=10,
+            selectmode="browse",
+        )
+        self.sheet_navigator_tree.grid(row=0, column=0, sticky="nsew")
+        for key, title, width, anchor in [
+            ("page", "Page", 70, "e"),
+            ("sheet", "Sheet ID", 180, "w"),
+            ("discipline", "Work Type", 150, "w"),
+            ("type", "View Type", 120, "w"),
+            ("confidence", "Confidence", 90, "e"),
+            ("flags", "Flags", 220, "w"),
+        ]:
+            self.sheet_navigator_tree.heading(key, text=title)
+            self.sheet_navigator_tree.column(key, width=width, minwidth=60, stretch=True, anchor=anchor)
+        self.sheet_navigator_tree.bind("<<TreeviewSelect>>", self._on_sheet_navigator_select)
+        sheets_y_scroll = ttk.Scrollbar(
+            sheet_table_frame,
+            orient="vertical",
+            command=self.sheet_navigator_tree.yview,
+        )
+        sheets_y_scroll.grid(row=0, column=1, sticky="ns")
+        sheets_x_scroll = ttk.Scrollbar(
+            sheet_table_frame,
+            orient="horizontal",
+            command=self.sheet_navigator_tree.xview,
+        )
+        sheets_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.sheet_navigator_tree.configure(
+            yscrollcommand=sheets_y_scroll.set,
+            xscrollcommand=sheets_x_scroll.set,
+        )
+
+        json_tab.columnconfigure(0, weight=1)
+        json_tab.rowconfigure(0, weight=1)
         self.output = Text(
-            output_frame,
+            json_tab,
             wrap="none",
             background=p["field"],
             foreground=p["text"],
@@ -1769,9 +1964,9 @@ class DesktopEstimatorApp:
             font=("Cascadia Mono", 10),
         )
         self.output.grid(row=0, column=0, sticky="nsew")
-        self.output_y_scroll = ttk.Scrollbar(output_frame, orient="vertical", command=self.output.yview)
+        self.output_y_scroll = ttk.Scrollbar(json_tab, orient="vertical", command=self.output.yview)
         self.output_y_scroll.grid(row=0, column=1, sticky="ns")
-        self.output_x_scroll = ttk.Scrollbar(output_frame, orient="horizontal", command=self.output.xview)
+        self.output_x_scroll = ttk.Scrollbar(json_tab, orient="horizontal", command=self.output.xview)
         self.output_x_scroll.grid(row=1, column=0, sticky="ew")
         self.output.configure(yscrollcommand=self.output_y_scroll.set, xscrollcommand=self.output_x_scroll.set)
 
@@ -1803,6 +1998,7 @@ class DesktopEstimatorApp:
             prune_limit_entry=prune_limit_entry,
         )
         self._refresh_guided_flow()
+        self._refresh_trade_selection_hint()
         self._apply_advanced_tools_visibility(update_status=False)
         self._install_company_logo()
         self._apply_visual_theme(update_status=False)
@@ -2711,6 +2907,24 @@ class DesktopEstimatorApp:
                 "beginner_label": "Stop Server",
                 "pro_tip": "Stop the local backend process started by this desktop app.",
                 "beginner_tip": "Turn off the local server this app started.",
+            },
+            "quick_path_load": {
+                "pro_label": "1) Load Drawings",
+                "beginner_label": "1) Load Drawings",
+                "pro_tip": "Step 1 in the estimator flow: pick one or more drawing PDFs.",
+                "beginner_tip": "Start here: choose your drawing files.",
+            },
+            "quick_path_confirm": {
+                "pro_label": "2) Confirm Work Types",
+                "beginner_label": "2) Confirm Work Types",
+                "pro_tip": "Step 2 in the estimator flow: scan drawings and confirm available work types.",
+                "beginner_tip": "Check which work types should be included.",
+            },
+            "quick_path_run": {
+                "pro_label": "3) Run Takeoff",
+                "beginner_label": "3) Run Takeoff",
+                "pro_tip": "Step 3 in the estimator flow: run takeoff and estimation workflow.",
+                "beginner_tip": "Run the estimate after drawings and work types are ready.",
             },
             "guided_back": {
                 "pro_label": "Guided Back",
@@ -4740,7 +4954,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=1800,
-                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
+                progress_callback=lambda message: self.root.after(0, lambda: self._handle_request_progress_message(message)),
             )
             self.root.after(0, lambda: self._on_run_analysis_success(payload))
         except Exception as exc:
@@ -4759,7 +4973,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=1800,
-                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
+                progress_callback=lambda message: self.root.after(0, lambda: self._handle_request_progress_message(message)),
             )
             self.root.after(0, lambda: self._on_submit_async_job_success(payload))
         except Exception as exc:
@@ -4768,12 +4982,14 @@ class DesktopEstimatorApp:
     def _on_run_analysis_success(self, payload: dict) -> None:
         self._set_request_busy(busy=False)
         self._set_job_polling(busy=False)
+        self._set_run_phase(phase="Completed", percent=100.0)
         self._set_output_json(payload)
         self.status_text.set("Synchronous analysis completed.")
 
     def _on_run_analysis_failure(self, exc: Exception) -> None:
         self._set_request_busy(busy=False)
         self._set_job_polling(busy=False)
+        self._set_run_phase(phase="Failed", percent=100.0)
         self._set_output_text(f"Failed to run analysis:\n{exc}")
         self.status_text.set("Analysis failed.")
 
@@ -4789,6 +5005,7 @@ class DesktopEstimatorApp:
         self._set_output_json(payload)
         self._save_settings()
         self._append_output_line(f"Async job accepted: {job_id}")
+        self._set_run_phase(phase="Queued for processing", percent=72.0)
         self._set_job_polling(
             busy=True,
             message=f"Background job accepted ({job_id}). Watching for start of processing...",
@@ -4804,6 +5021,7 @@ class DesktopEstimatorApp:
     def _on_submit_async_job_failure(self, exc: Exception) -> None:
         self._set_request_busy(busy=False)
         self._set_job_polling(busy=False)
+        self._set_run_phase(phase="Failed", percent=100.0)
         self._set_output_text(f"Failed to submit async job:\n{exc}")
         self.status_text.set("Async job submission failed.")
 
@@ -4904,6 +5122,8 @@ class DesktopEstimatorApp:
             else:
                 self._set_output_json(payload)
             self.status_text.set(f"Job {job_id} status: {status or 'unknown'}")
+            phase, percent = self._phase_from_message(self._make_job_poll_message(job_id, status))
+            self._set_run_phase(phase=phase, percent=percent)
             self._set_job_polling(
                 busy=False if status in _TERMINAL_JOB_STATUSES else self.job_polling,
                 message=self._make_job_poll_message(job_id, status),
@@ -5283,6 +5503,7 @@ class DesktopEstimatorApp:
 
         self.end_to_end_task_running = True
         self.status_text.set("Submitting job and running end-to-end benchmark...")
+        self._set_run_phase(phase="Submitting benchmark run", percent=14.0)
         thread = Thread(
             target=self._run_end_to_end_benchmark_worker,
             args=(api_base, request_data, file_paths, include_unmapped),
@@ -5304,7 +5525,7 @@ class DesktopEstimatorApp:
                 data=request_data,
                 file_paths=file_paths,
                 timeout=180,
-                progress_callback=lambda message: self.root.after(0, lambda: self._append_output_line(message)),
+                progress_callback=lambda message: self.root.after(0, lambda: self._handle_request_progress_message(message)),
             )
             job_id = str(create_payload.get("job_id", "")).strip()
             if not job_id:
@@ -5316,7 +5537,7 @@ class DesktopEstimatorApp:
                 max_wait_seconds=1200,
                 poll_interval_seconds=2,
                 progress_callback=lambda message: self.root.after(
-                    0, lambda: self._append_output_line(message)
+                    0, lambda: self._handle_request_progress_message(message)
                 ),
             )
             status = str(job_payload.get("status", "")).strip()
@@ -5367,12 +5588,14 @@ class DesktopEstimatorApp:
         self.current_job_id.set(job_id)
         self._save_settings()
         self._set_output_json(payload)
+        self._set_run_phase(phase="Benchmark completed", percent=100.0)
         summary = payload.get("summary", {})
         score = summary.get("overall_score", "n/a") if isinstance(summary, dict) else "n/a"
         self.status_text.set(f"End-to-end benchmark complete. Overall score: {score}")
 
     def _on_end_to_end_benchmark_failure(self, exc: Exception) -> None:
         self.end_to_end_task_running = False
+        self._set_run_phase(phase="Benchmark failed", percent=100.0)
         self._set_output_text(f"End-to-end benchmark failed:\n{exc}")
         self.status_text.set("End-to-end benchmark failed.")
 
@@ -5428,6 +5651,7 @@ class DesktopEstimatorApp:
             if status == "completed" and isinstance(result, dict):
                 self._set_output_json(result)
                 self.status_text.set(f"Job {job_id} completed.")
+                self._set_run_phase(phase="Completed", percent=100.0)
                 self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
@@ -5435,6 +5659,7 @@ class DesktopEstimatorApp:
             if status in {"failed", "canceled"}:
                 self._set_output_json(payload)
                 self.status_text.set(f"Job {job_id} {status}.")
+                self._set_run_phase(phase=status.title(), percent=100.0)
                 self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
                 self._stop_auto_poll()
@@ -5678,13 +5903,218 @@ class DesktopEstimatorApp:
             raise RuntimeError("Response JSON was not an object.")
         return payload
 
+    def _clear_tree_rows(self, tree: ttk.Treeview | None) -> None:
+        if tree is None:
+            return
+        try:
+            tree.delete(*tree.get_children())
+        except Exception:
+            return
+
+    def _extract_result_payload(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            return {}
+        result = payload.get("result")
+        if isinstance(result, dict):
+            return result
+        if "sheets_detected" in payload and "quantity_takeoff" in payload:
+            return payload
+        return {}
+
+    def _format_metric_dict(self, values: object) -> str:
+        if not isinstance(values, dict) or not values:
+            return "-"
+        segments: list[str] = []
+        for key in sorted(values.keys(), key=lambda item: str(item).casefold()):
+            value = values.get(key)
+            if isinstance(value, (int, float)):
+                segments.append(f"{key}:{value:g}")
+            else:
+                segments.append(f"{key}:{value}")
+        return ", ".join(segments)
+
+    def _populate_summary_tree(self, result: dict) -> None:
+        tree = self.summary_result_tree
+        self._clear_tree_rows(tree)
+        if tree is None:
+            return
+
+        quantity_takeoff = result.get("quantity_takeoff")
+        if not isinstance(quantity_takeoff, dict):
+            self.summary_banner_text.set("No quantity takeoff found in the current result.")
+            return
+
+        by_trade = quantity_takeoff.get("by_trade")
+        trade_rows = by_trade if isinstance(by_trade, dict) else {}
+        sheets = result.get("sheets_detected")
+        sheet_count = len(sheets) if isinstance(sheets, list) else 0
+        unknown_symbols = len(result.get("legend_and_symbols", {}).get("unknown_symbols", [])) if isinstance(result.get("legend_and_symbols"), dict) else 0
+        self.summary_banner_text.set(
+            f"Sheets: {sheet_count} | Work types: {len(trade_rows) if trade_rows else 0} | Unknown symbols: {unknown_symbols}"
+        )
+
+        if not trade_rows:
+            counts_text = self._format_metric_dict(quantity_takeoff.get("counts"))
+            tree.insert(
+                "",
+                END,
+                values=(
+                    "All",
+                    self._format_metric_dict(quantity_takeoff.get("linear")),
+                    self._format_metric_dict(quantity_takeoff.get("area")),
+                    self._format_metric_dict(quantity_takeoff.get("volume")),
+                    counts_text,
+                    "Review",
+                ),
+            )
+            return
+
+        for trade_name in sorted(trade_rows.keys(), key=lambda value: str(value).casefold()):
+            trade_data = trade_rows.get(trade_name, {})
+            if not isinstance(trade_data, dict):
+                continue
+            counts = trade_data.get("counts")
+            count_total = 0.0
+            if isinstance(counts, dict):
+                for value in counts.values():
+                    if isinstance(value, (int, float)):
+                        count_total += float(value)
+            review_status = "Ready" if count_total > 0 else "Review"
+            tree.insert(
+                "",
+                END,
+                values=(
+                    str(trade_name),
+                    self._format_metric_dict(trade_data.get("linear")),
+                    self._format_metric_dict(trade_data.get("area")),
+                    self._format_metric_dict(trade_data.get("volume")),
+                    self._format_metric_dict(counts),
+                    review_status,
+                ),
+            )
+
+    def _populate_sheet_navigator(self, payload: dict, result: dict) -> None:
+        tree = self.sheet_navigator_tree
+        self._clear_tree_rows(tree)
+        if tree is None:
+            return
+        sheets = result.get("sheets_detected")
+        if not isinstance(sheets, list):
+            self.sheet_banner_text.set("No sheet metadata in the current result.")
+            return
+
+        flagged_sheets: set[str] = set()
+        review_queue = payload.get("review_queue")
+        if isinstance(review_queue, dict):
+            items = review_queue.get("items")
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        sid = str(item.get("sheet_id", "")).strip()
+                        if sid:
+                            flagged_sheets.add(sid)
+        if not flagged_sheets:
+            review_items = payload.get("items")
+            if isinstance(review_items, list):
+                for item in review_items:
+                    if isinstance(item, dict):
+                        sid = str(item.get("sheet_id", "")).strip()
+                        if sid:
+                            flagged_sheets.add(sid)
+
+        for entry in sheets:
+            if not isinstance(entry, dict):
+                continue
+            sheet_id = str(entry.get("sheet_id", "")).strip()
+            title = str(entry.get("title", "")).strip()
+            discipline = str(entry.get("discipline", "")).strip() or "-"
+            sheet_type = str(entry.get("sheet_type", "")).strip() or "-"
+            source_page_index = entry.get("source_page_index")
+            page_display = str(source_page_index) if isinstance(source_page_index, int) else "-"
+            confidence_value = entry.get("confidence")
+            confidence = f"{float(confidence_value):.2f}" if isinstance(confidence_value, (int, float)) else "-"
+            flags: list[str] = []
+            if sheet_id.startswith("UNMAPPED_"):
+                flags.append("UNMAPPED")
+            if sheet_id in flagged_sheets:
+                flags.append("REVIEW")
+            if confidence != "-" and isinstance(confidence_value, (int, float)) and confidence_value < 0.70:
+                flags.append("LOW_CONF")
+            flags_text = ",".join(flags) if flags else "-"
+            tree.insert(
+                "",
+                END,
+                values=(
+                    page_display,
+                    sheet_id or title or "-",
+                    discipline,
+                    sheet_type,
+                    confidence,
+                    flags_text,
+                ),
+            )
+
+        self.sheet_banner_text.set(
+            f"Loaded {len(sheets)} sheet entries. Select a row to filter raw JSON by sheet id."
+        )
+
+    def _sync_visual_result_views(self, payload: dict) -> None:
+        if not isinstance(payload, dict):
+            return
+        result = self._extract_result_payload(payload)
+        if result:
+            self.latest_payload = payload
+            self.last_result_payload = result
+            self._populate_summary_tree(result)
+            self._populate_sheet_navigator(payload, result)
+            return
+        review_items = payload.get("items")
+        if isinstance(review_items, list) and self.last_result_payload:
+            self._populate_sheet_navigator({"review_queue": payload}, self.last_result_payload)
+            return
+        self._clear_tree_rows(self.summary_result_tree)
+        self._clear_tree_rows(self.sheet_navigator_tree)
+        self.summary_banner_text.set("No completed estimate result in this payload yet.")
+        self.sheet_banner_text.set("No sheet metadata in this payload yet.")
+
+    def _on_sheet_navigator_select(self, _event: object = None) -> None:
+        tree = self.sheet_navigator_tree
+        if tree is None:
+            return
+        selection = tree.selection()
+        if not selection:
+            return
+        item_id = selection[0]
+        values = tree.item(item_id, "values")
+        if not values or len(values) < 2:
+            return
+        sheet_id = str(values[1]).strip()
+        if not sheet_id or sheet_id == "-":
+            return
+        result = self.last_result_payload if isinstance(self.last_result_payload, dict) else {}
+        if not result:
+            return
+        filtered = dict(result)
+        filtered_sheets: list[dict] = []
+        for row in result.get("sheets_detected", []):
+            if isinstance(row, dict) and str(row.get("sheet_id", "")).strip() == sheet_id:
+                filtered_sheets.append(row)
+        if filtered_sheets:
+            filtered["sheets_detected"] = filtered_sheets
+        if self.results_notebook is not None:
+            self.results_notebook.select(2)
+        self.output.delete("1.0", END)
+        self.output.insert(END, json.dumps(filtered, indent=2))
+
     def _set_output_json(self, payload: dict) -> None:
         self.output.delete("1.0", END)
         self.output.insert(END, json.dumps(payload, indent=2))
+        self._sync_visual_result_views(payload)
 
     def _set_output_text(self, text: str) -> None:
         self.output.delete("1.0", END)
         self.output.insert(END, text)
+        self._sync_visual_result_views({})
 
     def _append_output_line(self, text: str) -> None:
         if not text:
@@ -5701,14 +6131,58 @@ class DesktopEstimatorApp:
             return f"Tracking job {job_id}: {status_text}{cycle_text} (checks every {interval}s)"
         return f"Tracking job {job_id}: {status_text}{cycle_text}"
 
+    def _set_run_phase(self, *, phase: str = "", percent: float | None = None) -> None:
+        cleaned_phase = phase.strip()
+        if cleaned_phase:
+            self.run_phase_text.set(f"Phase: {cleaned_phase}")
+        elif not (self.request_task_running or self.job_polling or self.file_scan_running):
+            self.run_phase_text.set("")
+        if percent is not None:
+            bounded = max(0.0, min(100.0, float(percent)))
+            self.run_progress_value.set(bounded)
+
+    def _phase_from_message(self, message: str) -> tuple[str, float | None]:
+        text = message.strip().lower()
+        if not text:
+            return "", None
+        if text.startswith("preparing"):
+            return "Preparing files", 8.0
+        if text.startswith("attaching"):
+            return "Attaching files", 25.0
+        if text.startswith("uploading"):
+            return "Uploading files", 55.0
+        if text.startswith("upload complete"):
+            return "Waiting for server analysis", 68.0
+        if "tracking job" in text and "queued" in text:
+            return "Queued for processing", 76.0
+        if "tracking job" in text and "running" in text:
+            return "Analyzing drawings", 88.0
+        if "tracking job" in text and "completed" in text:
+            return "Completed", 100.0
+        if "tracking job" in text and ("failed" in text or "canceled" in text):
+            return "Stopped", 100.0
+        if "running analysis" in text:
+            return "Submitting analysis request", 12.0
+        return "", None
+
+    def _handle_request_progress_message(self, message: str) -> None:
+        self._append_output_line(message)
+        phase, percent = self._phase_from_message(message)
+        if phase or percent is not None:
+            self._set_run_phase(phase=phase, percent=percent)
+
     def _set_job_polling(self, *, busy: bool, message: str = "") -> None:
         self.job_polling = busy
         if busy:
             candidate = message.strip()
             if candidate:
                 self.job_progress_message = candidate
+                phase, percent = self._phase_from_message(candidate)
+                self._set_run_phase(phase=phase or "Monitoring job", percent=percent)
         else:
             self.job_progress_message = ""
+            if not self.request_task_running:
+                self._set_run_phase(phase="", percent=0.0)
         self._refresh_progress_indicator()
 
     def _set_file_scan_busy(self, *, busy: bool, message: str = "") -> None:
@@ -5717,14 +6191,19 @@ class DesktopEstimatorApp:
             msg = message.strip()
             if msg:
                 self.request_progress_text.set(msg)
+                self._set_run_phase(phase=msg, percent=4.0 if busy else 0.0)
             elif not self.file_scan_running:
                 self.request_progress_text.set("")
+                self._set_run_phase(phase="", percent=0.0)
         self._refresh_progress_indicator()
 
     def _refresh_progress_indicator(self) -> None:
         should_show_request_progress = self.request_task_running
         should_show_poll_progress = self.job_polling
         should_show_file_scan = self.file_scan_running and not self.request_task_running
+        should_show_phase = bool(self.run_phase_text.get().strip()) and (
+            should_show_request_progress or should_show_poll_progress or should_show_file_scan
+        )
 
         if should_show_request_progress:
             if not self.request_progress_text.get():
@@ -5734,6 +6213,9 @@ class DesktopEstimatorApp:
             if not self._progress_bar_running:
                 self.request_progress_bar.start(12)
                 self._progress_bar_running = True
+            if should_show_phase:
+                self.run_phase_label.grid()
+                self.run_phase_progress.grid()
             return
 
         if should_show_poll_progress:
@@ -5744,6 +6226,9 @@ class DesktopEstimatorApp:
             if not self._progress_bar_running:
                 self.request_progress_bar.start(12)
                 self._progress_bar_running = True
+            if should_show_phase:
+                self.run_phase_label.grid()
+                self.run_phase_progress.grid()
             return
 
         if should_show_file_scan:
@@ -5754,6 +6239,9 @@ class DesktopEstimatorApp:
             if not self._progress_bar_running:
                 self.request_progress_bar.start(12)
                 self._progress_bar_running = True
+            if should_show_phase:
+                self.run_phase_label.grid()
+                self.run_phase_progress.grid()
             return
 
         if self._progress_bar_running:
@@ -5761,12 +6249,15 @@ class DesktopEstimatorApp:
             self._progress_bar_running = False
         self.request_progress_bar.grid_remove()
         self.request_progress_label.grid_remove()
+        self.run_phase_label.grid_remove()
+        self.run_phase_progress.grid_remove()
         self.request_progress_text.set("")
 
     def _set_request_busy(self, *, busy: bool, message: str = "") -> None:
         self.request_task_running = busy
         if busy:
             self.request_progress_text.set(message.strip() or "Working...")
+            self._set_run_phase(phase=message.strip() or "Working", percent=10.0)
             for control in self._control_widgets.values():
                 try:
                     control.configure(state="disabled")
@@ -5780,6 +6271,8 @@ class DesktopEstimatorApp:
                 control.configure(state="normal")
             except Exception:
                 pass
+        if not self.job_polling and not self.file_scan_running:
+            self._set_run_phase(phase="", percent=0.0)
         self._refresh_progress_indicator()
 
     def _format_size_label(self, byte_count: int) -> str:
@@ -5843,6 +6336,18 @@ class DesktopEstimatorApp:
             self.header_files_text.set("Files: none")
         else:
             self.header_files_text.set(f"Files: {len(self.files)} selected")
+
+    def _refresh_trade_selection_hint(self) -> None:
+        mode = self.analysis_mode.get().strip() or "auto"
+        if mode == "all":
+            hint = "All work types will be analyzed."
+        elif mode == "auto":
+            hint = "Drawings will be scanned to auto-select work types."
+        elif mode == "selected":
+            hint = "Only selected work types will be analyzed."
+        else:
+            hint = f"Analysis mode: {mode}"
+        self.trade_selection_hint_text.set(hint)
 
     def _refresh_files_label(self) -> None:
         self.files_label.config(text=self._selected_files_summary())
