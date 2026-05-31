@@ -5,11 +5,12 @@ import math
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Callable
 from threading import Thread
-from tkinter import END, BooleanVar, Canvas, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
+from tkinter import END, BooleanVar, Button, Canvas, Frame, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
 from urllib.parse import urlparse
 import time
 
@@ -336,6 +337,7 @@ class DesktopEstimatorApp:
         self._banner_phase = 0
         self._banner_after_id: str | None = None
         self.trade_option_vars: dict[str, BooleanVar] = {}
+        self.calculators_canvas: Canvas | None = None
         self._calculator_popups: dict[str, Toplevel] = {}
         self.logo_image: PhotoImage | None = None
         self.logo_label: Label | None = None
@@ -1246,14 +1248,56 @@ class DesktopEstimatorApp:
         )
 
         calculators_tab.columnconfigure(0, weight=1)
+        calculators_tab.rowconfigure(0, weight=1)
+        calc_scroll_frame = ttk.Frame(calculators_tab)
+        calc_scroll_frame.grid(row=0, column=0, sticky="nsew")
+        calc_scroll_frame.columnconfigure(0, weight=1)
+        calc_scroll_frame.rowconfigure(0, weight=1)
+
+        self.calculators_canvas = Canvas(
+            calc_scroll_frame,
+            background=p["surface"],
+            highlightthickness=0,
+            borderwidth=0,
+            yscrollincrement=14,
+        )
+        self.calculators_canvas.grid(row=0, column=0, sticky="nsew")
+        calc_vscroll = ttk.Scrollbar(
+            calc_scroll_frame,
+            orient="vertical",
+            command=self.calculators_canvas.yview,
+        )
+        calc_vscroll.grid(row=0, column=1, sticky="ns")
+        self.calculators_canvas.configure(yscrollcommand=calc_vscroll.set)
+
+        calculators_surface = ttk.Frame(self.calculators_canvas, padding=(4, 4, 8, 8))
+        calc_window = self.calculators_canvas.create_window(
+            (0, 0),
+            window=calculators_surface,
+            anchor="nw",
+        )
+
+        calculators_surface.bind(
+            "<Configure>",
+            lambda _event: self.calculators_canvas.configure(
+                scrollregion=self.calculators_canvas.bbox("all")
+            ),
+        )
+        self.calculators_canvas.bind(
+            "<Configure>",
+            lambda event: self.calculators_canvas.itemconfigure(calc_window, width=event.width),
+        )
+        self._bind_mousewheel_scrollable_canvas(self.calculators_canvas)
+
+        calculators_surface.columnconfigure(0, weight=1)
         ttk.Label(
-            calculators_tab,
+            calculators_surface,
             text="Trade Calculators: field math for piping, concrete, sheet metal/HVAC, earthwork, and framing.",
             style="Section.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         pipe_frame = ttk.LabelFrame(
-            calculators_tab,
+            calculators_surface,
             text="Industrial Pipe / Feet-Inches Calculator",
             padding=10,
         )
@@ -1285,7 +1329,7 @@ class DesktopEstimatorApp:
         ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
 
         concrete_frame = ttk.LabelFrame(
-            calculators_tab,
+            calculators_surface,
             text="Concrete and Gravel Calculator",
             padding=10,
         )
@@ -1317,7 +1361,7 @@ class DesktopEstimatorApp:
         ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
 
         hvac_frame = ttk.LabelFrame(
-            calculators_tab,
+            calculators_surface,
             text="Sheet Metal / HVAC Calculator",
             padding=10,
         )
@@ -1349,7 +1393,7 @@ class DesktopEstimatorApp:
         ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
 
         heavy_frame = ttk.LabelFrame(
-            calculators_tab,
+            calculators_surface,
             text="Heavy Earthwork Calculator",
             padding=10,
         )
@@ -1379,7 +1423,7 @@ class DesktopEstimatorApp:
         ).grid(row=1, column=6, columnspan=2, sticky="w", padx=(8, 0))
 
         carpentry_frame = ttk.LabelFrame(
-            calculators_tab,
+            calculators_surface,
             text="Carpentry Framing Calculator",
             padding=10,
         )
@@ -1702,6 +1746,23 @@ class DesktopEstimatorApp:
                 "Banner animation enabled." if enabled else "Banner animation paused."
             )
             self._save_settings()
+
+    def _bind_mousewheel_scrollable_canvas(self, canvas: Canvas) -> None:
+        def _on_mousewheel(event: object) -> None:
+            delta = int(getattr(event, "delta", 0))
+            if delta == 0:
+                num = int(getattr(event, "num", 0))
+                if num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif num == 5:
+                    canvas.yview_scroll(1, "units")
+                return
+            canvas.yview_scroll(int(-delta / 120), "units")
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        canvas.bind("<Button-4>", _on_mousewheel)
+        canvas.bind("<Button-5>", _on_mousewheel)
 
     def _install_tooltips(
         self,
@@ -2603,6 +2664,29 @@ class DesktopEstimatorApp:
         except Exception as exc:
             self.carpentry_calc_result.set(f"Input error: {exc}")
 
+    def _safe_eval_expression(self, expression: str) -> float:
+        cleaned = expression.strip().replace("x", "*").replace("X", "*").replace("÷", "/")
+        if not cleaned:
+            return 0.0
+        if not re.fullmatch(r"[0-9\\.+\\-*/()\\s%]+", cleaned):
+            raise ValueError("Unsupported expression.")
+        cleaned = cleaned.replace("%", "/100")
+        return float(eval(cleaned, {"__builtins__": {}}, {}))
+
+    def _display_value_to_float(self, text: str) -> float:
+        raw = text.strip()
+        if not raw:
+            return 0.0
+        try:
+            return self._safe_eval_expression(raw)
+        except Exception:
+            return float(raw)
+
+    def _format_device_value(self, value: float) -> str:
+        if not math.isfinite(value):
+            return "0"
+        return f"{value:.8f}".rstrip("0").rstrip(".")
+
     def _open_full_calculator(self, calculator_key: str) -> None:
         existing = self._calculator_popups.get(calculator_key)
         if existing is not None:
@@ -2618,62 +2702,132 @@ class DesktopEstimatorApp:
 
         configs: dict[str, dict[str, object]] = {
             "pipe": {
-                "title": "Pipe Trades Full Calculator",
+                "title": "Pipe Trades Pro Full Tool",
                 "result_var": self.pipe_calc_result,
                 "compute": self._recalc_pipe_takeoff,
-                "notes": "Use this for feet/inches run math, count multipliers, and field waste.",
+                "notes": "Pipe offset, travel, angle, trig, unit conversions, and run takeoff.",
+                "case_bg": "#1A1D24",
+                "display_bg": "#D9E3DD",
+                "display_fg": "#0C1411",
+                "accent": "#C0392B",
                 "fields": [
                     ("Length (ft)", self.pipe_length_feet),
                     ("Length (in)", self.pipe_length_inches),
                     ("Run Count", self.pipe_run_count),
                     ("Waste %", self.pipe_waste_percent),
                 ],
+                "trade_keys": [
+                    ("Angle/Slope", "PIPE_ANGLE"),
+                    ("Offset", "PIPE_OFFSET"),
+                    ("Run", "PIPE_RUN"),
+                    ("Travel", "PIPE_TRAVEL"),
+                    ("Ft->In", "FT_TO_IN"),
+                    ("In->Ft", "IN_TO_FT"),
+                    ("Circle", "CIRCLE_C"),
+                    ("Takeoff", "RUN_SUMMARY"),
+                ],
             },
             "concrete": {
-                "title": "Concrete / Gravel Full Calculator",
+                "title": "ConcreteCalc Pro Full Tool",
                 "result_var": self.concrete_calc_result,
                 "compute": self._recalc_concrete_takeoff,
-                "notes": "Use this for slab/pad volume with waste and rough tonnage planning.",
+                "notes": "Concrete/gravel volume, area, bag count, tonnage, and rebar planning.",
+                "case_bg": "#9AB939",
+                "display_bg": "#DFE6D8",
+                "display_fg": "#101411",
+                "accent": "#3E5A1A",
                 "fields": [
                     ("Length (ft)", self.concrete_length_feet),
                     ("Width (ft)", self.concrete_width_feet),
                     ("Depth (in)", self.concrete_depth_inches),
                     ("Waste %", self.concrete_waste_percent),
                 ],
+                "trade_keys": [
+                    ("Sq Ft", "CONC_AREA"),
+                    ("Volume", "CONC_VOL"),
+                    ("Bags", "CONC_BAGS"),
+                    ("Tons", "CONC_TONS"),
+                    ("Rebar", "CONC_REBAR"),
+                    ("Sq-Up", "SQUARE"),
+                    ("sqrt", "SQRT"),
+                    ("Takeoff", "RUN_SUMMARY"),
+                ],
             },
             "hvac": {
-                "title": "Sheet Metal / HVAC Full Calculator",
+                "title": "Sheet Metal / HVAC Pro Full Tool",
                 "result_var": self.hvac_calc_result,
                 "compute": self._recalc_hvac_takeoff,
-                "notes": "Use this for round duct sheet area, circumference wrap, and linear footage.",
+                "notes": "Duct circumference, area, CFM/FPM conversions, and sheet-metal takeoff.",
+                "case_bg": "#D8B640",
+                "display_bg": "#DEE2D3",
+                "display_fg": "#111612",
+                "accent": "#B9372A",
                 "fields": [
                     ("Duct Diameter (in)", self.hvac_diameter_inches),
                     ("Run Length (ft)", self.hvac_run_length_feet),
                     ("Run Count", self.hvac_run_count),
                     ("Waste %", self.hvac_waste_percent),
                 ],
+                "trade_keys": [
+                    ("Circ", "HVAC_CIRC"),
+                    ("Area", "HVAC_AREA"),
+                    ("CFM/FPM", "HVAC_CFM_TO_FPM"),
+                    ("FPM/CFM", "HVAC_FPM_TO_CFM"),
+                    ("x^2", "SQUARE"),
+                    ("sqrt", "SQRT"),
+                    ("Sin", "SIN"),
+                    ("Takeoff", "RUN_SUMMARY"),
+                ],
             },
             "heavy": {
-                "title": "Heavy Earthwork Full Calculator",
+                "title": "HeavyCalc Pro Full Tool",
                 "result_var": self.heavy_calc_result,
                 "compute": self._recalc_heavy_takeoff,
-                "notes": "Use this for bank vs loose cubic yards and haul tonnage planning.",
+                "notes": "Cut/fill bank and loose CY, shrink/swell, and haul tonnage planning.",
+                "case_bg": "#D48B2F",
+                "display_bg": "#DFE3D8",
+                "display_fg": "#121411",
+                "accent": "#57626F",
                 "fields": [
                     ("Area (sq ft)", self.heavy_area_sqft),
                     ("Depth (in)", self.heavy_depth_inches),
                     ("Swell %", self.heavy_swell_percent),
+                ],
+                "trade_keys": [
+                    ("Bank CY", "HEAVY_BANK"),
+                    ("Loose CY", "HEAVY_LOOSE"),
+                    ("Shrink CY", "HEAVY_SHRINK"),
+                    ("Haul Tons", "HEAVY_TONS"),
+                    ("x^2", "SQUARE"),
+                    ("sqrt", "SQRT"),
+                    ("%", "PERCENT"),
+                    ("Takeoff", "RUN_SUMMARY"),
                 ],
             },
             "carpentry": {
                 "title": "Carpentry Framing Full Calculator",
                 "result_var": self.carpentry_calc_result,
                 "compute": self._recalc_carpentry_takeoff,
-                "notes": "Use this for framing studs, plate length, and board-feet material.",
+                "notes": "Framing studs, plate LF, stud LF, and board-feet calculations.",
+                "case_bg": "#4B5563",
+                "display_bg": "#E5E7EB",
+                "display_fg": "#111827",
+                "accent": "#22C55E",
                 "fields": [
                     ("Wall Length (ft)", self.carpentry_wall_length_feet),
                     ("Wall Height (ft)", self.carpentry_wall_height_feet),
                     ("Stud Spacing (in)", self.carpentry_stud_spacing_inches),
                     ("Waste %", self.carpentry_waste_percent),
+                ],
+                "trade_keys": [
+                    ("Stud Count", "CARP_STUDS"),
+                    ("Board Feet", "CARP_BF"),
+                    ("Plate LF", "CARP_PLATE"),
+                    ("Stud LF", "CARP_STUD_LF"),
+                    ("x^2", "SQUARE"),
+                    ("sqrt", "SQRT"),
+                    ("%", "PERCENT"),
+                    ("Takeoff", "RUN_SUMMARY"),
                 ],
             },
         }
@@ -2683,64 +2837,383 @@ class DesktopEstimatorApp:
 
         popup = Toplevel(self.root)
         popup.title(str(config["title"]))
-        popup.geometry("760x440")
-        popup.minsize(700, 380)
+        popup.geometry("980x700")
+        popup.minsize(900, 620)
         popup.configure(background=_THEME["app_bg"])
         self._calculator_popups[calculator_key] = popup
 
-        shell = ttk.Frame(popup, padding=14, style="Panel.TFrame")
+        shell = Frame(
+            popup,
+            background=str(config["case_bg"]),
+            bd=4,
+            relief="ridge",
+            padx=14,
+            pady=14,
+        )
         shell.pack(fill="both", expand=True, padx=14, pady=14)
-        shell.columnconfigure(0, weight=1)
-        shell.rowconfigure(2, weight=1)
+        shell.grid_columnconfigure(0, weight=3)
+        shell.grid_columnconfigure(1, weight=2)
+        shell.grid_rowconfigure(3, weight=1)
 
-        ttk.Label(shell, text=str(config["title"]), style="HeaderTitle.TLabel").grid(
+        Label(
+            shell,
+            text=str(config["title"]),
+            font=("Segoe UI Semibold", 16),
+            background=str(config["case_bg"]),
+            foreground="#F8FAFC",
+            anchor="w",
+        ).grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(
+
+        display_var = StringVar(value="0")
+        info_var = StringVar(value="Ready")
+        memory = {"value": 0.0}
+
+        Label(
             shell,
-            text=str(config["notes"]),
-            style="HeaderSub.TLabel",
-            wraplength=680,
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 10))
+            textvariable=display_var,
+            background=str(config["display_bg"]),
+            foreground=str(config["display_fg"]),
+            font=("Consolas", 28, "bold"),
+            anchor="e",
+            padx=14,
+            pady=10,
+            relief="sunken",
+            bd=2,
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        Label(
+            shell,
+            textvariable=info_var,
+            background=str(config["case_bg"]),
+            foreground="#E2E8F0",
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(2, 10))
 
-        form = ttk.LabelFrame(shell, text="Inputs", padding=10)
-        form.grid(row=2, column=0, sticky="nsew")
-        for col in range(4):
-            form.columnconfigure(col, weight=1)
-
-        fields = config["fields"]
+        input_panel = ttk.LabelFrame(shell, text="Trade Inputs", padding=10)
+        input_panel.grid(row=3, column=0, sticky="nsew", padx=(0, 10))
+        input_panel.columnconfigure(1, weight=1)
+        fields = config.get("fields")
         if isinstance(fields, list):
             for idx, item in enumerate(fields):
                 if not isinstance(item, tuple) or len(item) != 2:
                     continue
                 label_text, value_var = item
-                row = idx // 2
-                col_base = (idx % 2) * 2
-                ttk.Label(form, text=str(label_text)).grid(row=row, column=col_base, sticky="w", pady=(0, 4))
-                ttk.Entry(form, textvariable=value_var, width=18).grid(
-                    row=row, column=col_base + 1, sticky="w", padx=(6, 16), pady=(0, 4)
-                )
+                ttk.Label(input_panel, text=str(label_text)).grid(row=idx, column=0, sticky="w", pady=(0, 4))
+                ttk.Entry(input_panel, textvariable=value_var, width=18).grid(row=idx, column=1, sticky="ew", pady=(0, 4))
 
-        action_row = ttk.Frame(shell)
-        action_row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        action_row.columnconfigure(2, weight=1)
-        compute = config["compute"]
-        if callable(compute):
-            ttk.Button(
-                action_row,
-                text="Calculate",
-                style="Primary.TButton",
-                command=compute,
-            ).grid(row=0, column=0, sticky="w")
-        close_button = ttk.Button(action_row, text="Close")
-        close_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        result_var = config["result_var"]
-        ttk.Label(
-            action_row,
-            textvariable=result_var,
-            style="Section.TLabel",
-        ).grid(row=0, column=2, sticky="e")
+        aux_rise = StringVar(value="0")
+        aux_run = StringVar(value="0")
+        aux_roll = StringVar(value="0")
+        aux_angle = StringVar(value="45")
+        ttk.Label(input_panel, text="Rise").grid(row=6, column=0, sticky="w", pady=(4, 2))
+        ttk.Entry(input_panel, textvariable=aux_rise).grid(row=6, column=1, sticky="ew", pady=(4, 2))
+        ttk.Label(input_panel, text="Run / Area").grid(row=7, column=0, sticky="w", pady=(0, 2))
+        ttk.Entry(input_panel, textvariable=aux_run).grid(row=7, column=1, sticky="ew", pady=(0, 2))
+        ttk.Label(input_panel, text="Roll").grid(row=8, column=0, sticky="w", pady=(0, 2))
+        ttk.Entry(input_panel, textvariable=aux_roll).grid(row=8, column=1, sticky="ew", pady=(0, 2))
+        ttk.Label(input_panel, text="Angle / Shrink %").grid(row=9, column=0, sticky="w", pady=(0, 2))
+        ttk.Entry(input_panel, textvariable=aux_angle).grid(row=9, column=1, sticky="ew", pady=(0, 2))
+
+        keys_panel = Frame(shell, background=str(config["case_bg"]))
+        keys_panel.grid(row=3, column=1, sticky="nsew")
+        for col in range(4):
+            keys_panel.grid_columnconfigure(col, weight=1)
+        for row in range(10):
+            keys_panel.grid_rowconfigure(row, weight=1)
+
+        def set_display(value: float) -> None:
+            display_var.set(self._format_device_value(value))
+
+        def get_display() -> float:
+            return self._display_value_to_float(display_var.get())
+
+        def set_info(message: str) -> None:
+            info_var.set(message)
+
+        def append_token(token: str) -> None:
+            current = display_var.get().strip()
+            if current in {"0", "Error"} and token not in {".", "+", "-", "*", "/"}:
+                display_var.set(token)
+            else:
+                display_var.set(f"{current}{token}")
+
+        def apply_summary() -> None:
+            run_fn = config.get("compute")
+            if callable(run_fn):
+                run_fn()
+            result_var = config.get("result_var")
+            if isinstance(result_var, StringVar):
+                set_info(result_var.get())
+
+        def domain(action: str) -> None:
+            try:
+                value = get_display()
+                rise = self._parse_positive_number(aux_rise.get(), label="Rise")
+                run = self._parse_positive_number(aux_run.get(), label="Run/Area")
+                roll = self._parse_positive_number(aux_roll.get(), label="Roll")
+                angle = self._parse_positive_number(aux_angle.get(), label="Angle")
+                if action == "SQUARE":
+                    set_display(value * value)
+                    set_info("Squared.")
+                elif action == "SQRT":
+                    set_display(math.sqrt(max(value, 0.0)))
+                    set_info("Square root.")
+                elif action == "SIN":
+                    set_display(math.sin(math.radians(value)))
+                    set_info("Sine (degrees).")
+                elif action == "COS":
+                    set_display(math.cos(math.radians(value)))
+                    set_info("Cosine (degrees).")
+                elif action == "TAN":
+                    set_display(math.tan(math.radians(value)))
+                    set_info("Tangent (degrees).")
+                elif action == "PERCENT":
+                    set_display(value / 100.0)
+                    set_info("Percent applied.")
+                elif action == "FT_TO_IN":
+                    set_display(value * 12.0)
+                    set_info("Feet to inches.")
+                elif action == "IN_TO_FT":
+                    set_display(value / 12.0)
+                    set_info("Inches to feet.")
+                elif action == "CIRCLE_C":
+                    set_display(math.pi * value)
+                    set_info("Circumference from diameter.")
+                elif action == "PIPE_ANGLE":
+                    if run <= 0:
+                        raise ValueError("Run must be > 0.")
+                    set_display(math.degrees(math.atan(rise / run)))
+                    set_info("Pipe angle from rise/run.")
+                elif action == "PIPE_OFFSET":
+                    set_display(math.sqrt((rise * rise) + (roll * roll)))
+                    set_info("True offset from rise/roll.")
+                elif action == "PIPE_TRAVEL":
+                    true_offset = math.sqrt((rise * rise) + (roll * roll))
+                    if angle <= 0:
+                        raise ValueError("Angle must be > 0.")
+                    set_display(true_offset / math.sin(math.radians(angle)))
+                    set_info("Travel length.")
+                elif action == "PIPE_RUN":
+                    if angle <= 0:
+                        raise ValueError("Angle must be > 0.")
+                    set_display(rise / math.tan(math.radians(angle)))
+                    set_info("Run from rise/angle.")
+                elif action == "CONC_AREA":
+                    length = self._parse_positive_number(self.concrete_length_feet.get(), label="Length")
+                    width = self._parse_positive_number(self.concrete_width_feet.get(), label="Width")
+                    set_display(length * width)
+                    set_info("Concrete area (sq ft).")
+                elif action == "CONC_VOL":
+                    length = self._parse_positive_number(self.concrete_length_feet.get(), label="Length")
+                    width = self._parse_positive_number(self.concrete_width_feet.get(), label="Width")
+                    depth = self._parse_positive_number(self.concrete_depth_inches.get(), label="Depth")
+                    set_display((length * width * (depth / 12.0)) / 27.0)
+                    set_info("Concrete volume (yd^3).")
+                elif action == "CONC_BAGS":
+                    length = self._parse_positive_number(self.concrete_length_feet.get(), label="Length")
+                    width = self._parse_positive_number(self.concrete_width_feet.get(), label="Width")
+                    depth = self._parse_positive_number(self.concrete_depth_inches.get(), label="Depth")
+                    set_display(math.ceil((length * width * (depth / 12.0)) / 0.60))
+                    set_info("Approx 80-lb bag count.")
+                elif action == "CONC_TONS":
+                    length = self._parse_positive_number(self.concrete_length_feet.get(), label="Length")
+                    width = self._parse_positive_number(self.concrete_width_feet.get(), label="Width")
+                    depth = self._parse_positive_number(self.concrete_depth_inches.get(), label="Depth")
+                    waste = self._parse_positive_number(self.concrete_waste_percent.get(), label="Waste %")
+                    yards = (length * width * (depth / 12.0)) / 27.0
+                    set_display(yards * (1 + (waste / 100.0)) * 1.4)
+                    set_info("Approx aggregate tons.")
+                elif action == "CONC_REBAR":
+                    if run <= 0:
+                        raise ValueError("Run/Area should hold spacing (in).")
+                    area = self._parse_positive_number(self.concrete_length_feet.get(), label="Length") * self._parse_positive_number(self.concrete_width_feet.get(), label="Width")
+                    set_display((area / (run / 12.0)) * 2.0)
+                    set_info("Approx rebar LF.")
+                elif action == "HVAC_CIRC":
+                    diameter = self._parse_positive_number(self.hvac_diameter_inches.get(), label="Diameter")
+                    set_display((math.pi * diameter) / 12.0)
+                    set_info("Duct circumference (ft).")
+                elif action == "HVAC_AREA":
+                    diameter = self._parse_positive_number(self.hvac_diameter_inches.get(), label="Diameter")
+                    length = self._parse_positive_number(self.hvac_run_length_feet.get(), label="Run length")
+                    count = self._parse_positive_number(self.hvac_run_count.get(), label="Run count")
+                    set_display(((math.pi * diameter) / 12.0) * length * count)
+                    set_info("Duct area (sq ft).")
+                elif action == "HVAC_CFM_TO_FPM":
+                    if run <= 0:
+                        raise ValueError("Run/Area should hold duct area (sq ft).")
+                    set_display(value / run)
+                    set_info("FPM from CFM / area.")
+                elif action == "HVAC_FPM_TO_CFM":
+                    if run <= 0:
+                        raise ValueError("Run/Area should hold duct area (sq ft).")
+                    set_display(value * run)
+                    set_info("CFM from FPM * area.")
+                elif action == "HEAVY_BANK":
+                    area = self._parse_positive_number(self.heavy_area_sqft.get(), label="Area")
+                    depth = self._parse_positive_number(self.heavy_depth_inches.get(), label="Depth")
+                    set_display((area * (depth / 12.0)) / 27.0)
+                    set_info("Bank CY.")
+                elif action == "HEAVY_LOOSE":
+                    area = self._parse_positive_number(self.heavy_area_sqft.get(), label="Area")
+                    depth = self._parse_positive_number(self.heavy_depth_inches.get(), label="Depth")
+                    swell = self._parse_positive_number(self.heavy_swell_percent.get(), label="Swell %")
+                    bank = (area * (depth / 12.0)) / 27.0
+                    set_display(bank * (1 + (swell / 100.0)))
+                    set_info("Loose CY.")
+                elif action == "HEAVY_SHRINK":
+                    area = self._parse_positive_number(self.heavy_area_sqft.get(), label="Area")
+                    depth = self._parse_positive_number(self.heavy_depth_inches.get(), label="Depth")
+                    bank = (area * (depth / 12.0)) / 27.0
+                    set_display(bank * (1 - (angle / 100.0)))
+                    set_info("Shrink CY from angle input %.") 
+                elif action == "HEAVY_TONS":
+                    area = self._parse_positive_number(self.heavy_area_sqft.get(), label="Area")
+                    depth = self._parse_positive_number(self.heavy_depth_inches.get(), label="Depth")
+                    swell = self._parse_positive_number(self.heavy_swell_percent.get(), label="Swell %")
+                    bank = (area * (depth / 12.0)) / 27.0
+                    set_display(bank * (1 + (swell / 100.0)) * 1.35)
+                    set_info("Haul tons.")
+                elif action == "CARP_STUDS":
+                    self._recalc_carpentry_takeoff()
+                    set_info(self.carpentry_calc_result.get())
+                elif action == "CARP_BF":
+                    length = self._parse_positive_number(self.carpentry_wall_length_feet.get(), label="Length")
+                    height = self._parse_positive_number(self.carpentry_wall_height_feet.get(), label="Height")
+                    spacing = self._parse_positive_number(self.carpentry_stud_spacing_inches.get(), label="Spacing")
+                    waste = self._parse_positive_number(self.carpentry_waste_percent.get(), label="Waste %")
+                    studs = math.ceil(((length * 12.0) / spacing) + 1)
+                    studs = math.ceil(studs * (1 + (waste / 100.0)))
+                    set_display(studs * ((2.0 * 4.0 * height) / 12.0))
+                    set_info("Board feet.")
+                elif action == "CARP_PLATE":
+                    length = self._parse_positive_number(self.carpentry_wall_length_feet.get(), label="Length")
+                    waste = self._parse_positive_number(self.carpentry_waste_percent.get(), label="Waste %")
+                    set_display((length * 2.0) * (1 + (waste / 100.0)))
+                    set_info("Plate LF.")
+                elif action == "CARP_STUD_LF":
+                    length = self._parse_positive_number(self.carpentry_wall_length_feet.get(), label="Length")
+                    height = self._parse_positive_number(self.carpentry_wall_height_feet.get(), label="Height")
+                    spacing = self._parse_positive_number(self.carpentry_stud_spacing_inches.get(), label="Spacing")
+                    waste = self._parse_positive_number(self.carpentry_waste_percent.get(), label="Waste %")
+                    studs = math.ceil(((length * 12.0) / spacing) + 1)
+                    studs = math.ceil(studs * (1 + (waste / 100.0)))
+                    set_display(studs * height)
+                    set_info("Stud LF.")
+                elif action == "RUN_SUMMARY":
+                    apply_summary()
+            except Exception as exc:
+                set_info(f"Function error: {exc}")
+
+        def press(action: str) -> None:
+            try:
+                if action in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "."}:
+                    append_token(action)
+                    return
+                if action in {"+", "-", "*", "/"}:
+                    append_token(action)
+                    return
+                if action == "=":
+                    set_display(self._safe_eval_expression(display_var.get()))
+                    set_info("Expression solved.")
+                    return
+                if action in {"C", "CE"}:
+                    display_var.set("0")
+                    set_info("Cleared.")
+                    return
+                if action == "BS":
+                    current = display_var.get().strip()
+                    display_var.set(current[:-1] if len(current) > 1 else "0")
+                    return
+                if action == "+/-":
+                    set_display(-get_display())
+                    return
+                if action == "PI":
+                    append_token(str(math.pi))
+                    return
+                if action == "MC":
+                    memory["value"] = 0.0
+                    set_info("Memory cleared.")
+                    return
+                if action == "MR":
+                    set_display(float(memory["value"]))
+                    set_info("Memory recalled.")
+                    return
+                if action == "MS":
+                    memory["value"] = get_display()
+                    set_info("Memory stored.")
+                    return
+                if action == "M+":
+                    memory["value"] = float(memory["value"]) + get_display()
+                    set_info("Memory add.")
+                    return
+                if action.startswith("FN:"):
+                    domain(action[3:])
+            except Exception as exc:
+                display_var.set("Error")
+                set_info(f"Calc error: {exc}")
+
+        trade_keys = config.get("trade_keys")
+        if isinstance(trade_keys, list):
+            for idx, row in enumerate(trade_keys):
+                if not isinstance(row, tuple) or len(row) != 2:
+                    continue
+                title, action = row
+                r = idx // 4
+                c = idx % 4
+                Button(
+                    keys_panel,
+                    text=str(title),
+                    command=lambda v=str(action): press(f"FN:{v}"),
+                    background=str(config["accent"]),
+                    foreground="#F8FAFC",
+                    activebackground="#334155",
+                    activeforeground="#F8FAFC",
+                    relief="raised",
+                    bd=2,
+                    font=("Segoe UI Semibold", 10),
+                ).grid(row=r, column=c, sticky="nsew", padx=3, pady=3)
+
+        keypad_layout = [
+            [("MC", "MC"), ("MR", "MR"), ("MS", "MS"), ("M+", "M+")],
+            [("7", "7"), ("8", "8"), ("9", "9"), ("÷", "/")],
+            [("4", "4"), ("5", "5"), ("6", "6"), ("x", "*")],
+            [("1", "1"), ("2", "2"), ("3", "3"), ("-", "-")],
+            [("0", "0"), (".", "."), ("=", "="), ("+", "+")],
+            [("C", "C"), ("CE", "CE"), ("<-", "BS"), ("+/-", "+/-")],
+            [("pi", "PI"), ("sin", "FN:SIN"), ("cos", "FN:COS"), ("tan", "FN:TAN")],
+        ]
+        row_start = 3
+        for r_idx, row in enumerate(keypad_layout):
+            for c_idx, (title, action) in enumerate(row):
+                is_op = action in {"+", "-", "*", "/", "="}
+                Button(
+                    keys_panel,
+                    text=title,
+                    command=lambda v=action: press(v),
+                    background="#1F2937" if is_op else "#111827",
+                    foreground="#FDE68A" if is_op else "#F8FAFC",
+                    activebackground="#334155",
+                    activeforeground="#F8FAFC",
+                    relief="raised",
+                    bd=2,
+                    font=("Segoe UI Semibold", 11),
+                ).grid(row=row_start + r_idx, column=c_idx, sticky="nsew", padx=3, pady=3)
+
+        footer_row = Frame(shell, background=str(config["case_bg"]))
+        footer_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        footer_row.grid_columnconfigure(0, weight=1)
+        footer_row.grid_columnconfigure(1, weight=1)
+        ttk.Button(
+            footer_row,
+            text="Run Takeoff Update",
+            style="Primary.TButton",
+            command=apply_summary,
+        ).grid(row=0, column=0, sticky="w")
+        close_button = ttk.Button(footer_row, text="Close")
+        close_button.grid(row=0, column=1, sticky="e")
 
         def _cleanup_popup() -> None:
             self._calculator_popups.pop(calculator_key, None)
