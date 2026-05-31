@@ -235,6 +235,7 @@ class DesktopEstimatorApp:
         self.root.geometry("1440x900")
         self.root.minsize(1200, 740)
         self.settings_path = Path.home() / ".ai_estimator_desktop_settings.json"
+        self.projects_store_path = Path.home() / ".ai_estimator_projects.json"
 
         self.api_url = StringVar(value="http://127.0.0.1:8000")
         self.api_key = StringVar(value=os.environ.get("AI_ESTIMATOR_API_KEY", ""))
@@ -252,6 +253,8 @@ class DesktopEstimatorApp:
         self.prune_older_than_hours = StringVar(value="168")
         self.prune_limit = StringVar(value="200")
         self.prune_cleanup_uploads = BooleanVar(value=False)
+        self.active_project_name = StringVar(value="")
+        self.project_setup_name = StringVar(value="")
         self.guided_step = StringVar(value="trade")
         self.guided_trade_strategy = StringVar(value="all")
         self.guided_run_objective = StringVar(value="takeoff_and_estimation")
@@ -341,6 +344,15 @@ class DesktopEstimatorApp:
         self._calculator_popups: dict[str, Toplevel] = {}
         self.logo_image: PhotoImage | None = None
         self.logo_label: Label | None = None
+        self.project_selector_combo: ttk.Combobox | None = None
+        self.setup_project_combo: ttk.Combobox | None = None
+        self.setup_window: Toplevel | None = None
+        self._setup_window_is_open = False
+        self._inline_setup_widgets: list[object] = []
+        self._native_menu: Menu | None = None
+        self._native_menu_visible = True
+        self._menu_hide_after_id: str | None = None
+        self.project_profiles: dict[str, dict[str, object]] = {}
         self.logo_path_candidates: list[Path] = [
             Path(__file__).resolve().parents[1] / "desktop" / "assets" / "tech_build_logo.png",
             Path(r"C:\Users\sthom\OneDrive\----!!!!TechBuild!!!!----\Tech Build Solutions Logos\1.png"),
@@ -360,9 +372,13 @@ class DesktopEstimatorApp:
         self._configure_style()
         self._build_ui()
         self._bind_shortcuts()
+        self._load_project_profiles()
         self._load_settings()
+        self._enable_hover_menu_mode()
         self._refresh_files_label()
         self.root.after(700, self._start_local_api_if_needed)
+        if bool(self.beginner_mode.get()) and not self.files:
+            self.root.after(950, self._open_project_setup_window)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _resolve_theme_palette(self) -> dict[str, str]:
@@ -763,14 +779,55 @@ class DesktopEstimatorApp:
         help_menu.add_command(label="Control Guide", command=self._show_control_guide)
         menu.add_cascade(label="Help", menu=help_menu)
 
+        self._native_menu = menu
         self.root.configure(menu=menu)
+
+    def _set_native_menu_visible(self, visible: bool) -> None:
+        if self._native_menu is None or self._native_menu_visible == visible:
+            return
+        try:
+            self.root.configure(menu=self._native_menu if visible else "")
+            self._native_menu_visible = visible
+        except Exception:
+            return
+
+    def _cancel_native_menu_hide(self) -> None:
+        if self._menu_hide_after_id is None:
+            return
+        try:
+            self.root.after_cancel(self._menu_hide_after_id)
+        except Exception:
+            pass
+        self._menu_hide_after_id = None
+
+    def _schedule_native_menu_hide(self) -> None:
+        self._cancel_native_menu_hide()
+        self._menu_hide_after_id = self.root.after(900, lambda: self._set_native_menu_visible(False))
+
+    def _on_root_motion_menu(self, event: object) -> None:
+        y_value = int(getattr(event, "y", 0))
+        if y_value <= 6:
+            self._cancel_native_menu_hide()
+            self._set_native_menu_visible(True)
+            return
+        if self._native_menu_visible:
+            self._schedule_native_menu_hide()
+
+    def _on_root_leave_menu(self, _event: object = None) -> None:
+        if self._native_menu_visible:
+            self._schedule_native_menu_hide()
+
+    def _enable_hover_menu_mode(self) -> None:
+        self._set_native_menu_visible(False)
+        self.root.bind("<Motion>", self._on_root_motion_menu, add="+")
+        self.root.bind("<Leave>", self._on_root_leave_menu, add="+")
 
     def _build_ui(self) -> None:
         p = _THEME
         container = ttk.Frame(self.root, padding=(18, 16, 18, 16), style="App.TFrame")
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(3, weight=1)
+        container.rowconfigure(4, weight=1)
 
         self._build_menu()
 
@@ -819,8 +876,46 @@ class DesktopEstimatorApp:
             row=0, column=2, sticky="w"
         )
 
+        project_bar = ttk.Frame(container, style="Panel.TFrame", padding=(10, 8))
+        project_bar.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        project_bar.columnconfigure(1, weight=1)
+        ttk.Label(project_bar, text="Project Profile", style="FormLabel.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(2, 8)
+        )
+        self.project_selector_combo = ttk.Combobox(
+            project_bar,
+            textvariable=self.active_project_name,
+            state="readonly",
+            width=38,
+            values=[],
+        )
+        self.project_selector_combo.grid(row=0, column=1, sticky="ew")
+        self.project_selector_combo.bind("<<ComboboxSelected>>", self._load_selected_project_profile_event)
+        ttk.Button(
+            project_bar,
+            text="Load Saved Project",
+            command=self._load_selected_project_profile,
+            style="Accent.TButton",
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(
+            project_bar,
+            text="Save Project Snapshot",
+            command=self._save_project_profile_from_current,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Button(
+            project_bar,
+            text="Project Setup Window",
+            command=self._open_project_setup_window,
+            style="Primary.TButton",
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ttk.Button(
+            project_bar,
+            text="New Project",
+            command=self._start_new_project_profile,
+        ).grid(row=0, column=5, sticky="w", padx=(8, 0))
+
         frame = ttk.Frame(container, padding=14, style="Panel.TFrame")
-        frame.grid(row=3, column=0, sticky="nsew")
+        frame.grid(row=4, column=0, sticky="nsew")
         frame.columnconfigure(1, weight=1)
 
         self.field_label_api_url = ttk.Label(frame, text="API URL", style="FormLabel.TLabel")
@@ -941,6 +1036,23 @@ class DesktopEstimatorApp:
         self._field_label_widgets["notes"] = self.field_label_notes
         notes_entry = ttk.Entry(frame, textvariable=self.notes, width=68)
         notes_entry.grid(row=6, column=1, sticky="ew")
+
+        self._inline_setup_widgets = [
+            self.field_label_api_url,
+            api_row,
+            self.field_label_api_key,
+            api_key_entry,
+            self.field_label_analysis_mode,
+            self.analysis_mode_combo,
+            self.field_label_selected_trades,
+            selected_trades_row,
+            self.field_label_sheet_overrides,
+            overrides_row,
+            self.field_label_current_job,
+            current_job_entry,
+            self.field_label_notes,
+            notes_entry,
+        ]
 
         self.actions_notebook = ttk.Notebook(frame)
         self.actions_notebook.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 8))
@@ -1577,6 +1689,503 @@ class DesktopEstimatorApp:
         self._apply_advanced_tools_visibility(update_status=False)
         self._install_company_logo()
         self._apply_visual_theme(update_status=False)
+        self._set_inline_setup_visibility(False)
+
+    def _set_inline_setup_visibility(self, visible: bool) -> None:
+        for widget in self._inline_setup_widgets:
+            try:
+                if visible:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
+            except Exception:
+                continue
+
+    def _close_setup_window(self) -> None:
+        if self.setup_window is not None:
+            try:
+                self.setup_window.destroy()
+            except Exception:
+                pass
+        self.setup_window = None
+        self.setup_project_combo = None
+        self._setup_window_is_open = False
+
+    def _refresh_project_selector(self) -> None:
+        names = sorted(self.project_profiles.keys(), key=lambda value: value.casefold())
+        active_name = self.active_project_name.get().strip()
+
+        if self.project_selector_combo is not None:
+            self.project_selector_combo.configure(values=names)
+        if self.setup_project_combo is not None:
+            self.setup_project_combo.configure(values=names)
+
+        if active_name and active_name in self.project_profiles:
+            return
+        if names:
+            self.active_project_name.set(names[0])
+            if not self.project_setup_name.get().strip():
+                self.project_setup_name.set(names[0])
+            return
+        self.active_project_name.set("")
+        if not self.project_setup_name.get().strip():
+            self.project_setup_name.set("")
+
+    def _normalize_project_payload(self, payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            payload = {}
+
+        def _as_bool(value: object, default: bool) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                token = value.strip().lower()
+                if token in {"1", "true", "yes", "on"}:
+                    return True
+                if token in {"0", "false", "no", "off"}:
+                    return False
+            return default
+
+        analysis_mode = str(payload.get("analysis_mode", self.analysis_mode.get())).strip()
+        if analysis_mode not in {"auto", "selected", "all"}:
+            analysis_mode = self.analysis_mode.get().strip() or "all"
+
+        guided_step = str(payload.get("guided_step", self.guided_step.get())).strip()
+        if guided_step not in {"trade", "run"}:
+            guided_step = "trade"
+
+        guided_trade_strategy = str(
+            payload.get("guided_trade_strategy", self.guided_trade_strategy.get())
+        ).strip()
+        if guided_trade_strategy not in {"auto", "selected", "all"}:
+            guided_trade_strategy = analysis_mode
+
+        guided_run_objective = str(
+            payload.get("guided_run_objective", self.guided_run_objective.get())
+        ).strip()
+        if guided_run_objective not in {
+            "takeoff_and_estimation",
+            "takeoff_only",
+            "manhours_only",
+        }:
+            guided_run_objective = "takeoff_and_estimation"
+
+        theme_preset = str(payload.get("theme_preset", self.theme_preset.get())).strip()
+        if theme_preset not in _THEME_PRESETS:
+            theme_preset = "construction_orange"
+
+        files_value = payload.get("files", [])
+        files: list[str] = []
+        if isinstance(files_value, list):
+            for item in files_value:
+                token = str(item).strip()
+                if token:
+                    files.append(token)
+
+        return {
+            "api_url": str(payload.get("api_url", self.api_url.get())).strip(),
+            "analysis_mode": analysis_mode,
+            "selected_trades": str(payload.get("selected_trades", "")).strip(),
+            "sheet_overrides_path": str(payload.get("sheet_overrides_path", "")).strip(),
+            "notes": str(payload.get("notes", "")),
+            "files": files,
+            "include_all_template": _as_bool(
+                payload.get("include_all_template"),
+                bool(self.include_all_template.get()),
+            ),
+            "include_unmapped_benchmark": _as_bool(
+                payload.get("include_unmapped_benchmark"),
+                bool(self.include_unmapped_benchmark.get()),
+            ),
+            "guided_step": guided_step,
+            "guided_trade_strategy": guided_trade_strategy,
+            "guided_run_objective": guided_run_objective,
+            "theme_preset": theme_preset,
+            "dark_mode_enabled": _as_bool(
+                payload.get("dark_mode_enabled"),
+                bool(self.dark_mode_enabled.get()),
+            ),
+            "banner_animation_enabled": _as_bool(
+                payload.get("banner_animation_enabled"),
+                bool(self.banner_animation_enabled.get()),
+            ),
+        }
+
+    def _project_payload_from_current(self) -> dict[str, object]:
+        payload = {
+            "api_url": self.api_url.get().strip(),
+            "analysis_mode": self.analysis_mode.get().strip(),
+            "selected_trades": self.selected_trades.get().strip(),
+            "sheet_overrides_path": self.sheet_overrides_path.get().strip(),
+            "notes": self.notes.get(),
+            "files": [str(path).strip() for path in self.files if str(path).strip()],
+            "include_all_template": bool(self.include_all_template.get()),
+            "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
+            "guided_step": self.guided_step.get().strip(),
+            "guided_trade_strategy": self.guided_trade_strategy.get().strip(),
+            "guided_run_objective": self.guided_run_objective.get().strip(),
+            "theme_preset": self.theme_preset.get().strip(),
+            "dark_mode_enabled": bool(self.dark_mode_enabled.get()),
+            "banner_animation_enabled": bool(self.banner_animation_enabled.get()),
+        }
+        return self._normalize_project_payload(payload)
+
+    def _apply_project_payload(self, payload: object, *, project_name: str) -> None:
+        normalized = self._normalize_project_payload(payload)
+        self.api_url.set(str(normalized.get("api_url", "")).strip() or "http://127.0.0.1:8000")
+        self.analysis_mode.set(str(normalized.get("analysis_mode", "all")).strip())
+        self.selected_trades.set(str(normalized.get("selected_trades", "")).strip())
+        self.sheet_overrides_path.set(str(normalized.get("sheet_overrides_path", "")).strip())
+        self.notes.set(str(normalized.get("notes", "")))
+        self.include_all_template.set(bool(normalized.get("include_all_template", False)))
+        self.include_unmapped_benchmark.set(bool(normalized.get("include_unmapped_benchmark", True)))
+        self.guided_step.set(str(normalized.get("guided_step", "trade")).strip())
+        self.guided_trade_strategy.set(
+            str(normalized.get("guided_trade_strategy", self.analysis_mode.get().strip())).strip()
+        )
+        self.guided_run_objective.set(
+            str(normalized.get("guided_run_objective", "takeoff_and_estimation")).strip()
+        )
+        self.theme_preset.set(str(normalized.get("theme_preset", "construction_orange")).strip())
+        self.dark_mode_enabled.set(bool(normalized.get("dark_mode_enabled", True)))
+        self.banner_animation_enabled.set(bool(normalized.get("banner_animation_enabled", True)))
+
+        files_value = normalized.get("files", [])
+        restored_files: list[str] = []
+        if isinstance(files_value, list):
+            for item in files_value:
+                token = str(item).strip()
+                if token:
+                    restored_files.append(token)
+        self.files = restored_files
+        self._file_scan_meta = {}
+        self._file_scan_token += 1
+        self._refresh_files_label()
+        if self.files:
+            self._start_selected_file_scan(self.files)
+
+        self.active_project_name.set(project_name)
+        self.project_setup_name.set(project_name)
+        self._refresh_project_selector()
+        self._save_settings()
+
+    def _load_project_profiles(self) -> None:
+        profiles: dict[str, dict[str, object]] = {}
+        active_name = ""
+
+        if self.projects_store_path.exists():
+            try:
+                loaded = json.loads(self.projects_store_path.read_text(encoding="utf-8"))
+            except Exception:
+                loaded = {}
+            if isinstance(loaded, dict):
+                active_name = str(loaded.get("active_project_name", "")).strip()
+                loaded_profiles = loaded.get("projects", {})
+                if isinstance(loaded_profiles, dict):
+                    for raw_name, payload in loaded_profiles.items():
+                        name = str(raw_name).strip()
+                        if not name:
+                            continue
+                        profiles[name] = self._normalize_project_payload(payload)
+
+        self.project_profiles = profiles
+        if active_name and active_name in self.project_profiles:
+            self.active_project_name.set(active_name)
+            if not self.project_setup_name.get().strip():
+                self.project_setup_name.set(active_name)
+        self._refresh_project_selector()
+
+    def _save_project_profiles(self) -> None:
+        payload = {
+            "version": 1,
+            "updated_at": datetime.now().isoformat(),
+            "active_project_name": self.active_project_name.get().strip(),
+            "projects": self.project_profiles,
+        }
+        try:
+            self.projects_store_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
+    def _save_project_profile_from_current(self) -> None:
+        name = self.project_setup_name.get().strip() or self.active_project_name.get().strip()
+        if not name:
+            if self.files:
+                name = Path(self.files[0]).stem.strip()
+            if not name:
+                name = f"Project-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        name = re.sub(r"\s+", " ", name).strip()[:80]
+        if not name:
+            name = f"Project-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+        self.project_profiles[name] = self._project_payload_from_current()
+        self.active_project_name.set(name)
+        self.project_setup_name.set(name)
+        self._refresh_project_selector()
+        self._save_project_profiles()
+        self._save_settings()
+        self.status_text.set(f"Saved project profile: {name}")
+
+    def _load_selected_project_profile_event(self, _event: object = None) -> None:
+        self._load_selected_project_profile()
+
+    def _load_selected_project_profile(self) -> None:
+        name = self.active_project_name.get().strip()
+        if not name:
+            if self.project_profiles:
+                first = sorted(self.project_profiles.keys(), key=lambda value: value.casefold())[0]
+                self.active_project_name.set(first)
+                name = first
+            else:
+                self.status_text.set("No saved projects found yet. Save a project snapshot first.")
+                return
+        payload = self.project_profiles.get(name)
+        if payload is None:
+            self.status_text.set(f"Project profile not found: {name}")
+            return
+        self._apply_project_payload(payload, project_name=name)
+        self.status_text.set(f"Loaded project profile: {name}")
+
+    def _start_new_project_profile(self) -> None:
+        default_name = f"Project-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self.active_project_name.set("")
+        self.project_setup_name.set(default_name)
+        self.current_job_id.set("")
+        self.notes.set("")
+        self.selected_trades.set("")
+        self.sheet_overrides_path.set("")
+        self.files = []
+        self._file_scan_meta = {}
+        self._file_scan_token += 1
+        self._refresh_files_label()
+        self._save_settings()
+        self.status_text.set(
+            "New project started. Pick drawing files, then click Save Project Snapshot."
+        )
+
+    def _open_project_setup_window(self) -> None:
+        if self.setup_window is not None and self._setup_window_is_open:
+            try:
+                self.setup_window.deiconify()
+                self.setup_window.lift()
+                self.setup_window.focus_force()
+                return
+            except Exception:
+                self._close_setup_window()
+
+        self._set_inline_setup_visibility(False)
+
+        setup = Toplevel(self.root)
+        self.setup_window = setup
+        self._setup_window_is_open = True
+        setup.title("Project Setup")
+        setup.geometry("1120x720")
+        setup.minsize(1000, 620)
+        setup.configure(background=_THEME["surface"])
+        setup.protocol("WM_DELETE_WINDOW", self._close_setup_window)
+
+        container = ttk.Frame(setup, padding=(18, 16, 18, 16), style="Panel.TFrame")
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(1, weight=1)
+
+        ttk.Label(container, text="Project Setup", style="HeaderTitle.TLabel").grid(
+            row=0, column=0, columnspan=4, sticky="w"
+        )
+        ttk.Label(
+            container,
+            text=(
+                "Use this screen to pick drawings, set trade scope, and save reusable project profiles. "
+                "After your first run, create a sheet-fix file, edit it, and rerun to train better sheet IDs."
+            ),
+            style="HeaderSub.TLabel",
+            wraplength=960,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 12))
+
+        ttk.Label(container, text="Project Name", style="FormLabel.TLabel").grid(
+            row=2, column=0, sticky="w"
+        )
+        ttk.Entry(container, textvariable=self.project_setup_name, width=52).grid(
+            row=2, column=1, sticky="ew"
+        )
+        ttk.Button(
+            container,
+            text="Save Project Snapshot",
+            command=self._save_project_profile_from_current,
+            style="Accent.TButton",
+        ).grid(row=2, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(
+            container,
+            text="New Project",
+            command=self._start_new_project_profile,
+        ).grid(row=2, column=3, sticky="w", padx=(8, 0))
+
+        ttk.Label(container, text="Saved Projects", style="FormLabel.TLabel").grid(
+            row=3, column=0, sticky="w", pady=(8, 0)
+        )
+        self.setup_project_combo = ttk.Combobox(
+            container,
+            textvariable=self.active_project_name,
+            state="readonly",
+            width=52,
+            values=[],
+        )
+        self.setup_project_combo.grid(row=3, column=1, sticky="ew", pady=(8, 0))
+        self.setup_project_combo.bind(
+            "<<ComboboxSelected>>",
+            self._load_selected_project_profile_event,
+        )
+        ttk.Button(
+            container,
+            text="Load Saved Project",
+            command=self._load_selected_project_profile,
+        ).grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        self._refresh_project_selector()
+
+        ttk.Separator(container, orient="horizontal").grid(
+            row=4, column=0, columnspan=4, sticky="ew", pady=(12, 10)
+        )
+
+        ttk.Label(container, text="Step 1: Drawings", style="Section.TLabel").grid(
+            row=5, column=0, sticky="w"
+        )
+        drawings_row = ttk.Frame(container)
+        drawings_row.grid(row=5, column=1, columnspan=3, sticky="ew")
+        drawings_row.columnconfigure(1, weight=1)
+        ttk.Button(
+            drawings_row,
+            text="Pick Drawing Files",
+            command=self._choose_pdfs,
+            style="Primary.TButton",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(drawings_row, textvariable=self.header_files_text, style="SummaryChip.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(10, 0)
+        )
+
+        ttk.Label(container, text="Step 2: Trade Scope", style="Section.TLabel").grid(
+            row=6, column=0, sticky="w", pady=(10, 0)
+        )
+        scope_row = ttk.Frame(container)
+        scope_row.grid(row=6, column=1, columnspan=3, sticky="ew", pady=(10, 0))
+        ttk.Combobox(
+            scope_row,
+            textvariable=self.analysis_mode,
+            state="readonly",
+            width=22,
+            values=self.analysis_mode_catalog,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            scope_row,
+            text="Find Work Types from Drawings",
+            command=self._discover_trade_options_from_drawings,
+            style="Accent.TButton",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            scope_row,
+            text="Load Work Types",
+            command=self._load_trade_catalog,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(
+            scope_row,
+            text="Check Work Types",
+            command=self._validate_selected_trades_clicked,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+
+        ttk.Label(container, text="Chosen Work Types", style="FormLabel.TLabel").grid(
+            row=7, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Entry(
+            container,
+            textvariable=self.selected_trades,
+            state="readonly",
+            width=80,
+        ).grid(row=7, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+
+        ttk.Label(container, text="Step 3: Sheet Fix File", style="Section.TLabel").grid(
+            row=8, column=0, sticky="w", pady=(10, 0)
+        )
+        fix_row = ttk.Frame(container)
+        fix_row.grid(row=8, column=1, columnspan=3, sticky="ew", pady=(10, 0))
+        fix_row.columnconfigure(0, weight=1)
+        ttk.Entry(
+            fix_row,
+            textvariable=self.sheet_overrides_path,
+            width=84,
+        ).grid(row=0, column=0, sticky="ew")
+        ttk.Button(
+            fix_row,
+            text="Pick Sheet Fix JSON",
+            command=self._choose_overrides_file,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            fix_row,
+            text="Create Sheet Fix File from Last Run",
+            command=self._export_overrides_template,
+            style="Accent.TButton",
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+
+        ttk.Label(container, text="Project Notes", style="FormLabel.TLabel").grid(
+            row=9, column=0, sticky="w", pady=(10, 0)
+        )
+        ttk.Entry(container, textvariable=self.notes, width=84).grid(
+            row=9, column=1, columnspan=3, sticky="ew", pady=(10, 0)
+        )
+
+        ttk.Label(container, text="Step 4: Run", style="Section.TLabel").grid(
+            row=10, column=0, sticky="w", pady=(12, 0)
+        )
+        run_row = ttk.Frame(container)
+        run_row.grid(row=10, column=1, columnspan=3, sticky="ew", pady=(12, 0))
+        ttk.Button(
+            run_row,
+            text="Start Background Run",
+            command=self._submit_async_job,
+            style="Primary.TButton",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            run_row,
+            text="Run Now (Wait)",
+            command=self._run_analysis,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            run_row,
+            text="Check Job Status",
+            command=self._refresh_job,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(
+            run_row,
+            text="Use Newest Job",
+            command=self._load_latest_job,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+
+        training_row = ttk.Frame(container)
+        training_row.grid(row=11, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            training_row,
+            text="Run Job Again with Current Fix File",
+            command=self._rerun_job,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            training_row,
+            text="Show Sheets to Review",
+            command=self._get_review_queue,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            training_row,
+            text="Close Setup Window",
+            command=self._close_setup_window,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+
+        ttk.Label(
+            container,
+            text=(
+                "Tip: First run with no sheet fix file. Then click 'Create Sheet Fix File from Last Run', "
+                "edit that JSON, pick it above, and rerun. Those corrections become reusable project knowledge."
+            ),
+            wraplength=980,
+            justify="left",
+            style="HeaderSub.TLabel",
+        ).grid(row=12, column=0, columnspan=4, sticky="w", pady=(14, 0))
 
     def _draw_construction_banner(self, banner: Canvas | None) -> None:
         if banner is None:
@@ -5053,6 +5662,14 @@ class DesktopEstimatorApp:
         if isinstance(banner_animation_enabled, bool):
             self.banner_animation_enabled.set(banner_animation_enabled)
 
+        active_project_name = loaded.get("active_project_name")
+        if isinstance(active_project_name, str):
+            self.active_project_name.set(active_project_name.strip())
+
+        project_setup_name = loaded.get("project_setup_name")
+        if isinstance(project_setup_name, str):
+            self.project_setup_name.set(project_setup_name.strip())
+
         file_list = loaded.get("files")
         if isinstance(file_list, list):
             restored: list[str] = []
@@ -5073,6 +5690,7 @@ class DesktopEstimatorApp:
 
         if self.auto_poll_enabled.get() and self.current_job_id.get().strip():
             self._start_auto_poll()
+        self._refresh_project_selector()
 
     def _save_settings(self) -> None:
         payload = {
@@ -5097,6 +5715,8 @@ class DesktopEstimatorApp:
             "theme_preset": self.theme_preset.get().strip(),
             "dark_mode_enabled": bool(self.dark_mode_enabled.get()),
             "banner_animation_enabled": bool(self.banner_animation_enabled.get()),
+            "active_project_name": self.active_project_name.get().strip(),
+            "project_setup_name": self.project_setup_name.get().strip(),
             "files": self.files,
         }
         try:
@@ -5132,6 +5752,7 @@ class DesktopEstimatorApp:
             except Exception:
                 pass
         self._calculator_popups.clear()
+        self._close_setup_window()
         self.root.destroy()
 
     def _shutdown_local_api_clicked(self) -> None:
