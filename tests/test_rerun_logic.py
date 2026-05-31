@@ -50,16 +50,22 @@ def test_resolve_rerun_inputs_uses_source_defaults():
         "sheet_overrides": [{"sheet_id": "A101", "title": "Floor Plan", "source_page_index": "2"}],
         "notes": "  hello world  ",
     }
-    mode, trades, overrides, notes = _resolve_rerun_inputs(
+    mode, trades, overrides, spec_profiles, spec_org, include_public_specs, notes = _resolve_rerun_inputs(
         source_input=source_input,
         analysis_mode=None,
         selected_trades=None,
         sheet_overrides_json=None,
+        spec_profile_ids=None,
+        spec_organization=None,
+        include_public_specs=None,
         notes=None,
     )
     assert mode == "selected"
     assert trades == ["architectural"]
     assert overrides == [{"sheet_id": "A101", "title": "Floor Plan", "source_page_index": 2}]
+    assert spec_profiles == []
+    assert spec_org == ""
+    assert include_public_specs is False
     assert notes == "hello world"
 
 
@@ -70,6 +76,9 @@ def test_resolve_rerun_inputs_rejects_invalid_mode():
             analysis_mode="bad-mode",
             selected_trades=None,
             sheet_overrides_json=None,
+            spec_profile_ids=None,
+            spec_organization=None,
+            include_public_specs=None,
             notes=None,
         )
     except ValueError as exc:
@@ -89,6 +98,9 @@ def test_resolve_rerun_inputs_rejects_selected_mode_without_valid_trades_from_so
             analysis_mode=None,
             selected_trades=None,
             sheet_overrides_json=None,
+            spec_profile_ids=None,
+            spec_organization=None,
+            include_public_specs=None,
             notes=None,
         )
     except ValueError as exc:
@@ -105,6 +117,9 @@ def test_resolve_rerun_inputs_rejects_selected_mode_without_valid_trades_from_ov
             analysis_mode="selected",
             selected_trades="unknown_trade",
             sheet_overrides_json=None,
+            spec_profile_ids=None,
+            spec_organization=None,
+            include_public_specs=None,
             notes=None,
         )
     except ValueError as exc:

@@ -15,6 +15,7 @@ from ai_estimator.extractors.semantic_graph import build_semantic_graph
 from ai_estimator.extractors.sheet_classifier import classify_sheets
 from ai_estimator.extractors.takeoff import compute_quantity_takeoff
 from ai_estimator.sheet_overrides import normalize_sheet_overrides_items
+from ai_estimator.spec_intel import build_spec_context, build_spec_issues
 from ai_estimator.trade_scope import resolve_trade_scope
 from ai_estimator.utils.json_validation import validate_output
 
@@ -27,6 +28,7 @@ def run_pipeline(
     analysis_mode: str = "auto",
     selected_trades: list[str] | None = None,
     sheet_overrides: list[dict[str, object]] | None = None,
+    spec_profiles: list[dict[str, object]] | None = None,
     notes: str | None = None,
     validate_schema: bool = True,
     schema_path: str | None = None,
@@ -47,6 +49,13 @@ def run_pipeline(
         sheets=sheets, requested_mode=analysis_mode, requested_trades=selected_trades
     )
     analyzed_trades = set(trade_scope.analyzed_trades)
+    detected_trades = list(trade_scope.detected_trades)
+
+    spec_context = build_spec_context(
+        spec_profiles=spec_profiles,
+        detected_trades=detected_trades,
+    )
+    issues.extend(build_spec_issues(spec_context))
 
     if analysis_mode == "selected" and not analyzed_trades:
         issues.append("No valid selected trades were provided.")
@@ -92,6 +101,7 @@ def run_pipeline(
             "skipped_trades": trade_scope.skipped_trades,
             "sheet_trade_map": trade_scope.sheet_trade_map,
         },
+        "spec_context": spec_context,
         "scale_analysis": scale_analysis,
         "legend_and_symbols": legend_symbols,
         "geometry": geometry,
