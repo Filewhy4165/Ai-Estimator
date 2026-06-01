@@ -101,6 +101,19 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert preview["calibration"]["feet_per_pdf_unit"] == 0.5
     assert preview["preview"]["calibrated_vector_linework_total_ft"] == 50.0
 
+    applied = service_app.apply_job_scale_calibration(
+        "job-a",
+        sheet_id="A101",
+        measured_pdf_units=50.0,
+        known_length_ft=25.0,
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert applied["applied"] is True
+    assert applied["quantity_takeoff"]["linear"]["vector_linework_total_ft"] == 50.0
+    updated = store.get_job("job-a", tenant_id="tenant-a")
+    assert updated is not None
+    assert updated.result["quantity_takeoff"]["linear"]["vector_linework_total_ft"] == 50.0
+
     try:
         service_app.get_job_visual_evidence_svg(
             "job-a",

@@ -265,6 +265,10 @@ def _scale_feet_per_pdf_unit_by_sheet(
         if not isinstance(row, dict):
             continue
         sheet_id = str(row.get("sheet_id", "")).strip()
+        manual_feet_per_pdf_unit = _numeric(row.get("feet_per_pdf_unit"))
+        if sheet_id and manual_feet_per_pdf_unit > 0:
+            by_sheet[sheet_id] = manual_feet_per_pdf_unit
+            continue
         scale_value = str(row.get("detected_scale", "")).strip()
         units = str(row.get("units", "")).strip().lower()
         if not sheet_id or not scale_value or scale_value.upper() == "NTS":

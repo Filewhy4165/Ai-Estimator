@@ -38,7 +38,11 @@ from service.review_queue import (
 from service.spec_store import SpecStore, build_spec_profile_from_file
 from service.trade_coverage import build_trade_coverage_report
 from service.trade_recommendation import build_trade_recommendation
-from service.visual_review import build_scale_calibration_preview, build_visual_evidence_svg
+from service.visual_review import (
+    apply_scale_calibration_to_result,
+    build_scale_calibration_preview,
+    build_visual_evidence_svg,
+)
 
 
 def _resolve_cors_origins() -> list[str]:
@@ -1279,6 +1283,48 @@ def get_job_scale_calibration_preview(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/jobs/{job_id}/scale-calibration/apply")
+def apply_job_scale_calibration(
+    job_id: str,
+    sheet_id: str,
+    measured_pdf_units: float,
+    known_length_ft: float,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    store = _get_job_store()
+    record = store.get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not isinstance(record.result, dict):
+        raise HTTPException(status_code=409, detail="Job does not have a completed result to calibrate.")
+    try:
+        updated_result, payload = apply_scale_calibration_to_result(
+            result=record.result,
+            sheet_id=sheet_id,
+            measured_pdf_units=measured_pdf_units,
+            known_length_ft=known_length_ft,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    now = datetime.now(timezone.utc).isoformat()
+    store.update_job(
+        job_id,
+        status=record.status,
+        updated_at=now,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        result=updated_result,
+        error=record.error,
+        tenant_id=tenant_id,
+    )
+    return {
+        "job_id": job_id,
+        **payload,
+    }
 
 
 @app.get("/v1/jobs/{job_id}/trade-recommendation", response_model=TradeRecommendationResponse)

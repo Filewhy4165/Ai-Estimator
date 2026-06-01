@@ -1,4 +1,8 @@
-from service.visual_review import build_scale_calibration_preview, build_visual_evidence_svg
+from service.visual_review import (
+    apply_scale_calibration_to_result,
+    build_scale_calibration_preview,
+    build_visual_evidence_svg,
+)
 
 
 def _result_with_vector_data():
@@ -97,3 +101,24 @@ def test_scale_calibration_preview_converts_vector_units_to_feet():
     assert payload["preview"]["total_linework_pdf_units"] == 240.0
     assert payload["preview"]["calibrated_vector_linework_total_ft"] == 120.0
     assert payload["warnings"] == []
+
+
+def test_apply_scale_calibration_updates_quantity_takeoff_result_copy():
+    result = _result_with_vector_data()
+    updated, payload = apply_scale_calibration_to_result(
+        result=result,
+        sheet_id="A101",
+        measured_pdf_units=50.0,
+        known_length_ft=25.0,
+    )
+
+    assert payload["applied"] is True
+    assert payload["calibration"]["feet_per_pdf_unit"] == 0.5
+    assert updated is not result
+    assert result.get("quantity_takeoff") is None
+    linear = updated["quantity_takeoff"]["linear"]
+    assert linear["vector_linework_total_pdf_units"] == 240.0
+    assert linear["vector_linework_total_ft"] == 120.0
+    manual = updated["scale_analysis"]["manual_calibrations"][0]
+    assert manual["sheet_id"] == "A101"
+    assert manual["scale_source"] == "manual_calibration"
