@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from html import escape
 from typing import Any
+
+from ai_estimator.extractors.takeoff import compute_quantity_takeoff
 
 
 DEFAULT_SVG_WIDTH = 1000.0
@@ -182,6 +185,107 @@ def build_scale_calibration_preview(
             "a known drawing dimension before persistent calibration is applied."
         ),
     }
+
+
+def apply_scale_calibration_to_result(
+    *,
+    result: dict[str, Any] | None,
+    sheet_id: str,
+    measured_pdf_units: float,
+    known_length_ft: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a result copy with a manual sheet scale calibration applied."""
+    preview = build_scale_calibration_preview(
+        job_id="calibration-preview",
+        result=result,
+        sheet_id=sheet_id,
+        measured_pdf_units=measured_pdf_units,
+        known_length_ft=known_length_ft,
+    )
+    updated_result: dict[str, Any] = deepcopy(result or {})
+    if not updated_result:
+        raise ValueError("Completed job result is required before applying calibration.")
+
+    geometry = updated_result.get("geometry", {})
+    if not isinstance(geometry, dict):
+        raise ValueError("Completed job result does not contain geometry.")
+
+    scale_analysis = updated_result.get("scale_analysis")
+    if not isinstance(scale_analysis, dict):
+        scale_analysis = {}
+        updated_result["scale_analysis"] = scale_analysis
+
+    rows = scale_analysis.get("by_sheet", [])
+    if not isinstance(rows, list):
+        rows = []
+    normalized_sheet_id = str(sheet_id).strip()
+    rows = [
+        row
+        for row in rows
+        if not (
+            isinstance(row, dict)
+            and str(row.get("sheet_id", "")).strip() == normalized_sheet_id
+            and str(row.get("scale_source", "")).strip() == "manual_calibration"
+        )
+    ]
+
+    calibration = preview["calibration"]
+    manual_row = {
+        "sheet_id": normalized_sheet_id,
+        "detected_scale": "manual calibration",
+        "units": "manual",
+        "confidence": 1.0,
+        "scale_source": "manual_calibration",
+        "known_length_ft": calibration["known_length_ft"],
+        "measured_pdf_units": calibration["measured_pdf_units"],
+        "feet_per_pdf_unit": calibration["feet_per_pdf_unit"],
+        "pdf_units_per_foot": calibration["pdf_units_per_foot"],
+    }
+    rows.append(manual_row)
+    scale_analysis["by_sheet"] = rows
+
+    manual_calibrations = scale_analysis.get("manual_calibrations", [])
+    if not isinstance(manual_calibrations, list):
+        manual_calibrations = []
+    manual_calibrations = [
+        row
+        for row in manual_calibrations
+        if not (isinstance(row, dict) and str(row.get("sheet_id", "")).strip() == normalized_sheet_id)
+    ]
+    manual_calibrations.append(manual_row)
+    scale_analysis["manual_calibrations"] = manual_calibrations
+
+    quantity_takeoff, takeoff_issues = compute_quantity_takeoff(
+        geometry,
+        scale_analysis=scale_analysis,
+    )
+    updated_result["quantity_takeoff"] = quantity_takeoff
+
+    issue_message = (
+        f"Manual scale calibration applied for sheet {normalized_sheet_id}: "
+        f"{calibration['known_length_ft']} ft over {calibration['measured_pdf_units']} PDF units."
+    )
+    issues = updated_result.get("issues_or_ambiguities", [])
+    if not isinstance(issues, list):
+        issues = []
+    merged_issues = [str(item) if not isinstance(item, dict) else item for item in issues]
+    if issue_message not in [str(item) for item in merged_issues]:
+        merged_issues.append(issue_message)
+    for issue in takeoff_issues:
+        if issue not in [str(item) for item in merged_issues]:
+            merged_issues.append(issue)
+    updated_result["issues_or_ambiguities"] = merged_issues
+
+    apply_payload = {
+        "applied": True,
+        "sheet_id": normalized_sheet_id,
+        "calibration": calibration,
+        "preview": preview["preview"],
+        "quantity_takeoff": quantity_takeoff,
+        "warnings": preview.get("warnings", []),
+        "note": "Manual scale calibration was applied to the stored job result.",
+    }
+    return updated_result, apply_payload
 
 
 def _extract_annotations(result: dict[str, Any]) -> dict[str, Any]:

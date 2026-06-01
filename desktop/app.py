@@ -5810,9 +5810,15 @@ class DesktopEstimatorApp:
         ).grid(row=0, column=0, sticky="w")
         ttk.Button(
             action_row,
+            text="Apply to Job Result",
+            style="Accent.TButton",
+            command=self._apply_scale_calibration,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(
+            action_row,
             text="Close",
             command=self._close_scale_calibration_window,
-        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         self.visual_review_sheet_id.set(sheet_id)
         self.visual_review_page_index.set(str(page_index) if page_index else "")
@@ -5867,6 +5873,49 @@ class DesktopEstimatorApp:
             on_success=on_success,
             failure_heading="Failed to preview scale calibration",
             failure_status="Scale calibration preview failed.",
+        )
+
+    def _apply_scale_calibration(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+            sheet_id = self.visual_review_sheet_id.get().strip()
+            if not sheet_id:
+                raise RuntimeError("Sheet ID is required.")
+            measured = self._parse_required_positive_float(
+                self.scale_measured_pdf_units.get(),
+                field_name="Measured PDF Units",
+            )
+            known = self._parse_required_positive_float(
+                self.scale_known_length_ft.get(),
+                field_name="Known Length (ft)",
+            )
+        except Exception as exc:
+            self._set_output_text(f"Could not apply scale calibration:\n{exc}")
+            return
+
+        def worker() -> dict:
+            return self._request_json(
+                "POST",
+                f"/v1/jobs/{job_id}/scale-calibration/apply",
+                timeout=90,
+                params={
+                    "sheet_id": sheet_id,
+                    "measured_pdf_units": measured,
+                    "known_length_ft": known,
+                },
+            )
+
+        def on_success(payload: dict) -> None:
+            self._set_output_json(payload, sync_views=False, prefer_json_tab=True)
+            self.status_text.set(f"Applied manual scale calibration to {sheet_id}. Refresh job to view updated takeoff.")
+            self._save_settings()
+
+        self._start_background_action(
+            message=f"Applying scale calibration for {sheet_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to apply scale calibration",
+            failure_status="Scale calibration apply failed.",
         )
 
     def _close_scale_calibration_window(self) -> None:

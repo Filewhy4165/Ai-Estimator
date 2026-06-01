@@ -324,6 +324,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}/visual-evidence` compact vector linework evidence for drawing review/highlighting
 - `GET /v1/jobs/{job_id}/visual-evidence.svg` single-sheet SVG overlay of vector linework evidence
 - `GET /v1/jobs/{job_id}/scale-calibration/preview` preview feet-per-PDF-unit calibration from a known dimension
+- `POST /v1/jobs/{job_id}/scale-calibration/apply` apply a reviewed manual scale calibration to the stored job result
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
 - `GET /v1/benchmark-reports/history` list benchmark reports with pagination from a results directory
 - `GET /v1/benchmark-reports/compare` compare two benchmark report JSON files
@@ -391,10 +392,13 @@ Scale calibration preview:
 
 ```bash
 curl "http://127.0.0.1:8000/v1/jobs/<job_id>/scale-calibration/preview?sheet_id=A101&measured_pdf_units=72&known_length_ft=24"
+curl -X POST "http://127.0.0.1:8000/v1/jobs/<job_id>/scale-calibration/apply?sheet_id=A101&measured_pdf_units=72&known_length_ft=24"
 ```
 
 Use this when a reviewer knows one drawing dimension and needs to confirm the conversion from PDF units to feet.
-The preview calculates calibrated linework totals for that sheet but does not mutate stored job results yet.
+The preview calculates calibrated linework totals for that sheet without mutating stored job results. The apply
+endpoint stores a manual sheet calibration, recomputes vector linework takeoff, and keeps the calibration under
+`scale_analysis.manual_calibrations`.
 
 Benchmark template endpoint query params:
 
