@@ -96,6 +96,13 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     )
     assert spec_payload["status"] == "no_specs_applied"
 
+    handoff_response = service_app.get_job_handoff_package(
+        "job-a",
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert handoff_response.media_type == "application/zip"
+    assert b"job-a/README.txt" in handoff_response.body
+
     try:
         service_app.get_job_visual_evidence("job-a", request=_request_for_tenant("tenant-b"))
     except HTTPException as exc:

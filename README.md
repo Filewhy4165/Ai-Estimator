@@ -323,6 +323,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}/takeoff.csv` cost-handoff CSV export of flattened quantity takeoff rows
 - `GET /v1/jobs/{job_id}/report.html` readable estimator report for sheets, trade scope, quantities, cost-code hints, and issues
 - `GET /v1/jobs/{job_id}/spec-compliance` applied-spec compliance summary with missing spec-required trades and detected standards
+- `GET /v1/jobs/{job_id}/handoff.zip` ZIP handoff package with report HTML, takeoff CSV, spec compliance, result JSON, and job metadata
 - `GET /v1/jobs/{job_id}/trade-recommendation` recommendation for `selected` vs `all` trade scope with confidence and rationale
 - `GET /v1/jobs/{job_id}/trade-coverage` coverage table by trade (detected/analyzed/signals/status)
 - `GET /v1/jobs/{job_id}/readiness-report` consolidated go/no-go handoff report
@@ -390,6 +391,15 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/spec-compliance"
 
 The response shows applied spec profiles, detected standards, spec-required trades, drawing-detected trades,
 missing spec-required trades, and recommendations. Drawings remain the highest authority when conflicts exist.
+
+Handoff package:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/handoff.zip" --output handoff.zip
+```
+
+The ZIP contains `estimator-report.html`, `takeoff.csv`, `spec-compliance.json`, `result.json`,
+`job-record.json`, and a README so the job can be handed to an estimator or pricing workflow.
 
 Review queue endpoint query params:
 
