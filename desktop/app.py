@@ -1963,6 +1963,9 @@ class DesktopEstimatorApp:
         ttk.Button(summary_actions, text="Export Takeoff CSV", command=self._export_takeoff_csv).grid(
             row=0, column=0, sticky="w"
         )
+        ttk.Button(summary_actions, text="Open Estimator Report", command=self._open_estimator_report).grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
         summary_table_frame = ttk.Frame(summary_tab)
         summary_table_frame.grid(row=2, column=0, sticky="nsew")
         summary_table_frame.columnconfigure(0, weight=1)
@@ -3456,6 +3459,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Export Takeoff Spreadsheet",
                 "pro_tip": "Save current job quantities as CSV rows for Excel or pricing handoff.",
                 "beginner_tip": "Save the takeoff as a spreadsheet file you can open in Excel.",
+            },
+            "open_estimator_report": {
+                "pro_label": "Open Estimator Report",
+                "beginner_label": "Open Easy Report",
+                "pro_tip": "Open a browser report for current job sheets, trades, quantities, issues, and cost-code hints.",
+                "beginner_tip": "Open an easier-to-read report instead of raw JSON.",
             },
             "open_results_folder": {
                 "pro_label": "Open Results Folder",
@@ -7785,6 +7794,23 @@ class DesktopEstimatorApp:
             failure_heading="Failed to export takeoff CSV",
             failure_status="Takeoff CSV export failed.",
         )
+
+    def _open_estimator_report(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
+            return
+        base = self.api_url.get().strip().rstrip("/") or "http://127.0.0.1:8000"
+        params: dict[str, str] = {}
+        tenant_id = self.tenant_id.get().strip()
+        if tenant_id:
+            params["tenant_id"] = tenant_id
+        query = f"?{urlencode(params)}" if params else ""
+        url = f"{base}/v1/jobs/{job_id}/report.html{query}"
+        webbrowser.open(url, new=2)
+        self.status_text.set(f"Opened estimator report for job {job_id}.")
+        self._append_output_line(f"Estimator report opened: {url}")
 
     def _show_benchmark_history(self) -> None:
         results_dir = self._results_dir()
