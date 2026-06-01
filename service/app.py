@@ -33,6 +33,7 @@ from service.review_queue import (
     build_benchmark_manifest_template,
     build_review_queue,
     build_sheet_overrides_template,
+    build_visual_evidence,
 )
 from service.spec_store import SpecStore, build_spec_profile_from_file
 from service.trade_coverage import build_trade_coverage_report
@@ -1214,6 +1215,23 @@ def get_sheet_overrides_template(
         include_all=include_all,
     )
     return SheetOverridesTemplateResponse(**payload)
+
+
+@app.get("/v1/jobs/{job_id}/visual-evidence")
+def get_job_visual_evidence(
+    job_id: str,
+    limit: int = 250,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return build_visual_evidence(
+        job_id=job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+        limit=limit,
+    )
 
 
 @app.get("/v1/jobs/{job_id}/trade-recommendation", response_model=TradeRecommendationResponse)

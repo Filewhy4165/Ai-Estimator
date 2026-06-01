@@ -73,3 +73,38 @@ def test_geometry_dimension_extraction_normalizes_spacing():
     values = [row.get("value") for row in dimensions if isinstance(row, dict)]
 
     assert values.count("2'-11\"") == 1
+
+
+def test_geometry_extracts_vector_evidence_annotations():
+    pages = [
+        LoadedPage(
+            page_index=0,
+            source_pdf="x.pdf",
+            text="",
+            width=200,
+            height=100,
+            vector_primitives=[
+                {
+                    "kind": "line",
+                    "points": [[10, 10], [110, 10]],
+                    "bbox": [10, 10, 110, 10],
+                    "length_pdf_units": 100.0,
+                },
+                {
+                    "kind": "rectangle",
+                    "points": [[20, 20], [50, 20], [50, 60], [20, 60]],
+                    "bbox": [20, 20, 50, 60],
+                    "perimeter_pdf_units": 140.0,
+                },
+            ],
+        )
+    ]
+    sheets = [_sheet(page_index=0, sheet_id="A101")]
+
+    geometry, issues = extract_geometry(pages, sheets)
+    annotations = geometry.get("annotations", {})
+
+    assert annotations["vector_pages"][0]["primitive_count"] == 2
+    assert annotations["vector_measurements"][0]["total_linework_pdf_units"] == 240.0
+    assert len(annotations["vector_evidence"]) == 2
+    assert any("Vector linework was extracted" in issue for issue in issues)

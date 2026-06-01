@@ -76,7 +76,10 @@ def run_pipeline(
     semantic_graph = _filter_semantic_graph_by_trade(semantic_graph, analyzed_trades, analysis_mode)
 
     model = build_simplified_model(geometry)
-    quantity_takeoff, takeoff_issues = compute_quantity_takeoff(geometry)
+    quantity_takeoff, takeoff_issues = compute_quantity_takeoff(
+        geometry,
+        scale_analysis=scale_analysis,
+    )
     issues.extend(takeoff_issues)
     cost_mapping = map_costs(quantity_takeoff)
 

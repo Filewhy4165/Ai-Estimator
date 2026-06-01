@@ -10,8 +10,12 @@ def test_summarize_payload_for_result_payload() -> None:
             "legend_and_symbols": {"unknown_symbols": [{"symbol": "X"}]},
             "quantity_takeoff": {
                 "counts": {"door": 2, "window": 3},
-                "linear": {"explicit_dimensions_total_ft": 12.5},
+                "linear": {
+                    "explicit_dimensions_total_ft": 12.5,
+                    "vector_linework_total_ft": 44.0,
+                },
             },
+            "geometry": {"annotations": {"vector_pages": [{"sheet_id": "A101"}]}},
             "trade_scope": {"analyzed_trades": ["architectural", "electrical"]},
         }
     }
@@ -22,6 +26,8 @@ def test_summarize_payload_for_result_payload() -> None:
     assert any("Unknown symbols: 1" in line for line in lines)
     assert any("Quantity count total: 5" in line for line in lines)
     assert any("Explicit dimension references: 12.5 ft" in line for line in lines)
+    assert any("Vector evidence pages: 1" in line for line in lines)
+    assert any("Scaled vector linework: 44.0 ft" in line for line in lines)
     assert any("Trades analyzed: architectural, electrical" in line for line in lines)
 
 
