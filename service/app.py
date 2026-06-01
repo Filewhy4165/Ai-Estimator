@@ -27,6 +27,7 @@ from ai_estimator.benchmark_compare import (
 from ai_estimator.pipeline import run_pipeline, sanitize_selected_trades
 from ai_estimator.spec_intel import build_submittal_queries, parse_csv_tokens
 from service.job_metrics import build_job_metrics_snapshot, evaluate_job_metrics_gate
+from service.job_report import build_job_report_html
 from service.job_store import JobRecord, JobStore
 from service.request_parsing import normalize_notes, parse_sheet_overrides_json
 from service.review_queue import (
@@ -1261,6 +1262,28 @@ def get_job_takeoff_csv(
             "Content-Disposition": f'attachment; filename="takeoff-{_safe_file_name(job_id)}.csv"'
         },
     )
+
+
+@app.get("/v1/jobs/{job_id}/report.html", response_class=HTMLResponse)
+def get_job_report_html(
+    job_id: str,
+    tenant_id: str | None = None,
+    request: Request = None,
+) -> HTMLResponse:
+    resolved_tenant_id = _tenant_id_for_request(request, explicit_tenant_id=tenant_id)
+    record = _get_job_store().get_job(job_id, tenant_id=resolved_tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    html = build_job_report_html(
+        job_id=record.job_id,
+        status=record.status,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        completed_at=record.completed_at,
+        input_payload=record.input if isinstance(record.input, dict) else None,
+        result=record.result if isinstance(record.result, dict) else None,
+    )
+    return HTMLResponse(content=html)
 
 
 @app.get("/v1/jobs/{job_id}/visual-evidence.svg")

@@ -321,6 +321,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/metrics/gate` pass/fail gate over job metrics with configurable thresholds
 - `GET /v1/jobs/{job_id}` job status/result
 - `GET /v1/jobs/{job_id}/takeoff.csv` cost-handoff CSV export of flattened quantity takeoff rows
+- `GET /v1/jobs/{job_id}/report.html` readable estimator report for sheets, trade scope, quantities, cost-code hints, and issues
 - `GET /v1/jobs/{job_id}/trade-recommendation` recommendation for `selected` vs `all` trade scope with confidence and rationale
 - `GET /v1/jobs/{job_id}/trade-coverage` coverage table by trade (detected/analyzed/signals/status)
 - `GET /v1/jobs/{job_id}/readiness-report` consolidated go/no-go handoff report
@@ -370,6 +371,15 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/takeoff.csv" --output takeoff.csv
 ```
 
 The CSV includes overall and per-trade rows for linear, area, volume, counts, and CSI cost-code hints.
+
+Estimator HTML report:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/report.html" --output estimator-report.html
+```
+
+The report is a browser-friendly handoff page for estimators who need sheets, trade scope, quantities,
+cost-code hints, and issues without reading raw JSON.
 
 Review queue endpoint query params:
 
