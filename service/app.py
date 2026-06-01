@@ -42,6 +42,7 @@ from service.visual_review import (
     apply_scale_calibration_to_result,
     build_scale_calibration_preview,
     build_visual_evidence_svg,
+    build_visual_measurement_page,
 )
 
 
@@ -1259,6 +1260,29 @@ def get_job_visual_evidence_svg(
         limit=limit,
     )
     return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.get("/v1/jobs/{job_id}/visual-review", response_class=HTMLResponse)
+def get_job_visual_review_page(
+    job_id: str,
+    sheet_id: str = "",
+    source_page_index: int | None = None,
+    tenant_id: str | None = None,
+    limit: int = 500,
+    request: Request = None,
+) -> str:
+    resolved_tenant_id = _tenant_id_for_request(request, explicit_tenant_id=tenant_id)
+    record = _get_job_store().get_job(job_id, tenant_id=resolved_tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return build_visual_measurement_page(
+        job_id=job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+        sheet_id=sheet_id or None,
+        source_page_index=source_page_index,
+        tenant_id=resolved_tenant_id,
+        limit=limit,
+    )
 
 
 @app.get("/v1/jobs/{job_id}/scale-calibration/preview")

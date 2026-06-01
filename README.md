@@ -323,6 +323,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
 - `GET /v1/jobs/{job_id}/visual-evidence` compact vector linework evidence for drawing review/highlighting
 - `GET /v1/jobs/{job_id}/visual-evidence.svg` single-sheet SVG overlay of vector linework evidence
+- `GET /v1/jobs/{job_id}/visual-review` interactive browser page for click-based visual measurement and scale calibration
 - `GET /v1/jobs/{job_id}/scale-calibration/preview` preview feet-per-PDF-unit calibration from a known dimension
 - `POST /v1/jobs/{job_id}/scale-calibration/apply` apply a reviewed manual scale calibration to the stored job result
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
@@ -382,11 +383,14 @@ Visual evidence endpoint:
 ```bash
 curl "http://127.0.0.1:8000/v1/jobs/<job_id>/visual-evidence?limit=250"
 curl "http://127.0.0.1:8000/v1/jobs/<job_id>/visual-evidence.svg?sheet_id=A101&source_page_index=1&limit=500" --output visual-evidence-A101.svg
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/visual-review?sheet_id=A101&source_page_index=1"
 ```
 
 The response summarizes detected vector linework by sheet and returns capped evidence items with PDF-space
 coordinates. Treat these as drawing-review highlights, not final installed quantities, until a trade-specific
 detector or estimator review accepts them.
+The browser review page lets a reviewer click two points on the SVG linework, copy the measured PDF-unit distance
+into scale calibration automatically, then preview or apply the calibration.
 
 Scale calibration preview:
 

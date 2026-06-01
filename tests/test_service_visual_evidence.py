@@ -91,6 +91,16 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert b"<svg" in svg_response.body
     assert b"Sheet A101" in svg_response.body
 
+    page = service_app.get_job_visual_review_page(
+        "job-a",
+        sheet_id="A101",
+        source_page_index=1,
+        tenant_id="tenant-a",
+        request=_request_for_tenant("tenant-b"),
+    )
+    assert "EstimateForge Visual Measurement" in page
+    assert 'data-sheet-id="A101"' in page
+
     preview = service_app.get_job_scale_calibration_preview(
         "job-a",
         sheet_id="A101",
