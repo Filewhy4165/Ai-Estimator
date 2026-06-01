@@ -256,6 +256,10 @@ class DesktopEstimatorApp:
         self.include_public_specs = BooleanVar(value=True)
         self.publish_uploaded_specs = BooleanVar(value=False)
         self.current_job_id = StringVar(value="")
+        self.visual_review_sheet_id = StringVar(value="")
+        self.visual_review_page_index = StringVar(value="")
+        self.scale_measured_pdf_units = StringVar(value="")
+        self.scale_known_length_ft = StringVar(value="")
         self.notes = StringVar(value="")
         self.include_all_template = BooleanVar(value=False)
         self.include_unmapped_benchmark = BooleanVar(value=True)
@@ -370,6 +374,7 @@ class DesktopEstimatorApp:
         self.spec_org_combo: ttk.Combobox | None = None
         self.setup_project_combo: ttk.Combobox | None = None
         self.setup_window: Toplevel | None = None
+        self.scale_calibration_window: Toplevel | None = None
         self._setup_window_is_open = False
         self._inline_setup_widgets: list[object] = []
         self._native_menu: Menu | None = None
@@ -1997,6 +2002,14 @@ class DesktopEstimatorApp:
         ttk.Button(sheet_actions, text="Refresh Current Job", command=self._refresh_job).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
+        ttk.Button(sheet_actions, text="Open Linework View", command=self._open_visual_evidence_svg).grid(
+            row=0, column=2, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(
+            sheet_actions,
+            text="Preview Scale Calibration",
+            command=self._show_scale_calibration_window,
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
         sheet_table_frame = ttk.Frame(sheets_tab)
         sheet_table_frame.grid(row=2, column=0, sticky="nsew")
         sheet_table_frame.columnconfigure(0, weight=1)
@@ -3253,6 +3266,18 @@ class DesktopEstimatorApp:
                 "beginner_label": "Show Sheets to Review",
                 "pro_tip": "Show low-confidence sheet IDs and items needing human review.",
                 "beginner_tip": "Show places where the app is unsure and needs a quick check.",
+            },
+            "open_linework_view": {
+                "pro_label": "Open Linework View",
+                "beginner_label": "Show Drawing Lines",
+                "pro_tip": "Save and open an SVG overlay of extracted vector linework for the selected sheet.",
+                "beginner_tip": "Open a picture of the lines the app found on the selected drawing sheet.",
+            },
+            "preview_scale_calibration": {
+                "pro_label": "Preview Scale Calibration",
+                "beginner_label": "Check Scale with Known Length",
+                "pro_tip": "Preview feet-per-PDF-unit conversion using a selected sheet and one known dimension.",
+                "beginner_tip": "Use one known drawing length to check whether the app's scale math looks right.",
             },
             "export_overrides_template": {
                 "pro_label": "Export Overrides Template",
@@ -5629,6 +5654,230 @@ class DesktopEstimatorApp:
         except Exception as exc:
             self._set_output_text(f"Failed to fetch review queue:\n{exc}")
 
+    def _selected_visual_review_context(self) -> tuple[str, int | None]:
+        sheet_id = self.visual_review_sheet_id.get().strip()
+        page_index = self._parse_optional_positive_int(self.visual_review_page_index.get().strip())
+
+        tree = self.sheet_navigator_tree
+        if tree is not None:
+            selection = tree.selection()
+            if selection:
+                values = tree.item(selection[0], "values")
+                if values and len(values) >= 2:
+                    selected_page = self._parse_optional_positive_int(str(values[0]).strip())
+                    selected_sheet = str(values[1]).strip()
+                    if selected_sheet and selected_sheet != "-":
+                        sheet_id = selected_sheet
+                        page_index = selected_page
+
+        if not sheet_id and isinstance(self.last_result_payload, dict):
+            sheets = self.last_result_payload.get("sheets_detected", [])
+            if isinstance(sheets, list):
+                for row in sheets:
+                    if not isinstance(row, dict):
+                        continue
+                    candidate = str(row.get("sheet_id", "")).strip()
+                    if not candidate:
+                        continue
+                    sheet_id = candidate
+                    page_index = self._parse_optional_positive_int(row.get("source_page_index"))
+                    break
+
+        if sheet_id:
+            self.visual_review_sheet_id.set(sheet_id)
+            self.visual_review_page_index.set(str(page_index) if page_index else "")
+        return sheet_id, page_index
+
+    def _open_visual_evidence_svg(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+            sheet_id, page_index = self._selected_visual_review_context()
+            if not sheet_id:
+                raise RuntimeError("Select a sheet in Sheet Navigator or load a completed job first.")
+        except Exception as exc:
+            self._set_output_text(f"Could not prepare linework view:\n{exc}")
+            return
+
+        def worker() -> dict[str, str]:
+            params: dict[str, object] = {"sheet_id": sheet_id, "limit": 1000}
+            if page_index is not None:
+                params["source_page_index"] = page_index
+            svg = self._request_text(
+                "GET",
+                f"/v1/jobs/{job_id}/visual-evidence.svg",
+                timeout=60,
+                params=params,
+            )
+            output_dir = self._results_dir()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            safe_sheet = re.sub(r"[^A-Za-z0-9_.-]+", "_", sheet_id).strip("_") or "sheet"
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            svg_path = output_dir / f"visual-evidence-{job_id[:8]}-{safe_sheet}-{stamp}.svg"
+            svg_path.write_text(svg, encoding="utf-8")
+            return {
+                "job_id": job_id,
+                "sheet_id": sheet_id,
+                "source_page_index": str(page_index or ""),
+                "svg_path": str(svg_path),
+            }
+
+        def on_success(payload: dict[str, str]) -> None:
+            svg_path = payload["svg_path"]
+            self._set_output_json(payload, sync_views=False, prefer_json_tab=True)
+            self.status_text.set(f"Linework SVG saved: {svg_path}")
+            self._open_path(Path(svg_path))
+
+        self._start_background_action(
+            message=f"Building linework view for {sheet_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to open linework view",
+            failure_status="Linework view failed.",
+        )
+
+    def _show_scale_calibration_window(self) -> None:
+        sheet_id, page_index = self._selected_visual_review_context()
+        if not sheet_id:
+            self.status_text.set("Select a sheet in Sheet Navigator before checking scale.")
+            self._set_output_text("Select a sheet in Sheet Navigator or load a completed job first.")
+            return
+
+        existing = self.scale_calibration_window
+        if existing is not None:
+            try:
+                if bool(existing.winfo_exists()):
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+
+        window = Toplevel(self.root)
+        self.scale_calibration_window = window
+        window.title("Scale Calibration Preview")
+        window.geometry("560x320")
+        window.minsize(520, 300)
+        window.configure(background=_THEME["surface"])
+        window.protocol("WM_DELETE_WINDOW", self._close_scale_calibration_window)
+
+        container = ttk.Frame(window, padding=14)
+        container.grid(row=0, column=0, sticky="nsew")
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+        container.columnconfigure(1, weight=1)
+
+        ttk.Label(container, text="Scale Calibration Preview", style="HeaderTitle.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
+        )
+        ttk.Label(
+            container,
+            text=(
+                "Use one known dimension from the drawing to preview the conversion "
+                "from PDF units to feet. This does not change saved job results."
+            ),
+            style="FormLabel.TLabel",
+            wraplength=500,
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+
+        ttk.Label(container, text="Sheet ID", style="FormLabel.TLabel").grid(row=2, column=0, sticky="w")
+        ttk.Entry(container, textvariable=self.visual_review_sheet_id).grid(
+            row=2, column=1, sticky="ew", padx=(8, 0), pady=3
+        )
+        ttk.Label(container, text="Page", style="FormLabel.TLabel").grid(row=3, column=0, sticky="w")
+        ttk.Entry(container, textvariable=self.visual_review_page_index).grid(
+            row=3, column=1, sticky="ew", padx=(8, 0), pady=3
+        )
+        ttk.Label(container, text="Measured PDF Units", style="FormLabel.TLabel").grid(
+            row=4, column=0, sticky="w"
+        )
+        ttk.Entry(container, textvariable=self.scale_measured_pdf_units).grid(
+            row=4, column=1, sticky="ew", padx=(8, 0), pady=3
+        )
+        ttk.Label(container, text="Known Length (ft)", style="FormLabel.TLabel").grid(
+            row=5, column=0, sticky="w"
+        )
+        ttk.Entry(container, textvariable=self.scale_known_length_ft).grid(
+            row=5, column=1, sticky="ew", padx=(8, 0), pady=3
+        )
+
+        action_row = ttk.Frame(container)
+        action_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        ttk.Button(
+            action_row,
+            text="Preview Calibration",
+            style="Primary.TButton",
+            command=self._preview_scale_calibration,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            action_row,
+            text="Close",
+            command=self._close_scale_calibration_window,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        self.visual_review_sheet_id.set(sheet_id)
+        self.visual_review_page_index.set(str(page_index) if page_index else "")
+        self.status_text.set(f"Scale calibration helper opened for {sheet_id}.")
+
+    def _preview_scale_calibration(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+            sheet_id = self.visual_review_sheet_id.get().strip()
+            if not sheet_id:
+                raise RuntimeError("Sheet ID is required.")
+            measured = self._parse_required_positive_float(
+                self.scale_measured_pdf_units.get(),
+                field_name="Measured PDF Units",
+            )
+            known = self._parse_required_positive_float(
+                self.scale_known_length_ft.get(),
+                field_name="Known Length (ft)",
+            )
+        except Exception as exc:
+            self._set_output_text(f"Could not preview scale calibration:\n{exc}")
+            return
+
+        def worker() -> dict:
+            return self._request_json(
+                "GET",
+                f"/v1/jobs/{job_id}/scale-calibration/preview",
+                timeout=60,
+                params={
+                    "sheet_id": sheet_id,
+                    "measured_pdf_units": measured,
+                    "known_length_ft": known,
+                },
+            )
+
+        def on_success(payload: dict) -> None:
+            self._set_output_json(payload, sync_views=False, prefer_json_tab=True)
+            calibration = payload.get("calibration", {})
+            preview = payload.get("preview", {})
+            factor = calibration.get("feet_per_pdf_unit", "n/a") if isinstance(calibration, dict) else "n/a"
+            total_ft = (
+                preview.get("calibrated_vector_linework_total_ft", "n/a")
+                if isinstance(preview, dict)
+                else "n/a"
+            )
+            self.status_text.set(f"Scale preview loaded: {factor} ft/PDF unit, linework={total_ft} ft.")
+            self._save_settings()
+
+        self._start_background_action(
+            message=f"Previewing scale calibration for {sheet_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to preview scale calibration",
+            failure_status="Scale calibration preview failed.",
+        )
+
+    def _close_scale_calibration_window(self) -> None:
+        window = self.scale_calibration_window
+        self.scale_calibration_window = None
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
     def _export_overrides_template(self) -> None:
         job_id = self.current_job_id.get().strip()
         if not job_id:
@@ -6132,6 +6381,28 @@ class DesktopEstimatorApp:
             raise RuntimeError("API URL is required.")
         return self._request_json_from_base(method, api_base=base, path=path, timeout=timeout, **kwargs)
 
+    def _request_text(self, method: str, path: str, *, timeout: int = 60, **kwargs: object) -> str:
+        base = self.api_url.get().strip().rstrip("/")
+        if not base:
+            raise RuntimeError("API URL is required.")
+        url = f"{base}{path}"
+        kwargs = dict(kwargs)
+        headers = self._request_headers(extra=kwargs.get("headers"))
+        kwargs["headers"] = headers
+        try:
+            response = requests.request(method, url, timeout=timeout, **kwargs)
+        except requests.exceptions.ConnectionError as exc:
+            auto_started = self._ensure_local_api_running(base)
+            if auto_started:
+                response = requests.request(method, url, timeout=timeout, **kwargs)
+            else:
+                raise RuntimeError(
+                    "Could not connect to API. If using local mode, click 'Start Local API'."
+                ) from exc
+        if response.status_code >= 400:
+            raise RuntimeError(f"{response.status_code}: {response.text}")
+        return response.text
+
     def _request_json_from_base(
         self,
         method: str,
@@ -6353,9 +6624,12 @@ class DesktopEstimatorApp:
         values = tree.item(item_id, "values")
         if not values or len(values) < 2:
             return
+        page_text = str(values[0]).strip()
         sheet_id = str(values[1]).strip()
         if not sheet_id or sheet_id == "-":
             return
+        self.visual_review_sheet_id.set(sheet_id)
+        self.visual_review_page_index.set(page_text if page_text.isdigit() else "")
         result = self.last_result_payload if isinstance(self.last_result_payload, dict) else {}
         if not result:
             return
@@ -6622,6 +6896,30 @@ class DesktopEstimatorApp:
             self._set_run_phase(phase="", percent=0.0)
         self._refresh_progress_indicator()
 
+    def _parse_optional_positive_int(self, value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value > 0 else None
+        if isinstance(value, float) and value.is_integer():
+            parsed = int(value)
+            return parsed if parsed > 0 else None
+        token = str(value or "").strip()
+        if not token.isdigit():
+            return None
+        parsed = int(token)
+        return parsed if parsed > 0 else None
+
+    def _parse_required_positive_float(self, value: object, *, field_name: str) -> float:
+        token = str(value or "").strip()
+        try:
+            parsed = float(token)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be a number greater than 0.") from exc
+        if parsed <= 0:
+            raise ValueError(f"{field_name} must be greater than 0.")
+        return parsed
+
     def _format_size_label(self, byte_count: int) -> str:
         if byte_count < 1024:
             return f"{byte_count} B"
@@ -6803,6 +7101,22 @@ class DesktopEstimatorApp:
         if isinstance(current_job_id, str):
             self.current_job_id.set(current_job_id)
 
+        visual_review_sheet_id = loaded.get("visual_review_sheet_id")
+        if isinstance(visual_review_sheet_id, str):
+            self.visual_review_sheet_id.set(visual_review_sheet_id.strip())
+
+        visual_review_page_index = loaded.get("visual_review_page_index")
+        if isinstance(visual_review_page_index, str):
+            self.visual_review_page_index.set(visual_review_page_index.strip())
+
+        scale_measured_pdf_units = loaded.get("scale_measured_pdf_units")
+        if isinstance(scale_measured_pdf_units, str):
+            self.scale_measured_pdf_units.set(scale_measured_pdf_units.strip())
+
+        scale_known_length_ft = loaded.get("scale_known_length_ft")
+        if isinstance(scale_known_length_ft, str):
+            self.scale_known_length_ft.set(scale_known_length_ft.strip())
+
         include_all_template = loaded.get("include_all_template")
         if isinstance(include_all_template, bool):
             self.include_all_template.set(include_all_template)
@@ -6914,6 +7228,10 @@ class DesktopEstimatorApp:
             "include_public_specs": bool(self.include_public_specs.get()),
             "publish_uploaded_specs": bool(self.publish_uploaded_specs.get()),
             "current_job_id": self.current_job_id.get().strip(),
+            "visual_review_sheet_id": self.visual_review_sheet_id.get().strip(),
+            "visual_review_page_index": self.visual_review_page_index.get().strip(),
+            "scale_measured_pdf_units": self.scale_measured_pdf_units.get().strip(),
+            "scale_known_length_ft": self.scale_known_length_ft.get().strip(),
             "include_all_template": bool(self.include_all_template.get()),
             "include_unmapped_benchmark": bool(self.include_unmapped_benchmark.get()),
             "beginner_mode": bool(self.beginner_mode.get()),
@@ -7435,15 +7753,18 @@ class DesktopEstimatorApp:
         results_dir = self._results_dir()
         results_dir.mkdir(parents=True, exist_ok=True)
         try:
-            if os.name == "nt":
-                os.startfile(str(results_dir))  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(results_dir)])
-            else:
-                subprocess.Popen(["xdg-open", str(results_dir)])
+            self._open_path(results_dir)
             self.status_text.set(f"Opened results folder: {results_dir}")
         except Exception as exc:
             self._set_output_text(f"Failed to open results folder:\n{exc}")
+
+    def _open_path(self, path: Path) -> None:
+        if os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
 
     def _results_dir(self) -> Path:
         return Path(__file__).resolve().parents[1] / "benchmarks" / "results"
