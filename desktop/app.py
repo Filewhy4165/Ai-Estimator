@@ -11,8 +11,9 @@ import sys
 from typing import Any, Callable, TypeVar
 from threading import Thread
 from tkinter import END, BooleanVar, Button, Canvas, DoubleVar, Frame, Label, Menu, PhotoImage, StringVar, Text, Tk, Toplevel, filedialog, ttk
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 import time
+import webbrowser
 
 import requests
 
@@ -2005,11 +2006,14 @@ class DesktopEstimatorApp:
         ttk.Button(sheet_actions, text="Open Linework View", command=self._open_visual_evidence_svg).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
+        ttk.Button(sheet_actions, text="Measure Scale Visually", command=self._open_visual_measurement_page).grid(
+            row=0, column=3, sticky="w", padx=(8, 0)
+        )
         ttk.Button(
             sheet_actions,
             text="Preview Scale Calibration",
             command=self._show_scale_calibration_window,
-        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
         sheet_table_frame = ttk.Frame(sheets_tab)
         sheet_table_frame.grid(row=2, column=0, sticky="nsew")
         sheet_table_frame.columnconfigure(0, weight=1)
@@ -3272,6 +3276,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Show Drawing Lines",
                 "pro_tip": "Save and open an SVG overlay of extracted vector linework for the selected sheet.",
                 "beginner_tip": "Open a picture of the lines the app found on the selected drawing sheet.",
+            },
+            "measure_scale_visually": {
+                "pro_label": "Measure Scale Visually",
+                "beginner_label": "Click Measure Scale",
+                "pro_tip": "Open an interactive browser review page where two clicks measure PDF units for scale calibration.",
+                "beginner_tip": "Click two points on the drawing, type the real length, then preview or apply scale.",
             },
             "preview_scale_calibration": {
                 "pro_label": "Preview Scale Calibration",
@@ -5734,6 +5744,29 @@ class DesktopEstimatorApp:
             failure_heading="Failed to open linework view",
             failure_status="Linework view failed.",
         )
+
+    def _open_visual_measurement_page(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+            sheet_id, page_index = self._selected_visual_review_context()
+            if not sheet_id:
+                raise RuntimeError("Select a sheet in Sheet Navigator or load a completed job first.")
+            base = self.api_url.get().strip().rstrip("/")
+            if not base:
+                raise RuntimeError("API URL is required.")
+            params: dict[str, object] = {
+                "sheet_id": sheet_id,
+                "tenant_id": self.tenant_id.get().strip() or "default",
+                "limit": 1000,
+            }
+            if page_index is not None:
+                params["source_page_index"] = page_index
+            url = f"{base}/v1/jobs/{job_id}/visual-review?{urlencode(params)}"
+            webbrowser.open(url, new=2)
+            self.status_text.set(f"Opened visual measurement page for {sheet_id}.")
+            self._save_settings()
+        except Exception as exc:
+            self._set_output_text(f"Could not open visual measurement page:\n{exc}")
 
     def _show_scale_calibration_window(self) -> None:
         sheet_id, page_index = self._selected_visual_review_context()

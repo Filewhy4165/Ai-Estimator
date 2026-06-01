@@ -2,6 +2,7 @@ from service.visual_review import (
     apply_scale_calibration_to_result,
     build_scale_calibration_preview,
     build_visual_evidence_svg,
+    build_visual_measurement_page,
 )
 
 
@@ -85,6 +86,26 @@ def test_visual_evidence_svg_limits_evidence_items():
 
     assert svg.count("<polyline") + svg.count("<polygon") == 1
     assert "Evidence 1" in svg
+
+
+def test_visual_measurement_page_embeds_svg_and_calibration_controls():
+    page = build_visual_measurement_page(
+        job_id="job-1",
+        result=_result_with_vector_data(),
+        sheet_id="A101",
+        source_page_index=1,
+        tenant_id="tenant-a",
+        limit=10,
+    )
+
+    assert "<!doctype html>" in page
+    assert "EstimateForge Visual Measurement" in page
+    assert 'data-sheet-id="A101"' in page
+    assert 'id="measuredPdfUnits"' in page
+    assert 'id="knownLengthFt"' in page
+    assert "/scale-calibration/preview" in page
+    assert "/scale-calibration/apply" in page
+    assert 'value="tenant-a"' in page
 
 
 def test_scale_calibration_preview_converts_vector_units_to_feet():
