@@ -37,6 +37,7 @@ from service.review_queue import (
     build_visual_evidence,
 )
 from service.spec_store import SpecStore, build_spec_profile_from_file
+from service.spec_report import build_spec_compliance_report
 from service.takeoff_export import build_takeoff_csv
 from service.trade_coverage import build_trade_coverage_report
 from service.trade_recommendation import build_trade_recommendation
@@ -1284,6 +1285,21 @@ def get_job_report_html(
         result=record.result if isinstance(record.result, dict) else None,
     )
     return HTMLResponse(content=html)
+
+
+@app.get("/v1/jobs/{job_id}/spec-compliance")
+def get_job_spec_compliance(
+    job_id: str,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return build_spec_compliance_report(
+        job_id=record.job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+    )
 
 
 @app.get("/v1/jobs/{job_id}/visual-evidence.svg")

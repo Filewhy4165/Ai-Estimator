@@ -1966,6 +1966,9 @@ class DesktopEstimatorApp:
         ttk.Button(summary_actions, text="Open Estimator Report", command=self._open_estimator_report).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
+        ttk.Button(summary_actions, text="Spec Compliance", command=self._show_spec_compliance_report).grid(
+            row=0, column=2, sticky="w", padx=(8, 0)
+        )
         summary_table_frame = ttk.Frame(summary_tab)
         summary_table_frame.grid(row=2, column=0, sticky="nsew")
         summary_table_frame.columnconfigure(0, weight=1)
@@ -3465,6 +3468,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Open Easy Report",
                 "pro_tip": "Open a browser report for current job sheets, trades, quantities, issues, and cost-code hints.",
                 "beginner_tip": "Open an easier-to-read report instead of raw JSON.",
+            },
+            "spec_compliance": {
+                "pro_label": "Spec Compliance",
+                "beginner_label": "Check Specs",
+                "pro_tip": "Show applied specs, detected standards, missing spec-required trades, and recommendations.",
+                "beginner_tip": "Check whether the attached specs add anything that needs review.",
             },
             "open_results_folder": {
                 "pro_label": "Open Results Folder",
@@ -7811,6 +7820,29 @@ class DesktopEstimatorApp:
         webbrowser.open(url, new=2)
         self.status_text.set(f"Opened estimator report for job {job_id}.")
         self._append_output_line(f"Estimator report opened: {url}")
+
+    def _show_spec_compliance_report(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
+            return
+
+        def worker() -> dict:
+            return self._request_json("GET", f"/v1/jobs/{job_id}/spec-compliance", timeout=60)
+
+        def on_success(payload: dict) -> None:
+            self._set_output_json(payload)
+            status = str(payload.get("status", "unknown")).replace("_", " ")
+            self.status_text.set(f"Spec compliance loaded for job {job_id}: {status}.")
+
+        self._start_background_action(
+            message=f"Loading spec compliance report for job {job_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to load spec compliance",
+            failure_status="Spec compliance failed.",
+        )
 
     def _show_benchmark_history(self) -> None:
         results_dir = self._results_dir()

@@ -90,6 +90,12 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert b"Estimator Report" in report_response.body
     assert b"job-a" in report_response.body
 
+    spec_payload = service_app.get_job_spec_compliance(
+        "job-a",
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert spec_payload["status"] == "no_specs_applied"
+
     try:
         service_app.get_job_visual_evidence("job-a", request=_request_for_tenant("tenant-b"))
     except HTTPException as exc:

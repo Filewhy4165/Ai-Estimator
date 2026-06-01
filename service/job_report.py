@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from service.spec_report import build_spec_compliance_report
 from service.takeoff_export import build_takeoff_rows
 
 
@@ -32,6 +33,7 @@ def build_job_report_html(
     counts_rows = [row for row in rows if row.get("quantity_bucket") == "counts"]
     quantity_rows = [row for row in rows if row.get("quantity_bucket") != "cost_codes"]
     cost_code_rows = [row for row in rows if row.get("quantity_bucket") == "cost_codes"]
+    spec_report = build_spec_compliance_report(job_id=job_id, result=result)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -134,6 +136,10 @@ def build_job_report_html(
       {_trade_scope_html(trade_scope)}
     </section>
     <section>
+      <h2>Spec Compliance</h2>
+      {_spec_compliance_html(spec_report)}
+    </section>
+    <section>
       <h2>Quantity Takeoff</h2>
       {_quantity_table_html(quantity_rows[:500])}
     </section>
@@ -182,6 +188,48 @@ def _trade_scope_html(trade_scope: dict[str, Any]) -> str:
             rendered = escape(str(value or ""))
         parts.append(f'<div class="card"><div class="label">{escape(key.replace("_", " ").title())}</div><div class="value">{rendered}</div></div>')
     return f'<div class="grid">{"".join(parts)}</div>'
+
+
+def _spec_compliance_html(report: dict[str, Any]) -> str:
+    status = str(report.get("status", "")).replace("_", " ").title()
+    missing = report.get("missing_from_drawings", [])
+    standards = report.get("detected_standard_refs", [])
+    profiles = report.get("applied_spec_profiles", [])
+    recommendations = report.get("recommendations", [])
+    missing_text = ", ".join(str(item) for item in missing) if isinstance(missing, list) else ""
+    standards_text = ", ".join(str(item) for item in standards[:12]) if isinstance(standards, list) else ""
+    cards = [
+        _metric_card("Status", status),
+        _metric_card("Applied Specs", str(report.get("applied_spec_count", 0))),
+        _metric_card("Missing Trades", missing_text),
+        _metric_card("Detected Standards", standards_text),
+    ]
+    profile_items = []
+    if isinstance(profiles, list):
+        for profile in profiles[:20]:
+            raw = profile if isinstance(profile, dict) else {}
+            label = " - ".join(
+                token
+                for token in [
+                    str(raw.get("organization", "")).strip(),
+                    str(raw.get("standard_name", "")).strip(),
+                    str(raw.get("project_type", "")).strip(),
+                ]
+                if token
+            )
+            if label:
+                profile_items.append(f'<span class="pill">{escape(label)}</span>')
+    recommendation_items = []
+    if isinstance(recommendations, list):
+        for item in recommendations:
+            recommendation_items.append(f"<li>{escape(str(item))}</li>")
+    profiles_html = "".join(profile_items) if profile_items else '<span class="muted">none</span>'
+    return (
+        f'<div class="grid">{"".join(cards)}</div>'
+        f'<p><strong>Authority:</strong> {escape(str(report.get("conflict_policy", "")))}</p>'
+        f"<p><strong>Applied Profiles:</strong> {profiles_html}</p>"
+        f'<ul>{"".join(recommendation_items)}</ul>'
+    )
 
 
 def _quantity_table_html(rows: list[dict[str, str]]) -> str:
