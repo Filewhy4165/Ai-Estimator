@@ -322,6 +322,8 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
 - `GET /v1/jobs/{job_id}/visual-evidence` compact vector linework evidence for drawing review/highlighting
+- `GET /v1/jobs/{job_id}/visual-evidence.svg` single-sheet SVG overlay of vector linework evidence
+- `GET /v1/jobs/{job_id}/scale-calibration/preview` preview feet-per-PDF-unit calibration from a known dimension
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
 - `GET /v1/benchmark-reports/history` list benchmark reports with pagination from a results directory
 - `GET /v1/benchmark-reports/compare` compare two benchmark report JSON files
@@ -378,11 +380,21 @@ Visual evidence endpoint:
 
 ```bash
 curl "http://127.0.0.1:8000/v1/jobs/<job_id>/visual-evidence?limit=250"
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/visual-evidence.svg?sheet_id=A101&source_page_index=1&limit=500" --output visual-evidence-A101.svg
 ```
 
 The response summarizes detected vector linework by sheet and returns capped evidence items with PDF-space
 coordinates. Treat these as drawing-review highlights, not final installed quantities, until a trade-specific
 detector or estimator review accepts them.
+
+Scale calibration preview:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/scale-calibration/preview?sheet_id=A101&measured_pdf_units=72&known_length_ft=24"
+```
+
+Use this when a reviewer knows one drawing dimension and needs to confirm the conversion from PDF units to feet.
+The preview calculates calibrated linework totals for that sheet but does not mutate stored job results yet.
 
 Benchmark template endpoint query params:
 

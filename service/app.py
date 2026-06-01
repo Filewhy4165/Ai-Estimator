@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from ai_estimator.constants import DEFAULT_CSI_BY_TRADE, TRADE_NAMES
@@ -38,6 +38,7 @@ from service.review_queue import (
 from service.spec_store import SpecStore, build_spec_profile_from_file
 from service.trade_coverage import build_trade_coverage_report
 from service.trade_recommendation import build_trade_recommendation
+from service.visual_review import build_scale_calibration_preview, build_visual_evidence_svg
 
 
 def _resolve_cors_origins() -> list[str]:
@@ -1232,6 +1233,52 @@ def get_job_visual_evidence(
         result=record.result if isinstance(record.result, dict) else None,
         limit=limit,
     )
+
+
+@app.get("/v1/jobs/{job_id}/visual-evidence.svg")
+def get_job_visual_evidence_svg(
+    job_id: str,
+    sheet_id: str = "",
+    source_page_index: int | None = None,
+    limit: int = 500,
+    request: Request = None,
+) -> Response:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    svg = build_visual_evidence_svg(
+        job_id=job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+        sheet_id=sheet_id or None,
+        source_page_index=source_page_index,
+        limit=limit,
+    )
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.get("/v1/jobs/{job_id}/scale-calibration/preview")
+def get_job_scale_calibration_preview(
+    job_id: str,
+    sheet_id: str,
+    measured_pdf_units: float,
+    known_length_ft: float,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        return build_scale_calibration_preview(
+            job_id=job_id,
+            result=record.result if isinstance(record.result, dict) else None,
+            sheet_id=sheet_id,
+            measured_pdf_units=measured_pdf_units,
+            known_length_ft=known_length_ft,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/v1/jobs/{job_id}/trade-recommendation", response_model=TradeRecommendationResponse)
