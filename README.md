@@ -177,6 +177,8 @@ Run only desktop:
 
 The desktop app supports both synchronous analysis and async job workflows.
 It also remembers your last API URL, selected PDFs, overrides file, and current job ID between launches.
+Saved project profiles now keep drawing files, work-type settings, spec settings, sheet-fix file, and the saved job number.
+Use `Open Project Results` / `Open Saved Job` to reopen the selected project and fetch its last job result without browsing for files again.
 When API URL points to `127.0.0.1` or `localhost`, the app can auto-start the local API if the connection is refused.
 If API key auth is enabled on the service, populate `API Key (optional)` in the desktop app so it sends `x-api-key`.
 For security, the desktop app does not persist API keys to disk; set `AI_ESTIMATOR_API_KEY` in your shell to prefill each session.
@@ -197,35 +199,37 @@ Desktop async workflow:
 1. Click `Pick Drawing Files`
 2. Choose `all` work types for a complete pass, or use `Find Work Types from Drawings`
 3. Click `Start Background Takeoff`
-4. Click `Check Takeoff Status` until status is `completed` (or enable auto-refresh)
-5. Click `Show Sheets to Review` to see flagged sheets
-6. Click `Create Sheet Name Review File` to save a prefilled sheet correction file
-7. Edit the correction file, then load it in `Sheet Names (optional)` and submit a new job
-7. Use `Notes` for project-specific constraints before running
-8. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
-9. Use `Rerun Recommended` to auto-queue a rerun using AI-recommended trade scope (`selected` vs `all`)
-10. Use `Export Benchmark Template` to create a prefilled benchmark manifest from a completed job
-11. Use `Run Baseline Benchmark` to export a manifest and produce a scored benchmark report in one action
-12. Use `Run End-to-End Benchmark` to submit selected PDFs, wait for completion, then auto-generate and score a benchmark report
-13. Use `Show Benchmark History` to review recent benchmark reports (via API when available; local fallback otherwise) and `Open Results Folder` to access saved outputs
-14. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric (via API when available; local fallback otherwise)
-15. Use `Compare Latest Reports` to automatically compare the two most recent benchmark reports (via API when available; local fallback otherwise)
-16. Use `Latest Trend Snapshot` to get a compact benchmark trend summary (trend, delta, baseline/candidate scores)
-17. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
-18. Use `Evaluate Gate` to run a benchmark quality gate (default: non-regression required)
-19. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
-20. Use `Job Ops Snapshot` to view queue depth, failure rate, 24h throughput, latency percentiles, and extraction quality signals for recent jobs
-21. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
-22. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
-23. Use `Trade Coverage` to validate per-trade detection, analysis, and quantity signal coverage before handoff
-24. Use `Load Trades` to fetch canonical analysis modes and valid trade tokens from the API
-25. Use `Validate Trades` to pre-check selected trade input before submit/rerun
-26. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
-27. In `Project Setup`, use `Load Agencies` and `Load Matching Specs` to attach public agency/company specs (for example NASA TSRC) to the run
-28. Use `Upload Spec File` to add your own spec package (private by default unless `Share Uploaded Spec Files Publicly` is enabled)
-29. Use `Find Compliant Submittal Links` to generate spec-informed product submittal queries and optional web links
-30. API applies authority order: drawings first, then specifications, then assumptions
-31. `spec_context` is included in output payload to show applied specs, standards detected, and trades requested by specs
+4. Click `Save Project` / `Save Project Snapshot` to keep the files, settings, and job number together
+5. Later, choose the project from `Project Library`, then click `Open Project Results` / `Open Saved Job`
+6. Click `Check Takeoff Status` until status is `completed` (or enable auto-refresh)
+7. Click `Show Sheets to Review` to see flagged sheets
+8. Click `Create Sheet Name Review File` to save a prefilled sheet correction file
+9. Edit the correction file, then load it in `Sheet Names (optional)` and submit a new job
+10. Use `Notes` for project-specific constraints before running
+11. Use `Rerun Job` to reprocess an existing job ID without re-uploading PDFs
+12. Use `Rerun Recommended` to auto-queue a rerun using AI-recommended trade scope (`selected` vs `all`)
+13. Use `Export Benchmark Template` to create a prefilled benchmark manifest from a completed job
+14. Use `Run Baseline Benchmark` to export a manifest and produce a scored benchmark report in one action
+15. Use `Run End-to-End Benchmark` to submit selected PDFs, wait for completion, then auto-generate and score a benchmark report
+16. Use `Show Benchmark History` to review recent benchmark reports (via API when available; local fallback otherwise) and `Open Results Folder` to access saved outputs
+17. Use `Compare Reports` to compare two benchmark reports and see score deltas by metric (via API when available; local fallback otherwise)
+18. Use `Compare Latest Reports` to automatically compare the two most recent benchmark reports (via API when available; local fallback otherwise)
+19. Use `Latest Trend Snapshot` to get a compact benchmark trend summary (trend, delta, baseline/candidate scores)
+20. Use `Score Timeline` to view recent benchmark scores with per-run deltas for charting/trend review
+21. Use `Evaluate Gate` to run a benchmark quality gate (default: non-regression required)
+22. Use `Benchmark Dashboard` to load history, timeline, latest trend, and gate evaluation in one response
+23. Use `Job Ops Snapshot` to view queue depth, failure rate, 24h throughput, latency percentiles, and extraction quality signals for recent jobs
+24. Use `Job Ops Gate` to evaluate pass/fail thresholds for operational health and extraction quality in one click
+25. Use `Trade Recommendation` to get a confidence-scored recommendation for `selected` vs `all` trade analysis
+26. Use `Trade Coverage` to validate per-trade detection, analysis, and quantity signal coverage before handoff
+27. Use `Load Trades` to fetch canonical analysis modes and valid trade tokens from the API
+28. Use `Validate Trades` to pre-check selected trade input before submit/rerun
+29. Use `Readiness Report` for a single handoff decision based on review queue risk, trade coverage, recommendation, and ops gate
+30. In `Project Setup`, use `Load Agencies` and `Load Matching Specs` to attach public agency/company specs (for example NASA TSRC) to the run
+31. Use `Upload Spec File` to add your own spec package (private by default unless `Share Uploaded Spec Files Publicly` is enabled)
+32. Use `Find Compliant Submittal Links` to generate spec-informed product submittal queries and optional web links
+33. API applies authority order: drawings first, then specifications, then assumptions
+34. `spec_context` is included in output payload to show applied specs, standards detected, and trades requested by specs
 
 ## Run CLI directly
 

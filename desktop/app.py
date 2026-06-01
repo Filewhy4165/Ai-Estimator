@@ -1108,7 +1108,7 @@ class DesktopEstimatorApp:
         project_bar = ttk.Frame(container, style="Panel.TFrame", padding=(10, 8))
         project_bar.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         project_bar.columnconfigure(1, weight=1)
-        ttk.Label(project_bar, text="Project Profile", style="FormLabel.TLabel").grid(
+        ttk.Label(project_bar, text="Project Library", style="FormLabel.TLabel").grid(
             row=0, column=0, sticky="w", padx=(2, 8)
         )
         self.project_selector_combo = ttk.Combobox(
@@ -1128,20 +1128,26 @@ class DesktopEstimatorApp:
         ).grid(row=0, column=2, sticky="w", padx=(8, 0))
         ttk.Button(
             project_bar,
+            text="Open Saved Job",
+            command=self._open_saved_project_job,
+            style="Primary.TButton",
+        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ttk.Button(
+            project_bar,
             text="Save Project Snapshot",
             command=self._save_project_profile_from_current,
-        ).grid(row=0, column=3, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
         ttk.Button(
             project_bar,
             text="Project Setup Window",
             command=self._open_project_setup_window,
             style="Primary.TButton",
-        ).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=5, sticky="w", padx=(8, 0))
         ttk.Button(
             project_bar,
             text="New Project",
             command=self._start_new_project_profile,
-        ).grid(row=0, column=5, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
 
         frame = ttk.Frame(container, padding=14, style="Panel.TFrame")
         frame.grid(row=4, column=0, sticky="nsew")
@@ -2114,7 +2120,7 @@ class DesktopEstimatorApp:
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(12, weight=1)
         self._install_tooltips(
-            frame=frame,
+            frame=container,
             api_url_entry=api_url_entry,
             api_key_entry=api_key_entry,
             tenant_id_entry=tenant_id_entry,
@@ -2193,6 +2199,8 @@ class DesktopEstimatorApp:
         if analysis_mode not in {"auto", "selected", "all"}:
             analysis_mode = self.analysis_mode.get().strip() or "all"
 
+        current_job_id = str(payload.get("current_job_id", "")).strip()
+
         guided_step = str(payload.get("guided_step", self.guided_step.get())).strip()
         if guided_step not in {"trade", "run"}:
             guided_step = "trade"
@@ -2233,6 +2241,7 @@ class DesktopEstimatorApp:
             "sheet_overrides_path": str(payload.get("sheet_overrides_path", "")).strip(),
             "spec_profile_ids": str(payload.get("spec_profile_ids", "")).strip(),
             "spec_organization": str(payload.get("spec_organization", "")).strip(),
+            "current_job_id": current_job_id,
             "include_public_specs": _as_bool(
                 payload.get("include_public_specs"),
                 bool(self.include_public_specs.get()),
@@ -2274,6 +2283,7 @@ class DesktopEstimatorApp:
             "sheet_overrides_path": self.sheet_overrides_path.get().strip(),
             "spec_profile_ids": self.spec_profile_ids.get().strip(),
             "spec_organization": self.spec_organization.get().strip(),
+            "current_job_id": self.current_job_id.get().strip(),
             "include_public_specs": bool(self.include_public_specs.get()),
             "publish_uploaded_specs": bool(self.publish_uploaded_specs.get()),
             "notes": self.notes.get(),
@@ -2298,6 +2308,7 @@ class DesktopEstimatorApp:
         self.sheet_overrides_path.set(str(normalized.get("sheet_overrides_path", "")).strip())
         self.spec_profile_ids.set(str(normalized.get("spec_profile_ids", "")).strip())
         self.spec_organization.set(str(normalized.get("spec_organization", "")).strip())
+        self.current_job_id.set(str(normalized.get("current_job_id", "")).strip())
         self.include_public_specs.set(bool(normalized.get("include_public_specs", True)))
         self.publish_uploaded_specs.set(bool(normalized.get("publish_uploaded_specs", False)))
         self.notes.set(str(normalized.get("notes", "")))
@@ -2416,7 +2427,39 @@ class DesktopEstimatorApp:
             self.status_text.set(f"Project profile not found: {name}")
             return
         self._apply_project_payload(payload, project_name=name)
-        self.status_text.set(f"Loaded project profile: {name}")
+        job_id = self.current_job_id.get().strip()
+        job_text = f" with saved job {job_id[:12]}..." if job_id else ""
+        self.status_text.set(f"Loaded project profile: {name}{job_text}")
+
+    def _open_saved_project_job(self) -> None:
+        self._load_selected_project_profile()
+        job_id = self.current_job_id.get().strip()
+        if not job_id:
+            self._set_output_text(
+                "This saved project does not have a job number yet.\n"
+                "Start a background takeoff first, then save the project snapshot again."
+            )
+            self.status_text.set("Saved project has no job number.")
+            return
+        self._refresh_job()
+
+    def _autosave_active_project_snapshot(self) -> None:
+        name = self.active_project_name.get().strip() or self.project_setup_name.get().strip()
+        if not name:
+            if self.files:
+                name = Path(self.files[0]).stem.strip()
+            elif self.current_job_id.get().strip():
+                name = f"Job-{self.current_job_id.get().strip()[:8]}"
+            else:
+                return
+        name = re.sub(r"\s+", " ", name).strip()[:80]
+        if not name:
+            return
+        self.project_profiles[name] = self._project_payload_from_current()
+        self.active_project_name.set(name)
+        self.project_setup_name.set(name)
+        self._refresh_project_selector()
+        self._save_project_profiles()
 
     def _start_new_project_profile(self) -> None:
         default_name = f"Project-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -2522,6 +2565,12 @@ class DesktopEstimatorApp:
             text="Load Saved Project",
             command=self._load_selected_project_profile,
         ).grid(row=3, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        ttk.Button(
+            container,
+            text="Open Saved Job",
+            command=self._open_saved_project_job,
+            style="Accent.TButton",
+        ).grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
         self._refresh_project_selector()
 
         ttk.Separator(container, orient="horizontal").grid(
@@ -3065,6 +3114,36 @@ class DesktopEstimatorApp:
                 "beginner_label": "Stop Server",
                 "pro_tip": "Stop the local backend process started by this desktop app.",
                 "beginner_tip": "Turn off the local server this app started.",
+            },
+            "load_saved_project": {
+                "pro_label": "Load Saved Project",
+                "beginner_label": "Load Project",
+                "pro_tip": "Restore the selected project profile: files, settings, specs, sheet fix file, and saved job ID.",
+                "beginner_tip": "Open a saved project setup without browsing for files again.",
+            },
+            "open_saved_job": {
+                "pro_label": "Open Saved Job",
+                "beginner_label": "Open Project Results",
+                "pro_tip": "Load the selected project profile and fetch the saved job result/status from the API.",
+                "beginner_tip": "Open the saved takeoff result for this project.",
+            },
+            "save_project_snapshot": {
+                "pro_label": "Save Project Snapshot",
+                "beginner_label": "Save Project",
+                "pro_tip": "Save current project files, settings, specs, sheet fix file, and job ID to the local project library.",
+                "beginner_tip": "Save this project so it can be opened again later.",
+            },
+            "project_setup_window": {
+                "pro_label": "Project Setup Window",
+                "beginner_label": "Project Setup",
+                "pro_tip": "Open the guided project setup workspace with drawings, specs, sheet fix file, and run controls.",
+                "beginner_tip": "Open the project setup screen.",
+            },
+            "new_project": {
+                "pro_label": "New Project",
+                "beginner_label": "Start New Project",
+                "pro_tip": "Clear current project files and run fields so a new estimate can be started.",
+                "beginner_tip": "Clear the current project and start a new one.",
             },
             "quick_path_load": {
                 "pro_label": "1) Load Drawings",
@@ -5345,6 +5424,7 @@ class DesktopEstimatorApp:
         self.current_job_id.set(job_id)
         self._set_output_json(payload)
         self._save_settings()
+        self._autosave_active_project_snapshot()
         self._append_output_line(f"Async job accepted: {job_id}")
         self._set_run_phase(phase="Queued for processing", percent=72.0)
         self._set_job_polling(
@@ -5383,6 +5463,7 @@ class DesktopEstimatorApp:
             self.status_text.set(f"Rerun job submitted: {new_job_id}")
             self._append_output_line(f"Rerun job submitted: {new_job_id}")
             self._save_settings()
+            self._autosave_active_project_snapshot()
             if self.auto_poll_enabled.get():
                 self._set_job_polling(
                     busy=True,
@@ -5418,6 +5499,7 @@ class DesktopEstimatorApp:
                 f"Recommended rerun submitted: {new_job_id} (mode={mode}, confidence={confidence})"
             )
             self._save_settings()
+            self._autosave_active_project_snapshot()
             if self.auto_poll_enabled.get():
                 self._set_job_polling(
                     busy=True,
@@ -5443,6 +5525,8 @@ class DesktopEstimatorApp:
                 self._set_job_polling(busy=False)
             if status == "canceled":
                 self.auto_poll_enabled.set(False)
+                self._save_settings()
+                self._autosave_active_project_snapshot()
                 self._stop_auto_poll()
             else:
                 self._append_output_line(f"Cancel request sent for job {job_id}. New status: {status}")
@@ -5471,6 +5555,9 @@ class DesktopEstimatorApp:
             )
             if status in _TERMINAL_JOB_STATUSES:
                 self._stop_auto_poll()
+            self._save_settings()
+            if status in _TERMINAL_JOB_STATUSES:
+                self._autosave_active_project_snapshot()
         except Exception as exc:
             self._stop_auto_poll()
             self._set_output_text(f"Failed to refresh job:\n{exc}")
@@ -5491,6 +5578,7 @@ class DesktopEstimatorApp:
             self._set_output_json(latest)
             self.status_text.set(f"Loaded latest job: {job_id}")
             self._save_settings()
+            self._autosave_active_project_snapshot()
             if self.auto_poll_enabled.get():
                 latest_status = str(latest.get("status", "")).strip()
                 if latest_status not in _TERMINAL_JOB_STATUSES:
@@ -6224,6 +6312,7 @@ class DesktopEstimatorApp:
         self.end_to_end_task_running = False
         self.current_job_id.set(job_id)
         self._save_settings()
+        self._autosave_active_project_snapshot()
         self._set_output_json(payload)
         self._set_run_phase(phase="Benchmark completed", percent=100.0)
         summary = payload.get("summary", {})
@@ -6291,6 +6380,8 @@ class DesktopEstimatorApp:
                 self._set_run_phase(phase="Completed", percent=100.0)
                 self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
+                self._save_settings()
+                self._autosave_active_project_snapshot()
                 self._stop_auto_poll()
                 return
             if status in {"failed", "canceled"}:
@@ -6299,6 +6390,8 @@ class DesktopEstimatorApp:
                 self._set_run_phase(phase=status.title(), percent=100.0)
                 self._set_job_polling(busy=False)
                 self.auto_poll_enabled.set(False)
+                self._save_settings()
+                self._autosave_active_project_snapshot()
                 self._stop_auto_poll()
                 return
             self._set_job_polling(
