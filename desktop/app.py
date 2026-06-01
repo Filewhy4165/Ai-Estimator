@@ -1969,6 +1969,9 @@ class DesktopEstimatorApp:
         ttk.Button(summary_actions, text="Spec Compliance", command=self._show_spec_compliance_report).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
+        ttk.Button(summary_actions, text="Export Handoff Package", command=self._export_handoff_package).grid(
+            row=0, column=3, sticky="w", padx=(8, 0)
+        )
         summary_table_frame = ttk.Frame(summary_tab)
         summary_table_frame.grid(row=2, column=0, sticky="nsew")
         summary_table_frame.columnconfigure(0, weight=1)
@@ -3474,6 +3477,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Check Specs",
                 "pro_tip": "Show applied specs, detected standards, missing spec-required trades, and recommendations.",
                 "beginner_tip": "Check whether the attached specs add anything that needs review.",
+            },
+            "export_handoff_package": {
+                "pro_label": "Export Handoff Package",
+                "beginner_label": "Export Job Package",
+                "pro_tip": "Save a ZIP with estimator report, takeoff CSV, spec compliance JSON, result JSON, and job metadata.",
+                "beginner_tip": "Save everything needed to hand off this job in one ZIP file.",
             },
             "open_results_folder": {
                 "pro_label": "Open Results Folder",
@@ -6607,6 +6616,28 @@ class DesktopEstimatorApp:
             raise RuntimeError(f"{response.status_code}: {response.text}")
         return response.text
 
+    def _request_bytes(self, method: str, path: str, *, timeout: int = 60, **kwargs: object) -> bytes:
+        base = self.api_url.get().strip().rstrip("/")
+        if not base:
+            raise RuntimeError("API URL is required.")
+        url = f"{base}{path}"
+        kwargs = dict(kwargs)
+        headers = self._request_headers(extra=kwargs.get("headers"))
+        kwargs["headers"] = headers
+        try:
+            response = requests.request(method, url, timeout=timeout, **kwargs)
+        except requests.exceptions.ConnectionError as exc:
+            auto_started = self._ensure_local_api_running(base)
+            if auto_started:
+                response = requests.request(method, url, timeout=timeout, **kwargs)
+            else:
+                raise RuntimeError(
+                    "Could not connect to API. If using local mode, click 'Start Local API'."
+                ) from exc
+        if response.status_code >= 400:
+            raise RuntimeError(f"{response.status_code}: {response.text}")
+        return response.content
+
     def _request_json_from_base(
         self,
         method: str,
@@ -7842,6 +7873,42 @@ class DesktopEstimatorApp:
             on_success=on_success,
             failure_heading="Failed to load spec compliance",
             failure_status="Spec compliance failed.",
+        )
+
+    def _export_handoff_package(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
+            return
+        target = filedialog.asksaveasfilename(
+            title="Save handoff ZIP package",
+            initialfile=f"handoff_{job_id[:8]}.zip",
+            defaultextension=".zip",
+            filetypes=[("ZIP packages", "*.zip"), ("All files", "*.*")],
+        )
+        if not target:
+            self.status_text.set("Handoff package export canceled.")
+            return
+
+        def worker() -> bytes:
+            return self._request_bytes(
+                "GET",
+                f"/v1/jobs/{job_id}/handoff.zip",
+                timeout=120,
+            )
+
+        def on_success(payload: bytes) -> None:
+            Path(target).write_bytes(payload)
+            self.status_text.set(f"Handoff package saved: {target}")
+            self._set_output_text(f"Handoff package saved:\n{target}")
+
+        self._start_background_action(
+            message=f"Exporting handoff package for job {job_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to export handoff package",
+            failure_status="Handoff package export failed.",
         )
 
     def _show_benchmark_history(self) -> None:

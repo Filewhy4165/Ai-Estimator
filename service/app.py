@@ -26,6 +26,7 @@ from ai_estimator.benchmark_compare import (
 )
 from ai_estimator.pipeline import run_pipeline, sanitize_selected_trades
 from ai_estimator.spec_intel import build_submittal_queries, parse_csv_tokens
+from service.handoff_package import build_job_handoff_zip
 from service.job_metrics import build_job_metrics_snapshot, evaluate_job_metrics_gate
 from service.job_report import build_job_report_html
 from service.job_store import JobRecord, JobStore
@@ -1299,6 +1300,34 @@ def get_job_spec_compliance(
     return build_spec_compliance_report(
         job_id=record.job_id,
         result=record.result if isinstance(record.result, dict) else None,
+    )
+
+
+@app.get("/v1/jobs/{job_id}/handoff.zip")
+def get_job_handoff_package(
+    job_id: str,
+    request: Request = None,
+) -> Response:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = build_job_handoff_zip(
+        job_id=record.job_id,
+        status=record.status,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        completed_at=record.completed_at,
+        input_payload=record.input if isinstance(record.input, dict) else {},
+        result=record.result if isinstance(record.result, dict) else None,
+    )
+    safe_id = _safe_file_name(job_id)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="handoff-{safe_id}.zip"'
+        },
     )
 
 
