@@ -234,6 +234,66 @@ def build_sheet_overrides_template(
     }
 
 
+def build_visual_evidence(
+    *,
+    job_id: str,
+    result: dict[str, Any] | None,
+    limit: int = 250,
+) -> dict[str, Any]:
+    result = result or {}
+    annotations = _extract_annotations(result)
+    evidence = annotations.get("vector_evidence", [])
+    if not isinstance(evidence, list):
+        evidence = []
+    pages = annotations.get("vector_pages", [])
+    if not isinstance(pages, list):
+        pages = []
+    measurements = annotations.get("vector_measurements", [])
+    if not isinstance(measurements, list):
+        measurements = []
+
+    normalized_limit = max(1, min(int(limit), 1000))
+    by_sheet: dict[str, dict[str, Any]] = {}
+    for row in measurements:
+        if not isinstance(row, dict):
+            continue
+        sheet_id = str(row.get("sheet_id", "unknown")).strip() or "unknown"
+        entry = by_sheet.setdefault(
+            sheet_id,
+            {
+                "sheet_id": sheet_id,
+                "line_count": 0,
+                "rectangle_count": 0,
+                "total_linework_pdf_units": 0.0,
+            },
+        )
+        entry["line_count"] = int(entry["line_count"]) + int(_to_float(row.get("line_count")))
+        entry["rectangle_count"] = int(entry["rectangle_count"]) + int(
+            _to_float(row.get("rectangle_count"))
+        )
+        entry["total_linework_pdf_units"] = round(
+            float(entry["total_linework_pdf_units"]) + _to_float(row.get("total_linework_pdf_units")),
+            4,
+        )
+
+    items = [row for row in evidence if isinstance(row, dict)]
+    return {
+        "job_id": job_id,
+        "summary": {
+            "vector_page_count": len([row for row in pages if isinstance(row, dict)]),
+            "evidence_count": len(items),
+            "returned_count": min(len(items), normalized_limit),
+            "sheet_count": len(by_sheet),
+            "by_sheet": sorted(by_sheet.values(), key=lambda row: str(row.get("sheet_id", ""))),
+            "note": (
+                "Vector evidence shows detected PDF linework for visual review. "
+                "It is not an installed quantity until classified and accepted."
+            ),
+        },
+        "items": items[:normalized_limit],
+    }
+
+
 def build_benchmark_manifest_template(
     *,
     job_id: str,
@@ -377,6 +437,14 @@ def _count_unknown_symbols_by_sheet(unknown_symbols: object) -> dict[str, int]:
         if sheet_id:
             counts[sheet_id] += 1
     return counts
+
+
+def _extract_annotations(result: dict[str, Any]) -> dict[str, Any]:
+    geometry = result.get("geometry", {})
+    if not isinstance(geometry, dict):
+        return {}
+    annotations = geometry.get("annotations", {})
+    return annotations if isinstance(annotations, dict) else {}
 
 
 def _sheet_scale_status(scale_analysis: object) -> dict[str, dict[str, bool]]:

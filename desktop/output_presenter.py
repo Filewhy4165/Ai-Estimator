@@ -23,6 +23,8 @@ def summarize_payload(payload: dict[str, Any]) -> list[str]:
         quantity_takeoff = result.get("quantity_takeoff", {})
         quantity = quantity_takeoff.get("counts") if isinstance(quantity_takeoff, dict) else {}
         linear = quantity_takeoff.get("linear") if isinstance(quantity_takeoff, dict) else {}
+        annotations = result.get("geometry", {}).get("annotations", {})
+        vector_pages = annotations.get("vector_pages") if isinstance(annotations, dict) else []
         trades = result.get("trade_scope", {}).get("analyzed_trades")
 
         lines.append("Result snapshot:")
@@ -40,6 +42,10 @@ def summarize_payload(payload: dict[str, Any]) -> list[str]:
             lines.append(
                 f"- Explicit dimension references: {linear.get('explicit_dimensions_total_ft')} ft"
             )
+        if isinstance(vector_pages, list) and vector_pages:
+            lines.append(f"- Vector evidence pages: {len(vector_pages)}")
+        if isinstance(linear, dict) and linear.get("vector_linework_total_ft") is not None:
+            lines.append(f"- Scaled vector linework: {linear.get('vector_linework_total_ft')} ft")
         if isinstance(trades, list) and trades:
             lines.append(f"- Trades analyzed: {', '.join(str(x) for x in trades)}")
     elif "items" in payload and isinstance(payload.get("items"), list):

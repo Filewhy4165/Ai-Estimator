@@ -12,6 +12,7 @@ SYMBOL_TAG_RE = re.compile(r"\b([A-Z]{1,6})[-_](\d{1,4}[A-Z]?)\b", re.IGNORECASE
 ROOM_RE = re.compile(r"\bROOM\s+([A-Z0-9\-\s]+)", re.IGNORECASE)
 ROOM_NAME_NUMBER_RE = re.compile(r"\b([A-Z][A-Z0-9/&\-]{1,20})\s+ROOM\s+(\d{1,4}[A-Z]?)\b", re.IGNORECASE)
 DIMENSION_RE = re.compile(r"(?<!\d)(\d+\s*'\s*-\s*\d+\s*\"?)")
+MAX_VECTOR_EVIDENCE_ITEMS = 750
 
 
 FIXTURE_PREFIX_TO_KIND: dict[str, str] = {
@@ -64,18 +65,35 @@ def extract_geometry(
     roofs: list[dict[str, object]] = []
     fixtures: list[dict[str, object]] = []
     equipment: list[dict[str, object]] = []
-    annotations: dict[str, object] = {"rooms": [], "dimensions": [], "callouts": []}
+    annotations: dict[str, object] = {
+        "rooms": [],
+        "dimensions": [],
+        "callouts": [],
+        "vector_pages": [],
+        "vector_evidence": [],
+        "vector_measurements": [],
+    }
     seen_room_pairs: set[tuple[str, str]] = set()
     seen_dimension_pairs: set[tuple[str, str]] = set()
 
     # Conservative extraction: only extract explicit textual tags and dimensions.
     for page in pages:
         text = page.text or ""
-        if not text:
+        vector_primitives = list(getattr(page, "vector_primitives", []) or [])
+        if not text and not vector_primitives:
             continue
         sheet = sheet_lookup.get(page.page_index)
         sheet_id = sheet.sheet_id if sheet else f"PAGE_{page.page_index + 1}"
         trade = sheet.trade if sheet else "other"
+
+        if vector_primitives:
+            _append_vector_annotations(
+                annotations=annotations,
+                primitives=vector_primitives,
+                sheet_id=sheet_id,
+                trade=trade,
+                page=page,
+            )
 
         for match in DOOR_TAG_RE.findall(text):
             tag = f"D{match}"
@@ -168,6 +186,11 @@ def extract_geometry(
             "No reliable measurable geometry was extracted from text alone. "
             "Vector path parsing and/or OCR + symbol detection modules are needed for full takeoff."
         )
+    if annotations["vector_measurements"]:
+        issues.append(
+            "Vector linework was extracted as visual evidence. It is not classified as walls, pipe, "
+            "duct, or conduit until reviewed or matched to a trade-specific detector."
+        )
 
     return (
         {
@@ -182,6 +205,89 @@ def extract_geometry(
         },
         issues,
     )
+
+
+def _append_vector_annotations(
+    *,
+    annotations: dict[str, object],
+    primitives: list[dict[str, object]],
+    sheet_id: str,
+    trade: str,
+    page: LoadedPage,
+) -> None:
+    line_count = 0
+    rectangle_count = 0
+    line_length = 0.0
+    rectangle_perimeter = 0.0
+    for primitive in primitives:
+        if not isinstance(primitive, dict):
+            continue
+        kind = str(primitive.get("kind", "")).strip().lower()
+        if kind == "line":
+            line_count += 1
+            line_length += _to_float(primitive.get("length_pdf_units"))
+        elif kind == "rectangle":
+            rectangle_count += 1
+            rectangle_perimeter += _to_float(primitive.get("perimeter_pdf_units"))
+
+    total = line_length + rectangle_perimeter
+    vector_pages = annotations.get("vector_pages", [])
+    if isinstance(vector_pages, list):
+        vector_pages.append(
+            {
+                "sheet_id": sheet_id,
+                "trade": trade,
+                "source_page_index": page.page_index + 1,
+                "page_width_pdf_units": getattr(page, "width", None),
+                "page_height_pdf_units": getattr(page, "height", None),
+                "line_count": line_count,
+                "rectangle_count": rectangle_count,
+                "primitive_count": line_count + rectangle_count,
+            }
+        )
+
+    vector_measurements = annotations.get("vector_measurements", [])
+    if isinstance(vector_measurements, list):
+        vector_measurements.append(
+            {
+                "sheet_id": sheet_id,
+                "trade": trade,
+                "source_page_index": page.page_index + 1,
+                "line_count": line_count,
+                "rectangle_count": rectangle_count,
+                "line_length_pdf_units": round(line_length, 4),
+                "rectangle_perimeter_pdf_units": round(rectangle_perimeter, 4),
+                "total_linework_pdf_units": round(total, 4),
+            }
+        )
+
+    vector_evidence = annotations.get("vector_evidence", [])
+    if not isinstance(vector_evidence, list):
+        return
+    remaining = max(0, MAX_VECTOR_EVIDENCE_ITEMS - len(vector_evidence))
+    if remaining <= 0:
+        return
+    for primitive in primitives[:remaining]:
+        if not isinstance(primitive, dict):
+            continue
+        row = {
+            "sheet_id": sheet_id,
+            "trade": trade,
+            "source_page_index": page.page_index + 1,
+            **primitive,
+        }
+        vector_evidence.append(row)
+
+
+def _to_float(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return 0.0
+    return 0.0
 
 
 def _dedupe_by_id(items: list[dict[str, object]]) -> list[dict[str, object]]:

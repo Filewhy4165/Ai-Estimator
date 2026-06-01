@@ -321,6 +321,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}/readiness-report` consolidated go/no-go handoff report
 - `GET /v1/jobs/{job_id}/review-queue` prioritized review list for ambiguous sheets
 - `GET /v1/jobs/{job_id}/sheet-overrides-template` prefilled override rows for unmapped/problem sheets
+- `GET /v1/jobs/{job_id}/visual-evidence` compact vector linework evidence for drawing review/highlighting
 - `GET /v1/jobs/{job_id}/benchmark-template` prefilled benchmark manifest template from a completed job
 - `GET /v1/benchmark-reports/history` list benchmark reports with pagination from a results directory
 - `GET /v1/benchmark-reports/compare` compare two benchmark report JSON files
@@ -372,6 +373,17 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/sheet-overrides-template"
 ```
 
 The response `items` can be edited and sent back as `sheet_overrides_json` in a new `POST /v1/jobs` request.
+
+Visual evidence endpoint:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/visual-evidence?limit=250"
+```
+
+The response summarizes detected vector linework by sheet and returns capped evidence items with PDF-space
+coordinates. Treat these as drawing-review highlights, not final installed quantities, until a trade-specific
+detector or estimator review accepts them.
+
 Benchmark template endpoint query params:
 
 - `include_unmapped` (default `false`) include unmapped sheet IDs in `expected.sheet_ids`
@@ -458,8 +470,9 @@ iOS/Android apps should call the same `/v1/jobs` and `/v1/jobs/{job_id}` endpoin
 
 ## Current limitations
 
-- Geometry extraction is text-driven in this MVP and requires CV/OCR/vector modules for full plan accuracy.
+- Geometry extraction now includes text plus basic vector line/rectangle evidence, but still requires deeper CV/OCR/vector classification modules for full plan accuracy.
 - Explicit drawing dimensions are summarized as auditable reference linear measurements, but they are not treated as installed quantities until tied to detected geometry or reviewed assemblies.
+- Vector linework can be measured in PDF units and converted to feet when a sheet scale is detected; it is still review evidence until classified as a specific trade item.
 - Job execution currently runs in-process in the API server; production scale should move execution to a worker queue.
 - API security is currently API-key + tenant-header scoped; enterprise SSO/JWT is not yet implemented.
 - Private spec profiles are scoped by tenant/company workspace; public spec profiles are shared intentionally.
