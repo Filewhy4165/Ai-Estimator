@@ -47,6 +47,24 @@ def test_build_job_report_html_renders_estimator_sections() -> None:
                     "csi_masterformat": {"mechanical_hvac": ["23"]}
                 }
             },
+            "spec_context": {
+                "applied_spec_profiles": [
+                    {
+                        "spec_id": "spec-hvac",
+                        "organization": "NASA",
+                        "standard_name": "TSRC",
+                        "project_type": "government-facilities",
+                        "detected_standard_refs": ["SMACNA"],
+                        "detected_trade_hints": ["mechanical_hvac"],
+                        "is_public": True,
+                    }
+                ],
+                "detected_standard_refs": ["SMACNA"],
+                "required_trades_from_specs": ["mechanical_hvac"],
+                "detected_trades_from_drawings": ["mechanical_hvac"],
+                "overlap_with_drawings": ["mechanical_hvac"],
+                "missing_from_drawings": [],
+            },
             "issues_or_ambiguities": [{"severity": "warning", "message": "Scale needs review."}],
         },
     )
@@ -55,5 +73,7 @@ def test_build_job_report_html_renders_estimator_sections() -> None:
     assert "M101" in html
     assert "MECHANICAL PLAN" in html
     assert "duct_ft" in html
+    assert "Spec Compliance" in html
+    assert "SMACNA" in html
     assert "Scale needs review." in html
     assert "23" in html

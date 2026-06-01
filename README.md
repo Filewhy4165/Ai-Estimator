@@ -322,6 +322,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/{job_id}` job status/result
 - `GET /v1/jobs/{job_id}/takeoff.csv` cost-handoff CSV export of flattened quantity takeoff rows
 - `GET /v1/jobs/{job_id}/report.html` readable estimator report for sheets, trade scope, quantities, cost-code hints, and issues
+- `GET /v1/jobs/{job_id}/spec-compliance` applied-spec compliance summary with missing spec-required trades and detected standards
 - `GET /v1/jobs/{job_id}/trade-recommendation` recommendation for `selected` vs `all` trade scope with confidence and rationale
 - `GET /v1/jobs/{job_id}/trade-coverage` coverage table by trade (detected/analyzed/signals/status)
 - `GET /v1/jobs/{job_id}/readiness-report` consolidated go/no-go handoff report
@@ -380,6 +381,15 @@ curl "http://127.0.0.1:8000/v1/jobs/<job_id>/report.html" --output estimator-rep
 
 The report is a browser-friendly handoff page for estimators who need sheets, trade scope, quantities,
 cost-code hints, and issues without reading raw JSON.
+
+Spec compliance report:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/spec-compliance"
+```
+
+The response shows applied spec profiles, detected standards, spec-required trades, drawing-detected trades,
+missing spec-required trades, and recommendations. Drawings remain the highest authority when conflicts exist.
 
 Review queue endpoint query params:
 
