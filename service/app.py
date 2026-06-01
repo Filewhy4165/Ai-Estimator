@@ -36,6 +36,7 @@ from service.review_queue import (
     build_visual_evidence,
 )
 from service.spec_store import SpecStore, build_spec_profile_from_file
+from service.takeoff_export import build_takeoff_csv
 from service.trade_coverage import build_trade_coverage_report
 from service.trade_recommendation import build_trade_recommendation
 from service.visual_review import (
@@ -1237,6 +1238,28 @@ def get_job_visual_evidence(
         job_id=job_id,
         result=record.result if isinstance(record.result, dict) else None,
         limit=limit,
+    )
+
+
+@app.get("/v1/jobs/{job_id}/takeoff.csv")
+def get_job_takeoff_csv(
+    job_id: str,
+    request: Request = None,
+) -> Response:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    csv_text = build_takeoff_csv(
+        job_id=job_id,
+        result=record.result if isinstance(record.result, dict) else None,
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="takeoff-{_safe_file_name(job_id)}.csv"'
+        },
     )
 
 

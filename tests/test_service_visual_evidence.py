@@ -74,6 +74,13 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
         }
     ]
 
+    csv_response = service_app.get_job_takeoff_csv(
+        "job-a",
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert csv_response.media_type == "text/csv"
+    assert b"job_id,scope,trade,quantity_bucket" in csv_response.body
+
     try:
         service_app.get_job_visual_evidence("job-a", request=_request_for_tenant("tenant-b"))
     except HTTPException as exc:

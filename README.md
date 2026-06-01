@@ -316,6 +316,7 @@ Benchmark manifest shape:
 - `GET /v1/jobs/metrics` operations snapshot for recent jobs (status counts, active queue depth, failure rate, 24h throughput, latency distributions, and extraction quality signals)
 - `GET /v1/jobs/metrics/gate` pass/fail gate over job metrics with configurable thresholds
 - `GET /v1/jobs/{job_id}` job status/result
+- `GET /v1/jobs/{job_id}/takeoff.csv` cost-handoff CSV export of flattened quantity takeoff rows
 - `GET /v1/jobs/{job_id}/trade-recommendation` recommendation for `selected` vs `all` trade scope with confidence and rationale
 - `GET /v1/jobs/{job_id}/trade-coverage` coverage table by trade (detected/analyzed/signals/status)
 - `GET /v1/jobs/{job_id}/readiness-report` consolidated go/no-go handoff report
@@ -357,6 +358,14 @@ Notes on overrides:
 
 - `source_page_index` is 1-based (page 1 is the first PDF page).
 - If omitted, overrides are applied in list order as a fallback.
+
+Takeoff CSV export:
+
+```bash
+curl "http://127.0.0.1:8000/v1/jobs/<job_id>/takeoff.csv" --output takeoff.csv
+```
+
+The CSV includes overall and per-trade rows for linear, area, volume, counts, and CSI cost-code hints.
 
 Review queue endpoint query params:
 
