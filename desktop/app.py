@@ -1948,12 +1948,17 @@ class DesktopEstimatorApp:
         self.results_notebook.add(json_tab, text="Raw JSON")
 
         summary_tab.columnconfigure(0, weight=1)
-        summary_tab.rowconfigure(1, weight=1)
+        summary_tab.rowconfigure(2, weight=1)
         ttk.Label(summary_tab, textvariable=self.summary_banner_text, style="FormLabel.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 6)
         )
+        summary_actions = ttk.Frame(summary_tab)
+        summary_actions.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(summary_actions, text="Export Takeoff CSV", command=self._export_takeoff_csv).grid(
+            row=0, column=0, sticky="w"
+        )
         summary_table_frame = ttk.Frame(summary_tab)
-        summary_table_frame.grid(row=1, column=0, sticky="nsew")
+        summary_table_frame.grid(row=2, column=0, sticky="nsew")
         summary_table_frame.columnconfigure(0, weight=1)
         summary_table_frame.rowconfigure(0, weight=1)
         self.summary_result_tree = ttk.Treeview(
@@ -3366,6 +3371,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Save Results Text",
                 "pro_tip": "Save the output panel content to a JSON file.",
                 "beginner_tip": "Save what you see in the results panel.",
+            },
+            "export_takeoff_csv": {
+                "pro_label": "Export Takeoff CSV",
+                "beginner_label": "Export Takeoff Spreadsheet",
+                "pro_tip": "Save current job quantities as CSV rows for Excel or pricing handoff.",
+                "beginner_tip": "Save the takeoff as a spreadsheet file you can open in Excel.",
             },
             "open_results_folder": {
                 "pro_label": "Open Results Folder",
@@ -7645,6 +7656,42 @@ class DesktopEstimatorApp:
             return
         Path(target).write_text(content, encoding="utf-8")
         self.status_text.set(f"Saved output: {target}")
+
+    def _export_takeoff_csv(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
+            return
+        target = filedialog.asksaveasfilename(
+            title="Save takeoff CSV",
+            initialfile=f"takeoff_{job_id[:8]}.csv",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not target:
+            self.status_text.set("Takeoff CSV export canceled.")
+            return
+
+        def worker() -> str:
+            return self._request_text(
+                "GET",
+                f"/v1/jobs/{job_id}/takeoff.csv",
+                timeout=60,
+            )
+
+        def on_success(csv_text: str) -> None:
+            Path(target).write_text(csv_text, encoding="utf-8-sig")
+            self.status_text.set(f"Takeoff CSV saved: {target}")
+            self._set_output_text(f"Takeoff CSV saved:\n{target}")
+
+        self._start_background_action(
+            message=f"Exporting takeoff CSV for job {job_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to export takeoff CSV",
+            failure_status="Takeoff CSV export failed.",
+        )
 
     def _show_benchmark_history(self) -> None:
         results_dir = self._results_dir()
