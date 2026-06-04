@@ -62,6 +62,7 @@ def build_visual_evidence_svg(
         f"Job {job_id} | Sheet {selected_sheet_id} | "
         f"Page {selected_source_page or 'unknown'} | Evidence {len(selected_evidence)}"
     )
+    display_label = _truncate_text(label, 86)
 
     return "\n".join(
         [
@@ -101,7 +102,7 @@ def build_visual_evidence_svg(
             ),
             (
                 f'<text x="28" y="41" fill="#f4fbff" font-family="Segoe UI, Arial, sans-serif" '
-                f'font-size="18" font-weight="700">{escape(label)}</text>'
+                f'font-size="18" font-weight="700">{escape(display_label)}</text>'
             ),
             "</svg>",
         ]
@@ -148,13 +149,18 @@ def build_visual_measurement_page(
       --danger: #ff3b4f;
     }}
     * {{ box-sizing: border-box; }}
+    html, body {{ height: 100%; overflow: hidden; }}
     body {{
       margin: 0;
       background: radial-gradient(circle at top left, #112637, var(--bg) 42%);
       color: var(--text);
       font-family: "Segoe UI", Arial, sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
     }}
     header {{
+      flex: 0 0 auto;
       padding: 18px 24px;
       border-bottom: 1px solid #263244;
       background: linear-gradient(90deg, #0a111b, #141f2c);
@@ -167,7 +173,9 @@ def build_visual_measurement_page(
       grid-template-columns: minmax(0, 1fr) 390px;
       gap: 16px;
       padding: 16px;
-      height: calc(100vh - 82px);
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
     }}
     .viewer, .tools {{
       min-height: 0;
@@ -180,10 +188,13 @@ def build_visual_measurement_page(
       overflow: auto;
       padding: 12px;
       position: relative;
+      min-width: 0;
     }}
     .viewer svg {{
-      min-width: 960px;
-      max-width: none;
+      display: block;
+      width: auto;
+      max-width: 100%;
+      max-height: 100%;
       height: auto;
       cursor: crosshair;
       border-radius: 10px;
@@ -192,6 +203,7 @@ def build_visual_measurement_page(
     .tools {{
       overflow: auto;
       padding: 16px;
+      min-height: 0;
     }}
     .section {{
       padding: 14px;
@@ -237,6 +249,12 @@ def build_visual_measurement_page(
     }}
     button.primary {{ border-color: var(--cyan); color: #041016; background: linear-gradient(180deg, #62f1ff, var(--cyan)); }}
     button.apply {{ border-color: var(--amber); color: #101010; background: linear-gradient(180deg, #ffd073, var(--amber)); }}
+    button.danger {{ border-color: var(--danger); background: linear-gradient(180deg, #5d1c28, #251018); }}
+    .button-row {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }}
     button:hover {{ filter: brightness(1.08); }}
     .metric {{
       display: flex;
@@ -248,6 +266,37 @@ def build_visual_measurement_page(
     }}
     .metric strong {{ color: var(--text); text-align: right; }}
     .hint {{ color: var(--muted); font-size: 13px; line-height: 1.42; }}
+    .measurement-list {{
+      display: grid;
+      gap: 8px;
+      max-height: 210px;
+      overflow: auto;
+      padding-right: 2px;
+    }}
+    .measurement-card {{
+      width: 100%;
+      margin: 0;
+      text-align: left;
+      border-color: #2b4058;
+      box-shadow: inset 0 1px rgba(255,255,255,0.08), 0 2px 0 #070b10;
+    }}
+    .measurement-card.active {{
+      border-color: var(--cyan);
+      background: linear-gradient(180deg, #203d48, #102430);
+    }}
+    .measurement-title {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text);
+    }}
+    .measurement-meta {{
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }}
     .status {{
       white-space: pre-wrap;
       color: var(--text);
@@ -259,11 +308,25 @@ def build_visual_measurement_page(
       font-family: "Cascadia Mono", Consolas, monospace;
       font-size: 12px;
     }}
-    .measure-line {{ stroke: var(--danger); stroke-width: 3; stroke-dasharray: 9 6; pointer-events: none; }}
-    .measure-point {{ fill: var(--danger); stroke: #fff; stroke-width: 2; pointer-events: none; }}
+    .measure-line {{ stroke: #ff6b7a; stroke-width: 3; stroke-dasharray: 9 6; pointer-events: none; }}
+    .measure-line.active {{ stroke: var(--danger); stroke-width: 4; }}
+    .measure-point {{ fill: var(--danger); stroke: #fff; stroke-width: 2; pointer-events: all; cursor: grab; }}
+    .measure-point.inactive {{ fill: #ffc24a; }}
+    .measure-point:active {{ cursor: grabbing; }}
+    .measure-label {{
+      fill: #ffffff;
+      font: 700 13px "Segoe UI", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #071018;
+      stroke-width: 4px;
+      pointer-events: none;
+    }}
     @media (max-width: 980px) {{
-      main {{ grid-template-columns: 1fr; height: auto; }}
+      html, body {{ height: auto; overflow: auto; }}
+      body {{ min-height: 100dvh; }}
+      main {{ grid-template-columns: 1fr; overflow: visible; }}
       .viewer {{ height: 62vh; }}
+      .tools {{ max-height: none; }}
     }}
   </style>
 </head>
@@ -288,8 +351,14 @@ def build_visual_measurement_page(
         <input id="apiKey" type="password" placeholder="Only needed if the server requires one" />
       </div>
       <div class="section">
-        <h2>Measure Known Length</h2>
-        <p class="hint">Click point A and point B on the drawing. The measured PDF units will fill automatically.</p>
+        <h2>Measure Known Lengths</h2>
+        <p class="hint">Click point A and point B on the drawing. Drag either endpoint afterward to fine-tune the measurement.</p>
+        <div class="button-row">
+          <button type="button" id="addMeasurementBtn">Add Measurement</button>
+          <button type="button" class="danger" id="clearAllBtn">Clear All</button>
+        </div>
+        <label>Saved Measurements</label>
+        <div class="measurement-list" id="measurementList"></div>
         <label for="pointA">Point A</label>
         <input id="pointA" readonly />
         <label for="pointB">Point B</label>
@@ -298,9 +367,12 @@ def build_visual_measurement_page(
         <input id="measuredPdfUnits" />
         <label for="knownLengthFt">Known Real Length (feet)</label>
         <input id="knownLengthFt" placeholder="Example: 24" />
-        <button type="button" id="resetBtn">Reset Clicks</button>
-        <button type="button" class="primary" id="previewBtn">Preview Scale</button>
-        <button type="button" class="apply" id="applyBtn">Apply Scale to Job Result</button>
+        <div class="button-row">
+          <button type="button" id="resetBtn">Reset Selected</button>
+          <button type="button" class="danger" id="deleteMeasurementBtn">Delete Selected</button>
+        </div>
+        <button type="button" class="primary" id="previewBtn">Preview Scale From Selected</button>
+        <button type="button" class="apply" id="applyBtn">Apply Selected Scale to Job Result</button>
       </div>
       <div class="section">
         <h2>Result</h2>
@@ -310,6 +382,7 @@ def build_visual_measurement_page(
   </main>
   <script>
     const svg = document.querySelector(".viewer svg");
+    const viewer = document.getElementById("viewer");
     const statusBox = document.getElementById("status");
     const pointAInput = document.getElementById("pointA");
     const pointBInput = document.getElementById("pointB");
@@ -317,10 +390,16 @@ def build_visual_measurement_page(
     const knownInput = document.getElementById("knownLengthFt");
     const tenantInput = document.getElementById("tenantId");
     const apiKeyInput = document.getElementById("apiKey");
+    const measurementList = document.getElementById("measurementList");
     const sheetId = document.getElementById("sheetId").textContent.trim();
     const jobId = document.getElementById("jobId").textContent.trim();
-    let points = [];
+    let measurements = [];
+    let activeMeasurementId = null;
+    let nextMeasurementNumber = 1;
     let overlayGroup = null;
+    let draggingEndpoint = null;
+    let suppressNextClick = false;
+    svg.style.touchAction = "none";
 
     function setStatus(value) {{
       statusBox.textContent = value;
@@ -339,7 +418,9 @@ def build_visual_measurement_page(
       const point = svg.createSVGPoint();
       point.x = event.clientX;
       point.y = event.clientY;
-      const transformed = point.matrixTransform(svg.getScreenCTM().inverse());
+      const matrix = svg.getScreenCTM();
+      if (!matrix) return {{ x: 0, y: 0 }};
+      const transformed = point.matrixTransform(matrix.inverse());
       return {{ x: transformed.x, y: transformed.y }};
     }}
 
@@ -353,6 +434,101 @@ def build_visual_measurement_page(
       return `${{p.x.toFixed(3)}}, ${{p.y.toFixed(3)}}`;
     }}
 
+    function activeMeasurement() {{
+      return measurements.find((m) => m.id === activeMeasurementId) || null;
+    }}
+
+    function measurementPdfUnits(measurement) {{
+      const manual = Number(measurement.manualPdfUnits);
+      if (Number.isFinite(manual) && manual > 0) return manual;
+      if (measurement.a && measurement.b) return distance(measurement.a, measurement.b);
+      return 0;
+    }}
+
+    function createMeasurement(initialPoint = null) {{
+      const measurement = {{
+        id: `measurement-${{Date.now()}}-${{nextMeasurementNumber}}`,
+        label: `M${{nextMeasurementNumber}}`,
+        a: initialPoint,
+        b: null,
+        manualPdfUnits: "",
+        knownLengthFt: "",
+      }};
+      nextMeasurementNumber += 1;
+      measurements.push(measurement);
+      activeMeasurementId = measurement.id;
+      renderAll();
+      return measurement;
+    }}
+
+    function syncActiveFromInputs() {{
+      const active = activeMeasurement();
+      if (!active) return;
+      active.knownLengthFt = knownInput.value.trim();
+      const manual = measuredInput.value.trim();
+      const geometric = active.a && active.b ? distance(active.a, active.b).toFixed(6) : "";
+      active.manualPdfUnits = manual && manual !== geometric ? manual : "";
+    }}
+
+    function selectMeasurement(id) {{
+      syncActiveFromInputs();
+      activeMeasurementId = id;
+      renderAll();
+      const active = activeMeasurement();
+      if (active) {{
+        setStatus(`${{active.label}} selected. Click empty endpoints or drag the endpoint handles to adjust.`);
+      }}
+    }}
+
+    function updateInputsFromActive() {{
+      const active = activeMeasurement();
+      pointAInput.value = active && active.a ? formatPoint(active.a) : "";
+      pointBInput.value = active && active.b ? formatPoint(active.b) : "";
+      if (active && active.manualPdfUnits) {{
+        measuredInput.value = active.manualPdfUnits;
+      }} else if (active && active.a && active.b) {{
+        measuredInput.value = distance(active.a, active.b).toFixed(6);
+      }} else {{
+        measuredInput.value = "";
+      }}
+      knownInput.value = active ? active.knownLengthFt : "";
+    }}
+
+    function renderMeasurementList() {{
+      measurementList.replaceChildren();
+      if (!measurements.length) {{
+        const empty = document.createElement("p");
+        empty.className = "hint";
+        empty.textContent = "No measurements yet. Click the drawing or press Add Measurement.";
+        measurementList.appendChild(empty);
+        return;
+      }}
+
+      for (const measurement of measurements) {{
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "measurement-card" + (measurement.id === activeMeasurementId ? " active" : "");
+        button.addEventListener("click", () => selectMeasurement(measurement.id));
+
+        const title = document.createElement("div");
+        title.className = "measurement-title";
+        const name = document.createElement("strong");
+        name.textContent = measurement.label;
+        const state = document.createElement("span");
+        state.textContent = measurement.a && measurement.b ? "Complete" : measurement.a ? "Needs B" : "Needs A";
+        title.append(name, state);
+
+        const meta = document.createElement("div");
+        meta.className = "measurement-meta";
+        const pdfUnits = measurementPdfUnits(measurement);
+        const known = measurement.knownLengthFt ? ` | known ${{measurement.knownLengthFt}} ft` : "";
+        meta.textContent = pdfUnits > 0 ? `${{pdfUnits.toFixed(4)}} PDF units${{known}}` : "Click two endpoints on the drawing.";
+
+        button.append(title, meta);
+        measurementList.appendChild(button);
+      }}
+    }}
+
     function resetOverlay() {{
       if (overlayGroup) overlayGroup.remove();
       overlayGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -360,53 +536,167 @@ def build_visual_measurement_page(
       svg.appendChild(overlayGroup);
     }}
 
-    function drawMeasurement() {{
+    function drawPoint(measurement, endpoint, point) {{
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("class", "measure-point" + (measurement.id === activeMeasurementId ? "" : " inactive"));
+      circle.setAttribute("cx", point.x);
+      circle.setAttribute("cy", point.y);
+      circle.setAttribute("r", measurement.id === activeMeasurementId ? "7" : "5.5");
+      circle.dataset.measurementId = measurement.id;
+      circle.dataset.endpoint = endpoint;
+      circle.addEventListener("pointerdown", (event) => startEndpointDrag(event, measurement.id, endpoint));
+      circle.addEventListener("click", (event) => event.stopPropagation());
+      overlayGroup.appendChild(circle);
+    }}
+
+    function drawMeasurements() {{
       resetOverlay();
-      for (const p of points) {{
-        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        c.setAttribute("class", "measure-point");
-        c.setAttribute("cx", p.x);
-        c.setAttribute("cy", p.y);
-        c.setAttribute("r", "7");
-        overlayGroup.appendChild(c);
-      }}
-      if (points.length === 2) {{
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("class", "measure-line");
-        line.setAttribute("x1", points[0].x);
-        line.setAttribute("y1", points[0].y);
-        line.setAttribute("x2", points[1].x);
-        line.setAttribute("y2", points[1].y);
-        overlayGroup.insertBefore(line, overlayGroup.firstChild);
+      for (const measurement of measurements) {{
+        if (measurement.a && measurement.b) {{
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("class", "measure-line" + (measurement.id === activeMeasurementId ? " active" : ""));
+          line.setAttribute("x1", measurement.a.x);
+          line.setAttribute("y1", measurement.a.y);
+          line.setAttribute("x2", measurement.b.x);
+          line.setAttribute("y2", measurement.b.y);
+          overlayGroup.appendChild(line);
+
+          const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          label.setAttribute("class", "measure-label");
+          label.setAttribute("x", (measurement.a.x + measurement.b.x) / 2 + 8);
+          label.setAttribute("y", (measurement.a.y + measurement.b.y) / 2 - 8);
+          label.textContent = measurement.label;
+          overlayGroup.appendChild(label);
+        }}
+        if (measurement.a) drawPoint(measurement, "a", measurement.a);
+        if (measurement.b) drawPoint(measurement, "b", measurement.b);
       }}
     }}
 
-    function resetClicks() {{
-      points = [];
-      pointAInput.value = "";
-      pointBInput.value = "";
-      measuredInput.value = "";
-      resetOverlay();
-      setStatus("Ready. Click two points on the drawing.");
+    function renderAll() {{
+      if (!activeMeasurementId && measurements.length) activeMeasurementId = measurements[0].id;
+      renderMeasurementList();
+      drawMeasurements();
+      updateInputsFromActive();
     }}
 
-    svg.addEventListener("click", (event) => {{
-      const p = svgPointFromEvent(event);
-      if (points.length >= 2) points = [];
-      points.push(p);
-      if (points[0]) pointAInput.value = formatPoint(points[0]);
-      if (points[1]) pointBInput.value = formatPoint(points[1]);
-      if (points.length === 2) {{
-        const d = distance(points[0], points[1]);
-        measuredInput.value = d.toFixed(6);
-        setStatus(`Measured ${{d.toFixed(4)}} PDF units. Enter known real length in feet.`);
+    function setActivePoint(endpoint, point) {{
+      let active = activeMeasurement();
+      if (!active) active = createMeasurement();
+      active[endpoint] = point;
+      active.manualPdfUnits = "";
+      renderAll();
+      if (active.a && active.b) {{
+        setStatus(`${{active.label}} measured ${{distance(active.a, active.b).toFixed(4)}} PDF units. Enter the real feet, then preview or apply scale.`);
       }} else {{
-        setStatus("Point A set. Click point B.");
+        setStatus(`${{active.label}} point A set. Click point B.`);
       }}
-      drawMeasurement();
+    }}
+
+    function handleSheetClick(event) {{
+      if (suppressNextClick || event.target.classList.contains("measure-point")) {{
+        suppressNextClick = false;
+        return;
+      }}
+      const point = svgPointFromEvent(event);
+      let active = activeMeasurement();
+      if (!active || (active.a && active.b)) {{
+        active = createMeasurement(point);
+        setStatus(`${{active.label}} point A set. Click point B.`);
+        return;
+      }}
+      if (!active.a) {{
+        setActivePoint("a", point);
+        return;
+      }}
+      setActivePoint("b", point);
+    }}
+
+    function startEndpointDrag(event, measurementId, endpoint) {{
+      event.preventDefault();
+      event.stopPropagation();
+      selectMeasurement(measurementId);
+      draggingEndpoint = {{ measurementId, endpoint, moved: false }};
+      setStatus(`Dragging ${{endpoint.toUpperCase()}}. Release when the endpoint is on the exact drawing mark.`);
+    }}
+
+    function updateDraggedEndpoint(event) {{
+      if (!draggingEndpoint) return;
+      const active = measurements.find((m) => m.id === draggingEndpoint.measurementId);
+      if (!active) return;
+      active[draggingEndpoint.endpoint] = svgPointFromEvent(event);
+      active.manualPdfUnits = "";
+      draggingEndpoint.moved = true;
+      renderAll();
+    }}
+
+    function endEndpointDrag() {{
+      if (!draggingEndpoint) return;
+      const active = measurements.find((m) => m.id === draggingEndpoint.measurementId);
+      const moved = draggingEndpoint.moved;
+      draggingEndpoint = null;
+      if (moved) {{
+        suppressNextClick = true;
+        window.setTimeout(() => {{ suppressNextClick = false; }}, 0);
+      }}
+      if (active && active.a && active.b) {{
+        setStatus(`${{active.label}} adjusted to ${{distance(active.a, active.b).toFixed(4)}} PDF units.`);
+      }}
+    }}
+
+    function resetSelected() {{
+      const active = activeMeasurement();
+      if (!active) return;
+      active.a = null;
+      active.b = null;
+      active.manualPdfUnits = "";
+      renderAll();
+      setStatus(`${{active.label}} reset. Click point A and point B again.`);
+    }}
+
+    function deleteSelected() {{
+      const active = activeMeasurement();
+      if (!active) return;
+      measurements = measurements.filter((m) => m.id !== active.id);
+      activeMeasurementId = measurements.length ? measurements[measurements.length - 1].id : null;
+      if (!measurements.length) createMeasurement();
+      renderAll();
+      setStatus("Selected measurement deleted.");
+    }}
+
+    function clearAllMeasurements() {{
+      measurements = [];
+      activeMeasurementId = null;
+      nextMeasurementNumber = 1;
+      createMeasurement();
+      setStatus("All measurements cleared. Click point A and point B on the drawing.");
+    }}
+
+    svg.addEventListener("click", handleSheetClick);
+    window.addEventListener("pointermove", updateDraggedEndpoint);
+    window.addEventListener("pointerup", endEndpointDrag);
+    knownInput.addEventListener("input", () => {{
+      const active = activeMeasurement();
+      if (active) active.knownLengthFt = knownInput.value.trim();
+      renderMeasurementList();
+    }});
+    measuredInput.addEventListener("input", () => {{
+      const active = activeMeasurement();
+      if (active) active.manualPdfUnits = measuredInput.value.trim();
+      renderMeasurementList();
     }});
 
+    function requireSelectedMeasurement() {{
+      syncActiveFromInputs();
+      const active = activeMeasurement();
+      if (!active || !active.a || !active.b) {{
+        throw new Error("Select a complete measurement first. Click two points or drag existing endpoints.");
+      }}
+      return active;
+    }}
+
     async function callCalibration(method, endpoint) {{
+      const active = requireSelectedMeasurement();
       const measured = Number(measuredInput.value);
       const known = Number(knownInput.value);
       if (!Number.isFinite(measured) || measured <= 0) {{
@@ -415,6 +705,8 @@ def build_visual_measurement_page(
       if (!Number.isFinite(known) || known <= 0) {{
         throw new Error("Known Real Length must be greater than 0.");
       }}
+      active.manualPdfUnits = String(measured);
+      active.knownLengthFt = String(known);
       const params = new URLSearchParams({{
         sheet_id: sheetId,
         measured_pdf_units: String(measured),
@@ -437,7 +729,13 @@ def build_visual_measurement_page(
       return payload;
     }}
 
-    document.getElementById("resetBtn").addEventListener("click", resetClicks);
+    document.getElementById("addMeasurementBtn").addEventListener("click", () => {{
+      const measurement = createMeasurement();
+      setStatus(`${{measurement.label}} added. Click point A and point B on the drawing.`);
+    }});
+    document.getElementById("clearAllBtn").addEventListener("click", clearAllMeasurements);
+    document.getElementById("resetBtn").addEventListener("click", resetSelected);
+    document.getElementById("deleteMeasurementBtn").addEventListener("click", deleteSelected);
     document.getElementById("previewBtn").addEventListener("click", async () => {{
       try {{
         setStatus("Previewing scale...");
@@ -445,13 +743,13 @@ def build_visual_measurement_page(
         const c = payload.calibration || {{}};
         const p = payload.preview || {{}};
         setStatus(
-          `Preview complete.\\n` +
-          `Feet per PDF unit: ${{c.feet_per_pdf_unit}}\\n` +
-          `PDF units per foot: ${{c.pdf_units_per_foot}}\\n` +
+          `Preview complete.\n` +
+          `Feet per PDF unit: ${{c.feet_per_pdf_unit}}\n` +
+          `PDF units per foot: ${{c.pdf_units_per_foot}}\n` +
           `Calibrated vector linework: ${{p.calibrated_vector_linework_total_ft}} ft`
         );
       }} catch (err) {{
-        setStatus(`Preview failed:\\n${{err.message}}`);
+        setStatus(`Preview failed:\n${{err.message}}`);
       }}
     }});
     document.getElementById("applyBtn").addEventListener("click", async () => {{
@@ -461,16 +759,17 @@ def build_visual_measurement_page(
         const c = payload.calibration || {{}};
         const p = payload.preview || {{}};
         setStatus(
-          `Scale applied to job result.\\n` +
-          `Feet per PDF unit: ${{c.feet_per_pdf_unit}}\\n` +
-          `Updated linework: ${{p.calibrated_vector_linework_total_ft}} ft\\n` +
+          `Scale applied to job result.\n` +
+          `Feet per PDF unit: ${{c.feet_per_pdf_unit}}\n` +
+          `Updated linework: ${{p.calibrated_vector_linework_total_ft}} ft\n` +
           `Refresh the desktop job to see the updated takeoff.`
         );
       }} catch (err) {{
-        setStatus(`Apply failed:\\n${{err.message}}`);
+        setStatus(`Apply failed:\n${{err.message}}`);
       }}
     }});
-    resetOverlay();
+    createMeasurement();
+    viewer.scrollTo({{ left: 0, top: 0, behavior: "instant" }});
   </script>
 </body>
 </html>"""
@@ -674,6 +973,12 @@ def _extract_svg_attr(svg: str, attr_name: str) -> str:
     if end < 0:
         return ""
     return svg[start:end]
+
+
+def _truncate_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[: max(max_chars - 3, 0)].rstrip() + "..."
 
 
 def _dict_rows(value: Any) -> list[dict[str, Any]]:

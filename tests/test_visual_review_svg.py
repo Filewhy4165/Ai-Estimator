@@ -103,9 +103,16 @@ def test_visual_measurement_page_embeds_svg_and_calibration_controls():
     assert 'data-sheet-id="A101"' in page
     assert 'id="measuredPdfUnits"' in page
     assert 'id="knownLengthFt"' in page
+    assert 'id="measurementList"' in page
+    assert "Add Measurement" in page
+    assert "Delete Selected" in page
+    assert "window.addEventListener(\"pointermove\", updateDraggedEndpoint)" in page
+    assert "drag either endpoint" in page.lower()
+    assert "html, body { height: 100%; overflow: hidden; }" in page
     assert "/scale-calibration/preview" in page
     assert "/scale-calibration/apply" in page
     assert 'value="tenant-a"' in page
+    assert "let points = []" not in page
 
 
 def test_scale_calibration_preview_converts_vector_units_to_feet():
