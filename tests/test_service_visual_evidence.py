@@ -130,6 +130,57 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert "EstimateForge Visual Measurement" in page
     assert 'data-sheet-id="A101"' in page
 
+    save_payload = service_app.save_job_visual_measurements(
+        "job-a",
+        payload=service_app.VisualMeasurementsSaveRequest(
+            sheet_id="A101",
+            source_page_index=1,
+            measurements=[
+                {
+                    "id": "m1",
+                    "label": "M1",
+                    "a": {"x": 0, "y": 0},
+                    "b": {"x": 30, "y": 40},
+                    "known_length_ft": 10,
+                }
+            ],
+        ),
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert save_payload["measurement_count"] == 1
+    assert save_payload["quantity_takeoff"]["linear"][
+        "manual_visual_measurements_total_pdf_units"
+    ] == 50.0
+
+    measurement_payload = service_app.get_job_visual_measurements(
+        "job-a",
+        sheet_id="A101",
+        source_page_index=1,
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert measurement_payload["measurement_count"] == 1
+    assert measurement_payload["measurements"][0]["id"] == "m1"
+
+    page_after_save = service_app.get_job_visual_review_page(
+        "job-a",
+        sheet_id="A101",
+        source_page_index=1,
+        tenant_id="tenant-a",
+        request=_request_for_tenant("tenant-b"),
+    )
+    assert "m1" in page_after_save
+
+    try:
+        service_app.get_job_visual_measurements(
+            "job-a",
+            sheet_id="A101",
+            request=_request_for_tenant("tenant-b"),
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 404
+    else:
+        raise AssertionError("Expected cross-tenant visual measurement lookup to fail")
+
     preview = service_app.get_job_scale_calibration_preview(
         "job-a",
         sheet_id="A101",
