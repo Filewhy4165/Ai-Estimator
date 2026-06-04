@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ai_estimator.constants import DEFAULT_CSI_BY_TRADE, TRADE_NAMES
 from ai_estimator.benchmark_compare import (
@@ -47,6 +47,8 @@ from service.visual_review import (
     build_scale_calibration_preview,
     build_visual_evidence_svg,
     build_visual_measurement_page,
+    list_visual_measurements,
+    save_visual_measurements_to_result,
 )
 
 
@@ -95,6 +97,12 @@ class JobPruneResponse(BaseModel):
     skipped_jobs: list[dict[str, str]]
     removed_upload_dirs: list[str]
     skipped_upload_dirs: list[str]
+
+
+class VisualMeasurementsSaveRequest(BaseModel):
+    sheet_id: str
+    source_page_index: int | None = None
+    measurements: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TradeCatalogItem(BaseModel):
@@ -1374,6 +1382,73 @@ def get_job_visual_review_page(
         tenant_id=resolved_tenant_id,
         limit=limit,
     )
+
+
+@app.get("/v1/jobs/{job_id}/visual-measurements")
+def get_job_visual_measurements(
+    job_id: str,
+    sheet_id: str,
+    source_page_index: int | None = None,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    record = _get_job_store().get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not isinstance(record.result, dict):
+        raise HTTPException(status_code=409, detail="Job does not have a completed result.")
+    measurements = list_visual_measurements(
+        result=record.result,
+        sheet_id=sheet_id,
+        source_page_index=source_page_index,
+    )
+    return {
+        "job_id": job_id,
+        "sheet_id": sheet_id,
+        "source_page_index": source_page_index,
+        "measurement_count": len(measurements),
+        "measurements": measurements,
+    }
+
+
+@app.put("/v1/jobs/{job_id}/visual-measurements")
+def save_job_visual_measurements(
+    job_id: str,
+    payload: VisualMeasurementsSaveRequest,
+    request: Request = None,
+) -> dict[str, Any]:
+    tenant_id = _tenant_id_for_request(request)
+    store = _get_job_store()
+    record = store.get_job(job_id, tenant_id=tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not isinstance(record.result, dict):
+        raise HTTPException(status_code=409, detail="Job does not have a completed result.")
+    try:
+        updated_result, save_payload = save_visual_measurements_to_result(
+            result=record.result,
+            sheet_id=payload.sheet_id,
+            source_page_index=payload.source_page_index,
+            measurements=payload.measurements,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    now = datetime.now(timezone.utc).isoformat()
+    store.update_job(
+        job_id,
+        status=record.status,
+        updated_at=now,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        result=updated_result,
+        error=record.error,
+        tenant_id=tenant_id,
+    )
+    return {
+        "job_id": job_id,
+        **save_payload,
+    }
 
 
 @app.get("/v1/jobs/{job_id}/scale-calibration/preview")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from html import escape
+import json
 from typing import Any
 
 from ai_estimator.extractors.takeoff import compute_quantity_takeoff
@@ -10,6 +11,7 @@ from ai_estimator.extractors.takeoff import compute_quantity_takeoff
 DEFAULT_SVG_WIDTH = 1000.0
 DEFAULT_SVG_HEIGHT = 750.0
 MAX_SVG_EVIDENCE_ITEMS = 2000
+MAX_VISUAL_MEASUREMENTS = 500
 
 
 def build_visual_evidence_svg(
@@ -129,6 +131,13 @@ def build_visual_measurement_page(
     selected_sheet = _extract_svg_attr(svg, "data-sheet-id") or str(sheet_id or "").strip()
     selected_page = _extract_svg_attr(svg, "data-source-page-index")
     tenant_value = str(tenant_id or "").strip()
+    selected_page_index = _parse_positive_int(selected_page)
+    saved_measurements = list_visual_measurements(
+        result=result,
+        sheet_id=selected_sheet,
+        source_page_index=selected_page_index,
+    )
+    saved_measurements_json = _script_json(saved_measurements)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -371,6 +380,7 @@ def build_visual_measurement_page(
           <button type="button" id="resetBtn">Reset Selected</button>
           <button type="button" class="danger" id="deleteMeasurementBtn">Delete Selected</button>
         </div>
+        <button type="button" id="saveMeasurementsBtn">Save Measurements</button>
         <button type="button" class="primary" id="previewBtn">Preview Scale From Selected</button>
         <button type="button" class="apply" id="applyBtn">Apply Selected Scale to Job Result</button>
       </div>
@@ -392,13 +402,17 @@ def build_visual_measurement_page(
     const apiKeyInput = document.getElementById("apiKey");
     const measurementList = document.getElementById("measurementList");
     const sheetId = document.getElementById("sheetId").textContent.trim();
+    const sourcePageIndex = Number(document.getElementById("pageIndex").textContent.trim()) || null;
     const jobId = document.getElementById("jobId").textContent.trim();
+    const savedMeasurements = {saved_measurements_json};
     let measurements = [];
     let activeMeasurementId = null;
     let nextMeasurementNumber = 1;
     let overlayGroup = null;
     let draggingEndpoint = null;
     let suppressNextClick = false;
+    let saveReady = false;
+    let saveTimer = null;
     svg.style.touchAction = "none";
 
     function setStatus(value) {{
@@ -459,6 +473,42 @@ def build_visual_measurement_page(
       activeMeasurementId = measurement.id;
       renderAll();
       return measurement;
+    }}
+
+    function hydrateSavedMeasurements() {{
+      measurements = [];
+      let maxNumber = 0;
+      for (const raw of Array.isArray(savedMeasurements) ? savedMeasurements : []) {{
+        const measurement = {{
+          id: String(raw.id || `measurement-${{Date.now()}}-${{measurements.length + 1}}`),
+          label: String(raw.label || `M${{measurements.length + 1}}`),
+          a: pointFromStored(raw.a),
+          b: pointFromStored(raw.b),
+          manualPdfUnits: raw.measured_pdf_units ? String(raw.measured_pdf_units) : "",
+          knownLengthFt: raw.known_length_ft ? String(raw.known_length_ft) : "",
+        }};
+        const numberMatch = measurement.label.match(/^M(\d+)$/i);
+        if (numberMatch) maxNumber = Math.max(maxNumber, Number(numberMatch[1]));
+        measurements.push(measurement);
+      }}
+      nextMeasurementNumber = Math.max(maxNumber + 1, measurements.length + 1, 1);
+      activeMeasurementId = measurements.length ? measurements[measurements.length - 1].id : null;
+      if (!measurements.length) createMeasurement();
+      renderAll();
+      saveReady = true;
+      setStatus(
+        measurements.some((m) => m.a || m.b)
+          ? `${{measurements.length}} saved measurement(s) loaded. Add, edit, drag, or save changes.`
+          : "Ready. Click two points on the drawing."
+      );
+    }}
+
+    function pointFromStored(value) {{
+      if (!value || typeof value !== "object") return null;
+      const x = Number(value.x);
+      const y = Number(value.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {{ x, y }};
     }}
 
     function syncActiveFromInputs() {{
@@ -586,6 +636,7 @@ def build_visual_measurement_page(
       active[endpoint] = point;
       active.manualPdfUnits = "";
       renderAll();
+      scheduleSave();
       if (active.a && active.b) {{
         setStatus(`${{active.label}} measured ${{distance(active.a, active.b).toFixed(4)}} PDF units. Enter the real feet, then preview or apply scale.`);
       }} else {{
@@ -602,6 +653,7 @@ def build_visual_measurement_page(
       let active = activeMeasurement();
       if (!active || (active.a && active.b)) {{
         active = createMeasurement(point);
+        scheduleSave();
         setStatus(`${{active.label}} point A set. Click point B.`);
         return;
       }}
@@ -638,6 +690,7 @@ def build_visual_measurement_page(
       if (moved) {{
         suppressNextClick = true;
         window.setTimeout(() => {{ suppressNextClick = false; }}, 0);
+        scheduleSave();
       }}
       if (active && active.a && active.b) {{
         setStatus(`${{active.label}} adjusted to ${{distance(active.a, active.b).toFixed(4)}} PDF units.`);
@@ -651,6 +704,7 @@ def build_visual_measurement_page(
       active.b = null;
       active.manualPdfUnits = "";
       renderAll();
+      scheduleSave();
       setStatus(`${{active.label}} reset. Click point A and point B again.`);
     }}
 
@@ -661,6 +715,7 @@ def build_visual_measurement_page(
       activeMeasurementId = measurements.length ? measurements[measurements.length - 1].id : null;
       if (!measurements.length) createMeasurement();
       renderAll();
+      scheduleSave();
       setStatus("Selected measurement deleted.");
     }}
 
@@ -669,6 +724,7 @@ def build_visual_measurement_page(
       activeMeasurementId = null;
       nextMeasurementNumber = 1;
       createMeasurement();
+      scheduleSave();
       setStatus("All measurements cleared. Click point A and point B on the drawing.");
     }}
 
@@ -679,12 +735,77 @@ def build_visual_measurement_page(
       const active = activeMeasurement();
       if (active) active.knownLengthFt = knownInput.value.trim();
       renderMeasurementList();
+      scheduleSave();
     }});
     measuredInput.addEventListener("input", () => {{
       const active = activeMeasurement();
       if (active) active.manualPdfUnits = measuredInput.value.trim();
       renderMeasurementList();
+      scheduleSave();
     }});
+
+    function measurementForStorage(measurement) {{
+      const measured = measurementPdfUnits(measurement);
+      const known = Number(measurement.knownLengthFt);
+      const row = {{
+        id: measurement.id,
+        label: measurement.label,
+        sheet_id: sheetId,
+        source_page_index: sourcePageIndex,
+        a: measurement.a,
+        b: measurement.b,
+      }};
+      if (Number.isFinite(measured) && measured > 0) row.measured_pdf_units = Number(measured.toFixed(6));
+      if (Number.isFinite(known) && known > 0) row.known_length_ft = Number(known.toFixed(6));
+      return row;
+    }}
+
+    function storableMeasurements() {{
+      syncActiveFromInputs();
+      return measurements
+        .filter((m) => m.a || m.b || m.manualPdfUnits || m.knownLengthFt)
+        .map(measurementForStorage);
+    }}
+
+    function scheduleSave() {{
+      if (!saveReady) return;
+      window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => {{
+        saveMeasurements({{ silent: true }}).catch((err) => {{
+          setStatus(`Auto-save failed:\n${{err.message}}`);
+        }});
+      }}, 750);
+    }}
+
+    async function saveMeasurements(options = {{}}) {{
+      const payload = {{
+        sheet_id: sheetId,
+        source_page_index: sourcePageIndex,
+        measurements: storableMeasurements(),
+      }};
+      const response = await fetch(`/v1/jobs/${{encodeURIComponent(jobId)}}/visual-measurements`, {{
+        method: "PUT",
+        headers: {{
+          ...headers(),
+          "content-type": "application/json",
+        }},
+        body: JSON.stringify(payload),
+      }});
+      const text = await response.text();
+      let body;
+      try {{
+        body = JSON.parse(text);
+      }} catch (_err) {{
+        throw new Error(text || "Server did not return JSON.");
+      }}
+      if (!response.ok) {{
+        throw new Error(body.detail || text || `HTTP ${{response.status}}`);
+      }}
+      if (!options.silent) {{
+        setStatus(`Saved ${{body.measurement_count}} measurement(s) for ${{sheetId}}.`);
+      }}
+      return body;
+    }}
 
     function requireSelectedMeasurement() {{
       syncActiveFromInputs();
@@ -736,6 +857,14 @@ def build_visual_measurement_page(
     document.getElementById("clearAllBtn").addEventListener("click", clearAllMeasurements);
     document.getElementById("resetBtn").addEventListener("click", resetSelected);
     document.getElementById("deleteMeasurementBtn").addEventListener("click", deleteSelected);
+    document.getElementById("saveMeasurementsBtn").addEventListener("click", async () => {{
+      try {{
+        setStatus("Saving measurements...");
+        await saveMeasurements();
+      }} catch (err) {{
+        setStatus(`Save failed:\n${{err.message}}`);
+      }}
+    }});
     document.getElementById("previewBtn").addEventListener("click", async () => {{
       try {{
         setStatus("Previewing scale...");
@@ -768,11 +897,111 @@ def build_visual_measurement_page(
         setStatus(`Apply failed:\n${{err.message}}`);
       }}
     }});
-    createMeasurement();
+    hydrateSavedMeasurements();
     viewer.scrollTo({{ left: 0, top: 0, behavior: "instant" }});
   </script>
 </body>
 </html>"""
+
+
+def list_visual_measurements(
+    *,
+    result: dict[str, Any] | None,
+    sheet_id: str,
+    source_page_index: int | None = None,
+) -> list[dict[str, Any]]:
+    """Return saved visual measurements for a sheet/page."""
+    normalized_sheet_id = str(sheet_id or "").strip()
+    if not normalized_sheet_id:
+        return []
+    annotations = _extract_annotations(result or {})
+    rows = _dict_rows(annotations.get("manual_visual_measurements", []))
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        normalized = _normalize_visual_measurement(
+            row,
+            default_sheet_id=normalized_sheet_id,
+            default_source_page_index=source_page_index,
+        )
+        if normalized is None:
+            continue
+        if str(normalized.get("sheet_id", "")).strip() != normalized_sheet_id:
+            continue
+        if (
+            source_page_index is not None
+            and _parse_positive_int(normalized.get("source_page_index")) != source_page_index
+        ):
+            continue
+        selected.append(normalized)
+    return selected[:MAX_VISUAL_MEASUREMENTS]
+
+
+def save_visual_measurements_to_result(
+    *,
+    result: dict[str, Any] | None,
+    sheet_id: str,
+    source_page_index: int | None,
+    measurements: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a result copy with visual sheet measurements persisted in annotations."""
+    updated_result: dict[str, Any] = deepcopy(result or {})
+    if not updated_result:
+        raise ValueError("Completed job result is required before saving visual measurements.")
+    normalized_sheet_id = str(sheet_id or "").strip()
+    if not normalized_sheet_id:
+        raise ValueError("sheet_id is required.")
+
+    geometry = updated_result.get("geometry")
+    if not isinstance(geometry, dict):
+        geometry = {}
+        updated_result["geometry"] = geometry
+    annotations = geometry.get("annotations")
+    if not isinstance(annotations, dict):
+        annotations = {}
+        geometry["annotations"] = annotations
+
+    existing = _dict_rows(annotations.get("manual_visual_measurements", []))
+    retained = [
+        row
+        for row in existing
+        if not _same_visual_measurement_scope(
+            row,
+            sheet_id=normalized_sheet_id,
+            source_page_index=source_page_index,
+        )
+    ]
+    normalized_rows: list[dict[str, Any]] = []
+    for row in measurements[:MAX_VISUAL_MEASUREMENTS]:
+        normalized = _normalize_visual_measurement(
+            row,
+            default_sheet_id=normalized_sheet_id,
+            default_source_page_index=source_page_index,
+        )
+        if normalized is None:
+            continue
+        if not (normalized.get("a") or normalized.get("b")):
+            continue
+        normalized_rows.append(normalized)
+
+    annotations["manual_visual_measurements"] = retained + normalized_rows
+    quantity_takeoff, takeoff_issues = compute_quantity_takeoff(
+        geometry,
+        scale_analysis=updated_result.get("scale_analysis")
+        if isinstance(updated_result.get("scale_analysis"), dict)
+        else None,
+    )
+    updated_result["quantity_takeoff"] = quantity_takeoff
+    _merge_result_issues(updated_result, takeoff_issues)
+
+    payload = {
+        "sheet_id": normalized_sheet_id,
+        "source_page_index": source_page_index,
+        "measurement_count": len(normalized_rows),
+        "measurements": normalized_rows,
+        "quantity_takeoff": quantity_takeoff,
+        "note": "Visual measurements were saved to geometry.annotations.manual_visual_measurements.",
+    }
+    return updated_result, payload
 
 
 def build_scale_calibration_preview(
@@ -975,10 +1204,108 @@ def _extract_svg_attr(svg: str, attr_name: str) -> str:
     return svg[start:end]
 
 
+def _script_json(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
+
+
 def _truncate_text(value: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return value[: max(max_chars - 3, 0)].rstrip() + "..."
+
+
+def _normalize_visual_measurement(
+    row: dict[str, Any],
+    *,
+    default_sheet_id: str,
+    default_source_page_index: int | None,
+) -> dict[str, Any] | None:
+    sheet_id = str(row.get("sheet_id", default_sheet_id) or default_sheet_id).strip()
+    if not sheet_id:
+        return None
+    source_page_index = _parse_positive_int(
+        row.get("source_page_index", default_source_page_index)
+    )
+    measurement_id = _safe_short_text(row.get("id"), fallback=f"measurement-{len(str(row))}")
+    label = _safe_short_text(row.get("label"), fallback="M")
+    point_a = _point_dict(row.get("a"))
+    point_b = _point_dict(row.get("b"))
+
+    measured = _positive_float(
+        row.get("measured_pdf_units", row.get("manualPdfUnits", row.get("measuredPdfUnits")))
+    )
+    if measured is None and point_a and point_b:
+        measured = _distance_points(point_a, point_b)
+    known = _positive_float(row.get("known_length_ft", row.get("knownLengthFt")))
+    trade = str(row.get("trade", "manual_review")).strip() or "manual_review"
+    measurement_type = str(row.get("measurement_type", "visual_length")).strip() or "visual_length"
+
+    normalized: dict[str, Any] = {
+        "id": measurement_id,
+        "label": label,
+        "sheet_id": sheet_id,
+        "source_page_index": source_page_index,
+        "trade": trade,
+        "measurement_type": measurement_type,
+    }
+    if point_a is not None:
+        normalized["a"] = point_a
+    if point_b is not None:
+        normalized["b"] = point_b
+    if measured is not None:
+        normalized["measured_pdf_units"] = round(measured, 6)
+    if known is not None:
+        normalized["known_length_ft"] = round(known, 6)
+    return normalized
+
+
+def _same_visual_measurement_scope(
+    row: dict[str, Any],
+    *,
+    sheet_id: str,
+    source_page_index: int | None,
+) -> bool:
+    if str(row.get("sheet_id", "")).strip() != sheet_id:
+        return False
+    if source_page_index is None:
+        return True
+    return _parse_positive_int(row.get("source_page_index")) == source_page_index
+
+
+def _point_dict(value: Any) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("x") in (None, "") or value.get("y") in (None, ""):
+        return None
+    x = _to_float(value.get("x"))
+    y = _to_float(value.get("y"))
+    return {"x": round(x, 6), "y": round(y, 6)}
+
+
+def _distance_points(a: dict[str, float], b: dict[str, float]) -> float:
+    dx = float(b["x"]) - float(a["x"])
+    dy = float(b["y"]) - float(a["y"])
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _safe_short_text(value: Any, *, fallback: str, max_chars: int = 80) -> str:
+    token = str(value or "").strip()
+    if not token:
+        token = fallback
+    return token[:max_chars]
+
+
+def _merge_result_issues(updated_result: dict[str, Any], new_issues: list[str]) -> None:
+    issues = updated_result.get("issues_or_ambiguities", [])
+    if not isinstance(issues, list):
+        issues = []
+    existing_strings = {str(item) for item in issues}
+    merged = list(issues)
+    for issue in new_issues:
+        if issue not in existing_strings:
+            merged.append(issue)
+            existing_strings.add(issue)
+    updated_result["issues_or_ambiguities"] = merged
 
 
 def _dict_rows(value: Any) -> list[dict[str, Any]]:
