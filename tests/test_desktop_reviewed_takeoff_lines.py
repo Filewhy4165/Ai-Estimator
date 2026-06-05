@@ -1,4 +1,5 @@
 from desktop.app import (
+    DesktopEstimatorApp,
     filter_reviewed_takeoff_line_items,
     format_reviewed_takeoff_line_item_totals,
     format_reviewed_takeoff_lines_payload,
@@ -369,3 +370,20 @@ def test_reviewed_takeoff_line_item_rollup_csv_rows_group_source_items() -> None
             "source_sheets": "M201, M202",
         }
     ]
+
+
+def test_reviewed_takeoff_controls_have_beginner_help_specs() -> None:
+    app = object.__new__(DesktopEstimatorApp)
+    specs = app._control_specs_for_ui()
+
+    for key in [
+        "show_reviewed_takeoff_lines",
+        "open_selected_line_source",
+        "save_filtered_reviewed_csv",
+        "save_rollup_csv",
+    ]:
+        spec = specs[key]
+        assert spec["pro_label"]
+        assert spec["beginner_label"]
+        assert spec["pro_tip"]
+        assert spec["beginner_tip"]
