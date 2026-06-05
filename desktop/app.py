@@ -204,6 +204,25 @@ def format_reviewed_takeoff_lines_payload(
     return "\n".join(lines)
 
 
+def reviewed_takeoff_line_item_values(raw_item: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+    trade = str(raw_item.get("trade", "")).strip() or "unknown work type"
+    quantity_name = str(raw_item.get("quantity_name", "")).strip() or "line item"
+    quantity = raw_item.get("quantity", "")
+    if isinstance(quantity, (int, float)):
+        quantity_text = f"{quantity:g}"
+    else:
+        quantity_text = str(quantity).strip() or "-"
+    unit = str(raw_item.get("unit", "")).strip() or "-"
+    description = str(raw_item.get("description", "")).strip() or "-"
+    cost_code = str(raw_item.get("cost_code", "")).strip() or "-"
+    sheet = str(raw_item.get("sheet_id", "")).strip()
+    page = str(raw_item.get("source_page_index", "") or "").strip()
+    source = sheet or "sheet unknown"
+    if page:
+        source = f"{source} page {page}"
+    return trade, quantity_name, quantity_text, unit, description, cost_code, source
+
+
 class HoverTooltip:
     def __init__(
         self,
@@ -392,6 +411,9 @@ class DesktopEstimatorApp:
         self.header_job_text = StringVar(value="Job: none")
         self.header_files_text = StringVar(value="Files: none")
         self.summary_banner_text = StringVar(value="Estimator summary will appear after a completed run.")
+        self.reviewed_line_items_banner_text = StringVar(
+            value="Reviewed takeoff line items will appear after visual measurement saves."
+        )
         self.sheet_banner_text = StringVar(value="Sheet navigator will appear after a completed run.")
         self.trade_selection_hint_text = StringVar(value="All work types will be analyzed.")
         self.trade_catalog: list[str] = []
@@ -475,6 +497,7 @@ class DesktopEstimatorApp:
         self.output_x_scroll: ttk.Scrollbar | None = None
         self.results_notebook: ttk.Notebook | None = None
         self.summary_result_tree: ttk.Treeview | None = None
+        self.reviewed_line_items_tree: ttk.Treeview | None = None
         self.sheet_navigator_tree: ttk.Treeview | None = None
         self.latest_payload: dict[str, object] = {}
         self.last_result_payload: dict[str, object] = {}
@@ -2018,6 +2041,7 @@ class DesktopEstimatorApp:
 
         summary_tab.columnconfigure(0, weight=1)
         summary_tab.rowconfigure(2, weight=1)
+        summary_tab.rowconfigure(4, weight=1)
         ttk.Label(summary_tab, textvariable=self.summary_banner_text, style="FormLabel.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 6)
         )
@@ -2074,6 +2098,48 @@ class DesktopEstimatorApp:
         self.summary_result_tree.configure(
             yscrollcommand=summary_y_scroll.set,
             xscrollcommand=summary_x_scroll.set,
+        )
+
+        ttk.Label(summary_tab, textvariable=self.reviewed_line_items_banner_text, style="FormLabel.TLabel").grid(
+            row=3, column=0, sticky="w", pady=(10, 6)
+        )
+        line_items_table_frame = ttk.Frame(summary_tab)
+        line_items_table_frame.grid(row=4, column=0, sticky="nsew")
+        line_items_table_frame.columnconfigure(0, weight=1)
+        line_items_table_frame.rowconfigure(0, weight=1)
+        self.reviewed_line_items_tree = ttk.Treeview(
+            line_items_table_frame,
+            columns=("trade", "item", "quantity", "unit", "description", "cost_code", "source"),
+            show="headings",
+            height=8,
+        )
+        self.reviewed_line_items_tree.grid(row=0, column=0, sticky="nsew")
+        for key, title, width, anchor in [
+            ("trade", "Work Type", 130, "w"),
+            ("item", "Measured Item", 150, "w"),
+            ("quantity", "Qty", 90, "e"),
+            ("unit", "Unit", 70, "w"),
+            ("description", "Description", 260, "w"),
+            ("cost_code", "Cost Code", 110, "w"),
+            ("source", "Source", 160, "w"),
+        ]:
+            self.reviewed_line_items_tree.heading(key, text=title)
+            self.reviewed_line_items_tree.column(key, width=width, minwidth=70, stretch=True, anchor=anchor)
+        line_items_y_scroll = ttk.Scrollbar(
+            line_items_table_frame,
+            orient="vertical",
+            command=self.reviewed_line_items_tree.yview,
+        )
+        line_items_y_scroll.grid(row=0, column=1, sticky="ns")
+        line_items_x_scroll = ttk.Scrollbar(
+            line_items_table_frame,
+            orient="horizontal",
+            command=self.reviewed_line_items_tree.xview,
+        )
+        line_items_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.reviewed_line_items_tree.configure(
+            yscrollcommand=line_items_y_scroll.set,
+            xscrollcommand=line_items_x_scroll.set,
         )
 
         sheets_tab.columnconfigure(0, weight=1)
@@ -6836,6 +6902,31 @@ class DesktopEstimatorApp:
                 ),
             )
 
+    def _populate_reviewed_line_items_tree(self, items: object) -> None:
+        tree = self.reviewed_line_items_tree
+        self._clear_tree_rows(tree)
+        if tree is None:
+            return
+
+        if not isinstance(items, list) or not items:
+            self.reviewed_line_items_banner_text.set(
+                "No reviewed takeoff line items yet. Use Sheet Navigator > Measure Scale Visually to add field-reviewed measurements."
+            )
+            return
+
+        inserted = 0
+        for raw_item in items[:500]:
+            if not isinstance(raw_item, dict):
+                continue
+            tree.insert("", END, values=reviewed_takeoff_line_item_values(raw_item))
+            inserted += 1
+
+        overflow_count = len(items) - 500
+        overflow_text = f" | {overflow_count} more not shown" if overflow_count > 0 else ""
+        self.reviewed_line_items_banner_text.set(
+            f"Reviewed takeoff line items: {inserted} shown{overflow_text}. These are measurements saved for takeoff."
+        )
+
     def _populate_sheet_navigator(self, payload: dict, result: dict) -> None:
         tree = self.sheet_navigator_tree
         self._clear_tree_rows(tree)
@@ -6909,6 +7000,9 @@ class DesktopEstimatorApp:
             self.latest_payload = payload
             self.last_result_payload = result
             self._populate_summary_tree(result)
+            quantity_takeoff = result.get("quantity_takeoff")
+            line_items = quantity_takeoff.get("line_items") if isinstance(quantity_takeoff, dict) else []
+            self._populate_reviewed_line_items_tree(line_items)
             self._populate_sheet_navigator(payload, result)
             return
         review_items = payload.get("items")
@@ -6916,8 +7010,10 @@ class DesktopEstimatorApp:
             self._populate_sheet_navigator({"review_queue": payload}, self.last_result_payload)
             return
         self._clear_tree_rows(self.summary_result_tree)
+        self._clear_tree_rows(self.reviewed_line_items_tree)
         self._clear_tree_rows(self.sheet_navigator_tree)
         self.summary_banner_text.set("No completed estimate result in this payload yet.")
+        self.reviewed_line_items_banner_text.set("No reviewed takeoff line items in this payload yet.")
         self.sheet_banner_text.set("No sheet metadata in this payload yet.")
 
     def _on_sheet_navigator_select(self, _event: object = None) -> None:
@@ -7928,6 +8024,9 @@ class DesktopEstimatorApp:
                     current_job_id=self.current_job_id.get().strip(),
                 )
             )
+            self._populate_reviewed_line_items_tree(payload.get("line_items", []))
+            if self.results_notebook is not None:
+                self.results_notebook.select(0)
             item_count = int(payload.get("item_count", 0) or 0)
             self.status_text.set(
                 f"Reviewed takeoff lines loaded for job {job_id}: {item_count} item(s)."
