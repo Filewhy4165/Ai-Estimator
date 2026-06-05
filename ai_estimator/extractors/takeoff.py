@@ -130,6 +130,58 @@ def compute_quantity_takeoff(
                         "manual_visual_measurements_known_total_ft"
                     ] = trade_values.get("known_total_ft", 0.0)
 
+    classified_visual = _compute_classified_visual_takeoff(geometry)
+    if classified_visual["count"] > 0:
+        counts["classified_visual_takeoff_item"] += int(classified_visual["count"])
+        linear["classified_visual_takeoff_count"] = classified_visual["count"]
+        if float(classified_visual.get("total_ft", 0.0) or 0.0) > 0:
+            linear["classified_visual_takeoff_total_ft"] = classified_visual["total_ft"]
+            linear["classified_visual_takeoff_by_trade_ft"] = classified_visual["by_trade_ft"]
+            linear["classified_visual_takeoff_by_item_ft"] = classified_visual["by_item_ft"]
+            linear["classified_visual_takeoff_by_sheet_ft"] = classified_visual["by_sheet_ft"]
+            if classified_visual["by_cost_code_ft"]:
+                linear["classified_visual_takeoff_by_cost_code_ft"] = classified_visual[
+                    "by_cost_code_ft"
+                ]
+        if float(classified_visual.get("unscaled_pdf_units", 0.0) or 0.0) > 0:
+            linear["classified_visual_takeoff_unscaled_pdf_units"] = classified_visual[
+                "unscaled_pdf_units"
+            ]
+            linear["classified_visual_takeoff_by_item_pdf_units"] = classified_visual[
+                "by_item_pdf_units"
+            ]
+        issues.append(
+            "Classified visual takeoff measurements were included from user review. "
+            "Verify trade, assembly, cost code, and scale before bid use."
+        )
+        if float(classified_visual.get("unscaled_pdf_units", 0.0) or 0.0) > 0:
+            issues.append(
+                "Some classified visual takeoff measurements do not have a known real length; "
+                "they remain in PDF units until the reviewer enters feet or applies sheet scale."
+            )
+        by_trade_classified = classified_visual["by_trade"]
+        if isinstance(by_trade_classified, dict):
+            for trade, trade_values in by_trade_classified.items():
+                if not isinstance(trade_values, dict):
+                    continue
+                by_trade[trade]["linear"]["classified_visual_takeoff_count"] = trade_values.get(
+                    "count", 0
+                )
+                if float(trade_values.get("total_ft", 0.0) or 0.0) > 0:
+                    by_trade[trade]["linear"]["classified_visual_takeoff_total_ft"] = (
+                        trade_values.get("total_ft", 0.0)
+                    )
+                    by_trade[trade]["linear"]["classified_visual_takeoff_by_item_ft"] = (
+                        trade_values.get("by_item_ft", {})
+                    )
+                if float(trade_values.get("unscaled_pdf_units", 0.0) or 0.0) > 0:
+                    by_trade[trade]["linear"][
+                        "classified_visual_takeoff_unscaled_pdf_units"
+                    ] = trade_values.get("unscaled_pdf_units", 0.0)
+                    by_trade[trade]["linear"]["classified_visual_takeoff_by_item_pdf_units"] = (
+                        trade_values.get("by_item_pdf_units", {})
+                    )
+
     if not linear:
         issues.append("Linear quantities are empty; no reliable lengths were extracted.")
     if not area:
@@ -342,6 +394,108 @@ def _compute_manual_visual_measurement_takeoff(geometry: dict[str, object]) -> d
     }
 
 
+def _compute_classified_visual_takeoff(geometry: dict[str, object]) -> dict[str, object]:
+    annotations = geometry.get("annotations", {})
+    if not isinstance(annotations, dict):
+        return _empty_classified_visual_takeoff()
+    measurements = annotations.get("manual_visual_measurements", [])
+    if not isinstance(measurements, list):
+        return _empty_classified_visual_takeoff()
+
+    count = 0
+    total_ft = 0.0
+    unscaled_pdf_units = 0.0
+    by_sheet_ft: dict[str, float] = defaultdict(float)
+    by_trade_ft: dict[str, float] = defaultdict(float)
+    by_item_ft: dict[str, float] = defaultdict(float)
+    by_item_pdf_units: dict[str, float] = defaultdict(float)
+    by_cost_code_ft: dict[str, float] = defaultdict(float)
+    by_trade: dict[str, dict[str, object]] = defaultdict(
+        lambda: {
+            "total_ft": 0.0,
+            "unscaled_pdf_units": 0.0,
+            "count": 0,
+            "by_item_ft": defaultdict(float),
+            "by_item_pdf_units": defaultdict(float),
+        }
+    )
+
+    for row in measurements:
+        if not isinstance(row, dict):
+            continue
+        if not _truthy(row.get("is_takeoff_item")):
+            continue
+        measured = _numeric(row.get("measured_pdf_units"))
+        if measured <= 0:
+            continue
+        count += 1
+        sheet_id = str(row.get("sheet_id", "unknown")).strip() or "unknown"
+        trade = str(row.get("trade", "manual_review")).strip() or "manual_review"
+        item_type = str(row.get("measurement_type", "linear_item")).strip() or "linear_item"
+        if item_type == "visual_length":
+            item_type = "linear_item"
+        known = _numeric(row.get("known_length_ft"))
+
+        by_trade[trade]["count"] = int(by_trade[trade]["count"]) + 1
+        if known > 0:
+            total_ft += known
+            by_sheet_ft[sheet_id] += known
+            by_trade_ft[trade] += known
+            by_item_ft[item_type] += known
+            by_trade[trade]["total_ft"] = float(by_trade[trade]["total_ft"]) + known
+            trade_by_item_ft = by_trade[trade]["by_item_ft"]
+            if isinstance(trade_by_item_ft, defaultdict):
+                trade_by_item_ft[item_type] += known
+            cost_code = str(row.get("cost_code") or row.get("assembly") or "").strip()
+            if cost_code:
+                by_cost_code_ft[cost_code] += known
+            continue
+
+        unscaled_pdf_units += measured
+        by_item_pdf_units[item_type] += measured
+        by_trade[trade]["unscaled_pdf_units"] = (
+            float(by_trade[trade]["unscaled_pdf_units"]) + measured
+        )
+        trade_by_item_pdf = by_trade[trade]["by_item_pdf_units"]
+        if isinstance(trade_by_item_pdf, defaultdict):
+            trade_by_item_pdf[item_type] += measured
+
+    return {
+        "count": count,
+        "total_ft": round(total_ft, 4),
+        "unscaled_pdf_units": round(unscaled_pdf_units, 4),
+        "by_sheet_ft": {key: round(value, 4) for key, value in sorted(by_sheet_ft.items())},
+        "by_trade_ft": {key: round(value, 4) for key, value in sorted(by_trade_ft.items())},
+        "by_item_ft": {key: round(value, 4) for key, value in sorted(by_item_ft.items())},
+        "by_item_pdf_units": {
+            key: round(value, 4) for key, value in sorted(by_item_pdf_units.items())
+        },
+        "by_cost_code_ft": {
+            key: round(value, 4) for key, value in sorted(by_cost_code_ft.items())
+        },
+        "by_trade": {
+            key: {
+                "total_ft": round(float(value.get("total_ft", 0.0)), 4),
+                "unscaled_pdf_units": round(float(value.get("unscaled_pdf_units", 0.0)), 4),
+                "count": int(value.get("count", 0)),
+                "by_item_ft": {
+                    item_key: round(item_value, 4)
+                    for item_key, item_value in sorted(
+                        dict(value.get("by_item_ft", {})).items()
+                    )
+                },
+                "by_item_pdf_units": {
+                    item_key: round(item_value, 4)
+                    for item_key, item_value in sorted(
+                        dict(value.get("by_item_pdf_units", {})).items()
+                    )
+                },
+            }
+            for key, value in sorted(by_trade.items())
+        },
+    }
+
+
 def _empty_manual_visual_takeoff() -> dict[str, object]:
     return {
         "count": 0,
@@ -349,6 +503,20 @@ def _empty_manual_visual_takeoff() -> dict[str, object]:
         "known_total_ft": 0.0,
         "by_sheet_pdf_units": {},
         "by_sheet_known_ft": {},
+        "by_trade": {},
+    }
+
+
+def _empty_classified_visual_takeoff() -> dict[str, object]:
+    return {
+        "count": 0,
+        "total_ft": 0.0,
+        "unscaled_pdf_units": 0.0,
+        "by_sheet_ft": {},
+        "by_trade_ft": {},
+        "by_item_ft": {},
+        "by_item_pdf_units": {},
+        "by_cost_code_ft": {},
         "by_trade": {},
     }
 
@@ -428,3 +596,13 @@ def _numeric(value: object) -> float:
         except ValueError:
             return 0.0
     return 0.0
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False

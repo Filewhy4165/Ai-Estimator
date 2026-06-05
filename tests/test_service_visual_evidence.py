@@ -142,6 +142,11 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
                     "a": {"x": 0, "y": 0},
                     "b": {"x": 30, "y": 40},
                     "known_length_ft": 10,
+                    "trade": "electrical",
+                    "measurement_type": "conduit",
+                    "description": "EMT conduit route",
+                    "cost_code": "26 05 33",
+                    "is_takeoff_item": True,
                 }
             ],
         ),
@@ -151,6 +156,10 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert save_payload["quantity_takeoff"]["linear"][
         "manual_visual_measurements_total_pdf_units"
     ] == 50.0
+    assert save_payload["quantity_takeoff"]["linear"]["classified_visual_takeoff_total_ft"] == 10.0
+    assert save_payload["quantity_takeoff"]["linear"]["classified_visual_takeoff_by_item_ft"] == {
+        "conduit": 10.0
+    }
 
     measurement_payload = service_app.get_job_visual_measurements(
         "job-a",
@@ -160,6 +169,8 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     )
     assert measurement_payload["measurement_count"] == 1
     assert measurement_payload["measurements"][0]["id"] == "m1"
+    assert measurement_payload["measurements"][0]["is_takeoff_item"] is True
+    assert measurement_payload["measurements"][0]["trade"] == "electrical"
 
     page_after_save = service_app.get_job_visual_review_page(
         "job-a",
