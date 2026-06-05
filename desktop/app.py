@@ -356,6 +356,87 @@ def reviewed_takeoff_line_item_csv_rows(items: object) -> list[dict[str, str]]:
     ]
 
 
+def reviewed_takeoff_line_item_rollups(items: object) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+
+    rollups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            continue
+        trade = str(raw_item.get("trade", "")).strip() or "unknown work type"
+        name = str(raw_item.get("quantity_name", "")).strip() or "line item"
+        unit = str(raw_item.get("unit", "")).strip() or "unit"
+        cost_code = str(raw_item.get("cost_code", "")).strip() or "-"
+        key = (trade, name, unit, cost_code)
+
+        entry = rollups.setdefault(
+            key,
+            {
+                "trade": trade,
+                "quantity_name": name,
+                "unit": unit,
+                "cost_code": cost_code,
+                "quantity": 0.0,
+                "line_count": 0,
+                "source_sheets": set(),
+            },
+        )
+        entry["line_count"] += 1
+
+        raw_quantity = raw_item.get("quantity")
+        if isinstance(raw_quantity, (int, float)):
+            entry["quantity"] += float(raw_quantity)
+        elif isinstance(raw_quantity, str):
+            try:
+                entry["quantity"] += float(raw_quantity.strip())
+            except ValueError:
+                pass
+
+        sheet = str(raw_item.get("sheet_id", "")).strip()
+        if sheet:
+            entry["source_sheets"].add(sheet)
+
+    rows: list[dict[str, Any]] = []
+    for entry in rollups.values():
+        source_sheets = entry.get("source_sheets", set())
+        source_display = ", ".join(sorted(source_sheets, key=str.casefold)) if isinstance(source_sheets, set) else ""
+        rows.append(
+            {
+                **entry,
+                "quantity": round(float(entry.get("quantity", 0.0)), 6),
+                "source_sheets": source_display or "-",
+            }
+        )
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("trade", "")).casefold(),
+            str(row.get("quantity_name", "")).casefold(),
+            str(row.get("unit", "")).casefold(),
+            str(row.get("cost_code", "")).casefold(),
+        ),
+    )
+
+
+def reviewed_takeoff_line_item_rollup_values(row: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+    quantity = row.get("quantity", 0)
+    if isinstance(quantity, (int, float)):
+        quantity_text = f"{quantity:g}"
+    else:
+        quantity_text = str(quantity).strip() or "0"
+    return (
+        str(row.get("trade", "")).strip() or "unknown work type",
+        str(row.get("quantity_name", "")).strip() or "line item",
+        quantity_text,
+        str(row.get("unit", "")).strip() or "unit",
+        str(row.get("line_count", "")).strip() or "0",
+        str(row.get("cost_code", "")).strip() or "-",
+        str(row.get("source_sheets", "")).strip() or "-",
+    )
+
+
 class HoverTooltip:
     def __init__(
         self,
@@ -547,6 +628,9 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_banner_text = StringVar(
             value="Reviewed takeoff line items will appear after visual measurement saves."
         )
+        self.reviewed_rollup_banner_text = StringVar(
+            value="Grouped reviewed takeoff totals will appear after visual measurement saves."
+        )
         self.reviewed_line_items_filter_trade = StringVar(value=_REVIEWED_LINE_ITEMS_ALL_FILTER)
         self.reviewed_line_items_filter_item = StringVar(value=_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER)
         self.sheet_banner_text = StringVar(value="Sheet navigator will appear after a completed run.")
@@ -633,6 +717,7 @@ class DesktopEstimatorApp:
         self.results_notebook: ttk.Notebook | None = None
         self.summary_result_tree: ttk.Treeview | None = None
         self.reviewed_line_items_tree: ttk.Treeview | None = None
+        self.reviewed_line_items_rollup_tree: ttk.Treeview | None = None
         self.reviewed_line_items_by_tree_id: dict[str, dict[str, Any]] = {}
         self.reviewed_line_items_all: list[dict[str, Any]] = []
         self.reviewed_line_items_filter_combo: ttk.Combobox | None = None
@@ -2172,9 +2257,11 @@ class DesktopEstimatorApp:
         self.results_notebook = ttk.Notebook(output_frame)
         self.results_notebook.grid(row=0, column=0, sticky="nsew")
         summary_tab = ttk.Frame(self.results_notebook, padding=(8, 8, 8, 8))
+        rollup_tab = ttk.Frame(self.results_notebook, padding=(8, 8, 8, 8))
         sheets_tab = ttk.Frame(self.results_notebook, padding=(8, 8, 8, 8))
         json_tab = ttk.Frame(self.results_notebook)
         self.results_notebook.add(summary_tab, text="Estimator Summary")
+        self.results_notebook.add(rollup_tab, text="Takeoff Rollup")
         self.results_notebook.add(sheets_tab, text="Sheet Navigator")
         self.results_notebook.add(json_tab, text="Raw JSON")
 
@@ -2331,6 +2418,50 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_tree.configure(
             yscrollcommand=line_items_y_scroll.set,
             xscrollcommand=line_items_x_scroll.set,
+        )
+
+        rollup_tab.columnconfigure(0, weight=1)
+        rollup_tab.rowconfigure(1, weight=1)
+        ttk.Label(rollup_tab, textvariable=self.reviewed_rollup_banner_text, style="FormLabel.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        rollup_table_frame = ttk.Frame(rollup_tab)
+        rollup_table_frame.grid(row=1, column=0, sticky="nsew")
+        rollup_table_frame.columnconfigure(0, weight=1)
+        rollup_table_frame.rowconfigure(0, weight=1)
+        self.reviewed_line_items_rollup_tree = ttk.Treeview(
+            rollup_table_frame,
+            columns=("trade", "item", "quantity", "unit", "line_count", "cost_code", "source_sheets"),
+            show="headings",
+            height=14,
+        )
+        self.reviewed_line_items_rollup_tree.grid(row=0, column=0, sticky="nsew")
+        for key, title, width, anchor in [
+            ("trade", "Work Type", 150, "w"),
+            ("item", "Measured Item", 180, "w"),
+            ("quantity", "Total Qty", 100, "e"),
+            ("unit", "Unit", 80, "w"),
+            ("line_count", "Measurements", 110, "e"),
+            ("cost_code", "Cost Code", 120, "w"),
+            ("source_sheets", "Source Sheets", 260, "w"),
+        ]:
+            self.reviewed_line_items_rollup_tree.heading(key, text=title)
+            self.reviewed_line_items_rollup_tree.column(key, width=width, minwidth=80, stretch=True, anchor=anchor)
+        rollup_y_scroll = ttk.Scrollbar(
+            rollup_table_frame,
+            orient="vertical",
+            command=self.reviewed_line_items_rollup_tree.yview,
+        )
+        rollup_y_scroll.grid(row=0, column=1, sticky="ns")
+        rollup_x_scroll = ttk.Scrollbar(
+            rollup_table_frame,
+            orient="horizontal",
+            command=self.reviewed_line_items_rollup_tree.xview,
+        )
+        rollup_x_scroll.grid(row=1, column=0, sticky="ew")
+        self.reviewed_line_items_rollup_tree.configure(
+            yscrollcommand=rollup_y_scroll.set,
+            xscrollcommand=rollup_x_scroll.set,
         )
 
         sheets_tab.columnconfigure(0, weight=1)
@@ -7129,6 +7260,7 @@ class DesktopEstimatorApp:
             self.reviewed_line_items_banner_text.set(
                 "No reviewed takeoff line items yet. Use Sheet Navigator > Measure Scale Visually to add field-reviewed measurements."
             )
+            self._populate_reviewed_line_items_rollup_tree([], "", "")
             return
 
         selected_trade = self.reviewed_line_items_filter_trade.get().strip()
@@ -7145,6 +7277,7 @@ class DesktopEstimatorApp:
             self.reviewed_line_items_banner_text.set(
                 f"No reviewed takeoff line items match work type '{selected_trade}'{item_suffix}."
             )
+            self._populate_reviewed_line_items_rollup_tree([], selected_trade, selected_item)
             return
 
         inserted = 0
@@ -7167,6 +7300,41 @@ class DesktopEstimatorApp:
         )
         self.reviewed_line_items_banner_text.set(
             f"Reviewed takeoff line items: {inserted} shown of {len(self.reviewed_line_items_all)} total{filter_text} | totals: {totals_text}{overflow_text}."
+        )
+        self._populate_reviewed_line_items_rollup_tree(filtered_items, selected_trade, selected_item)
+
+    def _populate_reviewed_line_items_rollup_tree(
+        self,
+        items: list[dict[str, Any]],
+        selected_trade: str,
+        selected_item: str,
+    ) -> None:
+        tree = self.reviewed_line_items_rollup_tree
+        self._clear_tree_rows(tree)
+        if tree is None:
+            return
+
+        rollups = reviewed_takeoff_line_item_rollups(items)
+        if not rollups:
+            self.reviewed_rollup_banner_text.set(
+                "No grouped reviewed takeoff totals match the current filters."
+            )
+            return
+
+        for row in rollups:
+            tree.insert("", END, values=reviewed_takeoff_line_item_rollup_values(row))
+
+        totals_text = format_reviewed_takeoff_line_item_totals(
+            reviewed_takeoff_line_item_totals_by_unit(items)
+        )
+        filter_parts: list[str] = []
+        if selected_trade and selected_trade != _REVIEWED_LINE_ITEMS_ALL_FILTER:
+            filter_parts.append(selected_trade)
+        if selected_item and selected_item != _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER:
+            filter_parts.append(selected_item)
+        filter_text = f" Filter: {' / '.join(filter_parts)}." if filter_parts else ""
+        self.reviewed_rollup_banner_text.set(
+            f"Grouped reviewed takeoff totals: {len(rollups)} row(s), {len(items)} measurement(s), totals: {totals_text}.{filter_text}"
         )
 
     def _on_reviewed_line_item_filter_change(self, _event: object = None) -> None:
@@ -7375,9 +7543,11 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_by_tree_id = {}
         self._refresh_reviewed_line_item_filter_options()
         self._clear_tree_rows(self.reviewed_line_items_tree)
+        self._clear_tree_rows(self.reviewed_line_items_rollup_tree)
         self._clear_tree_rows(self.sheet_navigator_tree)
         self.summary_banner_text.set("No completed estimate result in this payload yet.")
         self.reviewed_line_items_banner_text.set("No reviewed takeoff line items in this payload yet.")
+        self.reviewed_rollup_banner_text.set("No grouped reviewed takeoff totals in this payload yet.")
         self.sheet_banner_text.set("No sheet metadata in this payload yet.")
 
     def _on_sheet_navigator_select(self, _event: object = None) -> None:
@@ -7448,13 +7618,13 @@ class DesktopEstimatorApp:
         self._json_view_mode = "preview"
         self._render_json_panel()
         if self.results_notebook is not None:
-            self.results_notebook.select(2)
+            self.results_notebook.select(3)
 
     def _show_full_json(self) -> None:
         self._json_view_mode = "full"
         self._render_json_panel()
         if self.results_notebook is not None:
-            self.results_notebook.select(2)
+            self.results_notebook.select(3)
 
     def _write_output_text(self, text: str, *, cap_chars: int | None = None) -> None:
         rendered = text
@@ -7492,9 +7662,9 @@ class DesktopEstimatorApp:
             self._sync_visual_result_views(payload)
             if self.results_notebook is not None:
                 result_payload = self._extract_result_payload(payload)
-                self.results_notebook.select(0 if result_payload else 2)
+                self.results_notebook.select(0 if result_payload else 3)
         elif prefer_json_tab and self.results_notebook is not None:
-            self.results_notebook.select(2)
+            self.results_notebook.select(3)
 
     def _set_output_text(self, text: str) -> None:
         self._json_source_payload = {}
