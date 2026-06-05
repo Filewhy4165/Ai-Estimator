@@ -34,6 +34,7 @@ from desktop.runtime_logging import DesktopRuntimeLogger
 
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
 _REVIEWED_LINE_ITEMS_ALL_FILTER = "All work types"
+_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER = "All measured items"
 _REVIEWED_LINE_ITEM_CSV_FIELDS = [
     "trade",
     "quantity_name",
@@ -264,17 +265,40 @@ def reviewed_takeoff_trade_filter_options(items: object) -> list[str]:
     return [_REVIEWED_LINE_ITEMS_ALL_FILTER, *sorted(trades, key=str.casefold)]
 
 
-def filter_reviewed_takeoff_line_items(items: object, selected_trade: str) -> list[dict[str, Any]]:
+def reviewed_takeoff_item_filter_options(items: object, selected_trade: str = "") -> list[str]:
+    names: set[str] = set()
+    for raw_item in filter_reviewed_takeoff_line_items(items, selected_trade):
+        name = str(raw_item.get("quantity_name", "")).strip()
+        if name:
+            names.add(name)
+    return [_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER, *sorted(names, key=str.casefold)]
+
+
+def filter_reviewed_takeoff_line_items(
+    items: object,
+    selected_trade: str,
+    selected_item: str = "",
+) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return []
     normalized_trade = selected_trade.strip()
+    normalized_item = selected_item.strip()
+    all_items = not normalized_item or normalized_item == _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER
     if not normalized_trade or normalized_trade == _REVIEWED_LINE_ITEMS_ALL_FILTER:
-        return [raw_item for raw_item in items if isinstance(raw_item, dict)]
+        trade_filtered = [raw_item for raw_item in items if isinstance(raw_item, dict)]
+    else:
+        trade_filtered = [
+            raw_item
+            for raw_item in items
+            if isinstance(raw_item, dict)
+            and str(raw_item.get("trade", "")).strip().casefold() == normalized_trade.casefold()
+        ]
+    if all_items:
+        return trade_filtered
     return [
         raw_item
-        for raw_item in items
-        if isinstance(raw_item, dict)
-        and str(raw_item.get("trade", "")).strip().casefold() == normalized_trade.casefold()
+        for raw_item in trade_filtered
+        if str(raw_item.get("quantity_name", "")).strip().casefold() == normalized_item.casefold()
     ]
 
 
@@ -524,6 +548,7 @@ class DesktopEstimatorApp:
             value="Reviewed takeoff line items will appear after visual measurement saves."
         )
         self.reviewed_line_items_filter_trade = StringVar(value=_REVIEWED_LINE_ITEMS_ALL_FILTER)
+        self.reviewed_line_items_filter_item = StringVar(value=_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER)
         self.sheet_banner_text = StringVar(value="Sheet navigator will appear after a completed run.")
         self.trade_selection_hint_text = StringVar(value="All work types will be analyzed.")
         self.trade_catalog: list[str] = []
@@ -611,6 +636,7 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_by_tree_id: dict[str, dict[str, Any]] = {}
         self.reviewed_line_items_all: list[dict[str, Any]] = []
         self.reviewed_line_items_filter_combo: ttk.Combobox | None = None
+        self.reviewed_line_items_item_filter_combo: ttk.Combobox | None = None
         self.sheet_navigator_tree: ttk.Treeview | None = None
         self.latest_payload: dict[str, object] = {}
         self.last_result_payload: dict[str, object] = {}
@@ -2225,9 +2251,9 @@ class DesktopEstimatorApp:
             line_items_filter_frame,
             textvariable=self.reviewed_line_items_banner_text,
             style="FormLabel.TLabel",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=0, column=0, columnspan=7, sticky="w")
         ttk.Label(line_items_filter_frame, text="Work Type", style="FormLabel.TLabel").grid(
-            row=0, column=1, sticky="e", padx=(10, 4)
+            row=1, column=0, sticky="w", padx=(0, 4), pady=(6, 0)
         )
         self.reviewed_line_items_filter_combo = ttk.Combobox(
             line_items_filter_frame,
@@ -2236,8 +2262,23 @@ class DesktopEstimatorApp:
             state="readonly",
             width=22,
         )
-        self.reviewed_line_items_filter_combo.grid(row=0, column=2, sticky="e")
+        self.reviewed_line_items_filter_combo.grid(row=1, column=1, sticky="w", pady=(6, 0))
         self.reviewed_line_items_filter_combo.bind(
+            "<<ComboboxSelected>>",
+            self._on_reviewed_line_item_filter_change,
+        )
+        ttk.Label(line_items_filter_frame, text="Item", style="FormLabel.TLabel").grid(
+            row=1, column=2, sticky="w", padx=(10, 4), pady=(6, 0)
+        )
+        self.reviewed_line_items_item_filter_combo = ttk.Combobox(
+            line_items_filter_frame,
+            textvariable=self.reviewed_line_items_filter_item,
+            values=[_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER],
+            state="readonly",
+            width=22,
+        )
+        self.reviewed_line_items_item_filter_combo.grid(row=1, column=3, sticky="w", pady=(6, 0))
+        self.reviewed_line_items_item_filter_combo.bind(
             "<<ComboboxSelected>>",
             self._on_reviewed_line_item_filter_change,
         )
@@ -2245,12 +2286,12 @@ class DesktopEstimatorApp:
             line_items_filter_frame,
             text="Show All",
             command=self._clear_reviewed_line_item_filter,
-        ).grid(row=0, column=3, sticky="e", padx=(6, 0))
+        ).grid(row=1, column=4, sticky="w", padx=(8, 0), pady=(6, 0))
         ttk.Button(
             line_items_filter_frame,
             text="Save Filtered CSV",
             command=self._save_filtered_reviewed_line_items_csv,
-        ).grid(row=0, column=4, sticky="e", padx=(6, 0))
+        ).grid(row=1, column=5, sticky="w", padx=(6, 0), pady=(6, 0))
         line_items_table_frame = ttk.Frame(summary_tab)
         line_items_table_frame.grid(row=4, column=0, sticky="nsew")
         line_items_table_frame.columnconfigure(0, weight=1)
@@ -7067,6 +7108,15 @@ class DesktopEstimatorApp:
         current = self.reviewed_line_items_filter_trade.get().strip()
         if current not in options:
             self.reviewed_line_items_filter_trade.set(_REVIEWED_LINE_ITEMS_ALL_FILTER)
+            current = _REVIEWED_LINE_ITEMS_ALL_FILTER
+
+        item_options = reviewed_takeoff_item_filter_options(self.reviewed_line_items_all, current)
+        item_combo = self.reviewed_line_items_item_filter_combo
+        if item_combo is not None:
+            item_combo.configure(values=item_options)
+        current_item = self.reviewed_line_items_filter_item.get().strip()
+        if current_item not in item_options:
+            self.reviewed_line_items_filter_item.set(_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER)
 
     def _render_reviewed_line_items_tree(self) -> None:
         tree = self.reviewed_line_items_tree
@@ -7082,13 +7132,18 @@ class DesktopEstimatorApp:
             return
 
         selected_trade = self.reviewed_line_items_filter_trade.get().strip()
+        selected_item = self.reviewed_line_items_filter_item.get().strip()
         filtered_items = filter_reviewed_takeoff_line_items(
             self.reviewed_line_items_all,
             selected_trade,
+            selected_item,
         )
         if not filtered_items:
+            item_suffix = ""
+            if selected_item and selected_item != _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER:
+                item_suffix = f" and item '{selected_item}'"
             self.reviewed_line_items_banner_text.set(
-                f"No reviewed takeoff line items match work type '{selected_trade}'."
+                f"No reviewed takeoff line items match work type '{selected_trade}'{item_suffix}."
             )
             return
 
@@ -7105,6 +7160,8 @@ class DesktopEstimatorApp:
         filter_text = ""
         if selected_trade and selected_trade != _REVIEWED_LINE_ITEMS_ALL_FILTER:
             filter_text = f" | filtered to {selected_trade}"
+        if selected_item and selected_item != _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER:
+            filter_text += f" / {selected_item}"
         totals_text = format_reviewed_takeoff_line_item_totals(
             reviewed_takeoff_line_item_totals_by_unit(filtered_items)
         )
@@ -7113,16 +7170,20 @@ class DesktopEstimatorApp:
         )
 
     def _on_reviewed_line_item_filter_change(self, _event: object = None) -> None:
+        self._refresh_reviewed_line_item_filter_options()
         self._render_reviewed_line_items_tree()
 
     def _clear_reviewed_line_item_filter(self) -> None:
         self.reviewed_line_items_filter_trade.set(_REVIEWED_LINE_ITEMS_ALL_FILTER)
+        self.reviewed_line_items_filter_item.set(_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER)
+        self._refresh_reviewed_line_item_filter_options()
         self._render_reviewed_line_items_tree()
 
     def _filtered_reviewed_line_items(self) -> list[dict[str, Any]]:
         return filter_reviewed_takeoff_line_items(
             self.reviewed_line_items_all,
             self.reviewed_line_items_filter_trade.get(),
+            self.reviewed_line_items_filter_item.get(),
         )
 
     def _save_filtered_reviewed_line_items_csv(self) -> None:
@@ -7134,9 +7195,11 @@ class DesktopEstimatorApp:
             return
 
         selected_trade = self.reviewed_line_items_filter_trade.get().strip() or _REVIEWED_LINE_ITEMS_ALL_FILTER
+        selected_item = self.reviewed_line_items_filter_item.get().strip() or _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER
         safe_trade = re.sub(r"[^A-Za-z0-9_.-]+", "_", selected_trade).strip("_") or "all"
+        safe_item = re.sub(r"[^A-Za-z0-9_.-]+", "_", selected_item).strip("_") or "all"
         job_id = self.current_job_id.get().strip() or "job"
-        initial_name = f"reviewed-takeoff-lines-{job_id[:8]}-{safe_trade}.csv"
+        initial_name = f"reviewed-takeoff-lines-{job_id[:8]}-{safe_trade}-{safe_item}.csv"
         path = filedialog.asksaveasfilename(
             title="Save reviewed takeoff line items",
             defaultextension=".csv",
