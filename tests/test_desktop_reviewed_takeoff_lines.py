@@ -1,6 +1,8 @@
 from desktop.app import (
+    filter_reviewed_takeoff_line_items,
     format_reviewed_takeoff_lines_payload,
     reviewed_takeoff_line_item_source,
+    reviewed_takeoff_trade_filter_options,
     reviewed_takeoff_line_item_values,
 )
 
@@ -106,3 +108,32 @@ def test_reviewed_takeoff_line_item_source_ignores_invalid_page() -> None:
     )
 
     assert source == ("M201", None, "")
+
+
+def test_reviewed_takeoff_trade_filter_options_are_sorted_and_include_all() -> None:
+    options = reviewed_takeoff_trade_filter_options(
+        [
+            {"trade": "plumbing"},
+            {"trade": "mechanical"},
+            {"trade": ""},
+            {"trade": "Electrical"},
+            "not a row",
+        ]
+    )
+
+    assert options == ["All work types", "Electrical", "mechanical", "plumbing"]
+
+
+def test_filter_reviewed_takeoff_line_items_matches_trade_without_typing() -> None:
+    items = [
+        {"trade": "mechanical", "quantity_name": "pipe"},
+        {"trade": "plumbing", "quantity_name": "fixture"},
+        {"trade": "Mechanical", "quantity_name": "duct"},
+        "bad row",
+    ]
+
+    filtered = filter_reviewed_takeoff_line_items(items, "mechanical")
+    all_rows = filter_reviewed_takeoff_line_items(items, "All work types")
+
+    assert [row["quantity_name"] for row in filtered] == ["pipe", "duct"]
+    assert len(all_rows) == 3

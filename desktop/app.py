@@ -32,6 +32,7 @@ from desktop.output_presenter import JsonRenderResult, render_json_preview, summ
 from desktop.runtime_logging import DesktopRuntimeLogger
 
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
+_REVIEWED_LINE_ITEMS_ALL_FILTER = "All work types"
 _THEME = {
     "app_bg": "#05070D",
     "surface": "#10151D",
@@ -237,6 +238,32 @@ def reviewed_takeoff_line_item_source(raw_item: dict[str, Any]) -> tuple[str, in
     return sheet_id, page_index, source_id
 
 
+def reviewed_takeoff_trade_filter_options(items: object) -> list[str]:
+    trades: set[str] = set()
+    if isinstance(items, list):
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            trade = str(raw_item.get("trade", "")).strip()
+            if trade:
+                trades.add(trade)
+    return [_REVIEWED_LINE_ITEMS_ALL_FILTER, *sorted(trades, key=str.casefold)]
+
+
+def filter_reviewed_takeoff_line_items(items: object, selected_trade: str) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    normalized_trade = selected_trade.strip()
+    if not normalized_trade or normalized_trade == _REVIEWED_LINE_ITEMS_ALL_FILTER:
+        return [raw_item for raw_item in items if isinstance(raw_item, dict)]
+    return [
+        raw_item
+        for raw_item in items
+        if isinstance(raw_item, dict)
+        and str(raw_item.get("trade", "")).strip().casefold() == normalized_trade.casefold()
+    ]
+
+
 class HoverTooltip:
     def __init__(
         self,
@@ -428,6 +455,7 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_banner_text = StringVar(
             value="Reviewed takeoff line items will appear after visual measurement saves."
         )
+        self.reviewed_line_items_filter_trade = StringVar(value=_REVIEWED_LINE_ITEMS_ALL_FILTER)
         self.sheet_banner_text = StringVar(value="Sheet navigator will appear after a completed run.")
         self.trade_selection_hint_text = StringVar(value="All work types will be analyzed.")
         self.trade_catalog: list[str] = []
@@ -513,6 +541,8 @@ class DesktopEstimatorApp:
         self.summary_result_tree: ttk.Treeview | None = None
         self.reviewed_line_items_tree: ttk.Treeview | None = None
         self.reviewed_line_items_by_tree_id: dict[str, dict[str, Any]] = {}
+        self.reviewed_line_items_all: list[dict[str, Any]] = []
+        self.reviewed_line_items_filter_combo: ttk.Combobox | None = None
         self.sheet_navigator_tree: ttk.Treeview | None = None
         self.latest_payload: dict[str, object] = {}
         self.last_result_payload: dict[str, object] = {}
@@ -2120,9 +2150,34 @@ class DesktopEstimatorApp:
             xscrollcommand=summary_x_scroll.set,
         )
 
-        ttk.Label(summary_tab, textvariable=self.reviewed_line_items_banner_text, style="FormLabel.TLabel").grid(
-            row=3, column=0, sticky="w", pady=(10, 6)
+        line_items_filter_frame = ttk.Frame(summary_tab)
+        line_items_filter_frame.grid(row=3, column=0, sticky="ew", pady=(10, 6))
+        line_items_filter_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            line_items_filter_frame,
+            textvariable=self.reviewed_line_items_banner_text,
+            style="FormLabel.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(line_items_filter_frame, text="Work Type", style="FormLabel.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(10, 4)
         )
+        self.reviewed_line_items_filter_combo = ttk.Combobox(
+            line_items_filter_frame,
+            textvariable=self.reviewed_line_items_filter_trade,
+            values=[_REVIEWED_LINE_ITEMS_ALL_FILTER],
+            state="readonly",
+            width=22,
+        )
+        self.reviewed_line_items_filter_combo.grid(row=0, column=2, sticky="e")
+        self.reviewed_line_items_filter_combo.bind(
+            "<<ComboboxSelected>>",
+            self._on_reviewed_line_item_filter_change,
+        )
+        ttk.Button(
+            line_items_filter_frame,
+            text="Show All",
+            command=self._clear_reviewed_line_item_filter,
+        ).grid(row=0, column=3, sticky="e", padx=(6, 0))
         line_items_table_frame = ttk.Frame(summary_tab)
         line_items_table_frame.grid(row=4, column=0, sticky="nsew")
         line_items_table_frame.columnconfigure(0, weight=1)
@@ -6925,31 +6980,68 @@ class DesktopEstimatorApp:
             )
 
     def _populate_reviewed_line_items_tree(self, items: object) -> None:
+        self.reviewed_line_items_all = [
+            raw_item for raw_item in items if isinstance(raw_item, dict)
+        ] if isinstance(items, list) else []
+        self._refresh_reviewed_line_item_filter_options()
+        self._render_reviewed_line_items_tree()
+
+    def _refresh_reviewed_line_item_filter_options(self) -> None:
+        options = reviewed_takeoff_trade_filter_options(self.reviewed_line_items_all)
+        combo = self.reviewed_line_items_filter_combo
+        if combo is not None:
+            combo.configure(values=options)
+        current = self.reviewed_line_items_filter_trade.get().strip()
+        if current not in options:
+            self.reviewed_line_items_filter_trade.set(_REVIEWED_LINE_ITEMS_ALL_FILTER)
+
+    def _render_reviewed_line_items_tree(self) -> None:
         tree = self.reviewed_line_items_tree
         self.reviewed_line_items_by_tree_id = {}
         self._clear_tree_rows(tree)
         if tree is None:
             return
 
-        if not isinstance(items, list) or not items:
+        if not self.reviewed_line_items_all:
             self.reviewed_line_items_banner_text.set(
                 "No reviewed takeoff line items yet. Use Sheet Navigator > Measure Scale Visually to add field-reviewed measurements."
             )
             return
 
+        selected_trade = self.reviewed_line_items_filter_trade.get().strip()
+        filtered_items = filter_reviewed_takeoff_line_items(
+            self.reviewed_line_items_all,
+            selected_trade,
+        )
+        if not filtered_items:
+            self.reviewed_line_items_banner_text.set(
+                f"No reviewed takeoff line items match work type '{selected_trade}'."
+            )
+            return
+
         inserted = 0
-        for raw_item in items[:500]:
+        for raw_item in filtered_items[:500]:
             if not isinstance(raw_item, dict):
                 continue
             tree_item_id = tree.insert("", END, values=reviewed_takeoff_line_item_values(raw_item))
             self.reviewed_line_items_by_tree_id[tree_item_id] = raw_item
             inserted += 1
 
-        overflow_count = len(items) - 500
+        overflow_count = len(filtered_items) - 500
         overflow_text = f" | {overflow_count} more not shown" if overflow_count > 0 else ""
+        filter_text = ""
+        if selected_trade and selected_trade != _REVIEWED_LINE_ITEMS_ALL_FILTER:
+            filter_text = f" | filtered to {selected_trade}"
         self.reviewed_line_items_banner_text.set(
-            f"Reviewed takeoff line items: {inserted} shown{overflow_text}. These are measurements saved for takeoff."
+            f"Reviewed takeoff line items: {inserted} shown of {len(self.reviewed_line_items_all)} total{filter_text}{overflow_text}."
         )
+
+    def _on_reviewed_line_item_filter_change(self, _event: object = None) -> None:
+        self._render_reviewed_line_items_tree()
+
+    def _clear_reviewed_line_item_filter(self) -> None:
+        self.reviewed_line_items_filter_trade.set(_REVIEWED_LINE_ITEMS_ALL_FILTER)
+        self._render_reviewed_line_items_tree()
 
     def _selected_reviewed_line_item(self) -> dict[str, Any] | None:
         tree = self.reviewed_line_items_tree
@@ -7093,6 +7185,9 @@ class DesktopEstimatorApp:
             self._populate_sheet_navigator({"review_queue": payload}, self.last_result_payload)
             return
         self._clear_tree_rows(self.summary_result_tree)
+        self.reviewed_line_items_all = []
+        self.reviewed_line_items_by_tree_id = {}
+        self._refresh_reviewed_line_item_filter_options()
         self._clear_tree_rows(self.reviewed_line_items_tree)
         self._clear_tree_rows(self.sheet_navigator_tree)
         self.summary_banner_text.set("No completed estimate result in this payload yet.")
