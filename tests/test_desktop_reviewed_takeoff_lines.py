@@ -1,4 +1,4 @@
-from desktop.app import format_reviewed_takeoff_lines_payload
+from desktop.app import format_reviewed_takeoff_lines_payload, reviewed_takeoff_line_item_values
 
 
 def test_format_reviewed_takeoff_lines_payload_renders_estimator_rows() -> None:
@@ -39,3 +39,42 @@ def test_format_reviewed_takeoff_lines_payload_explains_empty_state() -> None:
     assert "Job: job-empty" in text
     assert "No reviewed takeoff line items found yet." in text
     assert "Measure Scale Visually" in text
+
+
+def test_reviewed_takeoff_line_item_values_are_table_ready() -> None:
+    values = reviewed_takeoff_line_item_values(
+        {
+            "trade": "mechanical",
+            "quantity_name": "chilled water pipe",
+            "quantity": 18.5,
+            "unit": "ft",
+            "description": "2 inch CHWS route",
+            "cost_code": "23 21 13",
+            "sheet_id": "M201",
+            "source_page_index": 14,
+        }
+    )
+
+    assert values == (
+        "mechanical",
+        "chilled water pipe",
+        "18.5",
+        "ft",
+        "2 inch CHWS route",
+        "23 21 13",
+        "M201 page 14",
+    )
+
+
+def test_reviewed_takeoff_line_item_values_fill_missing_fields() -> None:
+    values = reviewed_takeoff_line_item_values({})
+
+    assert values == (
+        "unknown work type",
+        "line item",
+        "-",
+        "-",
+        "-",
+        "-",
+        "sheet unknown",
+    )
