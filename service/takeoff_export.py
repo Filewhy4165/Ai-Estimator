@@ -67,12 +67,53 @@ def build_takeoff_rows(*, job_id: str, result: dict[str, Any] | None) -> list[di
                         )
                     )
 
+    line_items = quantity_takeoff.get("line_items", [])
+    if isinstance(line_items, list):
+        rows.extend(_line_item_rows(job_id=job_id, line_items=line_items))
+
     cost_mapping = result.get("cost_mapping", {})
     if isinstance(cost_mapping, dict):
         cost_codes = cost_mapping.get("cost_codes", {})
         if isinstance(cost_codes, dict):
             rows.extend(_cost_code_rows(job_id=job_id, cost_codes=cost_codes))
 
+    return rows
+
+
+def _line_item_rows(*, job_id: str, line_items: list[Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for index, raw_item in enumerate(line_items, start=1):
+        if not isinstance(raw_item, dict):
+            continue
+        trade = str(raw_item.get("trade", "")).strip()
+        bucket = str(raw_item.get("quantity_bucket", "linear")).strip() or "linear"
+        item_name = str(raw_item.get("quantity_name", "line_item")).strip() or "line_item"
+        description = str(raw_item.get("description", "")).strip()
+        cost_code = str(raw_item.get("cost_code", "")).strip()
+        sheet_id = str(raw_item.get("sheet_id", "")).strip()
+        source_page = str(raw_item.get("source_page_index", "") or "").strip()
+        display_name_parts = [item_name]
+        if description:
+            display_name_parts.append(description)
+        if cost_code:
+            display_name_parts.append(f"cost {cost_code}")
+        if sheet_id:
+            sheet_label = f"sheet {sheet_id}"
+            if source_page:
+                sheet_label += f" p{source_page}"
+            display_name_parts.append(sheet_label)
+        rows.append(
+            {
+                "job_id": job_id,
+                "scope": "line_item",
+                "trade": trade,
+                "quantity_bucket": bucket,
+                "quantity_name": " | ".join(display_name_parts),
+                "value": str(raw_item.get("quantity", "")),
+                "unit_hint": str(raw_item.get("unit", "")) or _unit_hint(bucket=bucket, name=item_name),
+                "source": str(raw_item.get("source", "")) or f"quantity_takeoff.line_items.{index}",
+            }
+        )
     return rows
 
 

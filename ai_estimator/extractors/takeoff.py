@@ -43,6 +43,7 @@ def compute_quantity_takeoff(
     linear: dict[str, object] = {}
     area: dict[str, object] = {}
     volume: dict[str, object] = {}
+    line_items: list[dict[str, object]] = []
     explicit_dimensions = _compute_explicit_dimension_takeoff(geometry)
     if explicit_dimensions["count"] > 0:
         linear["explicit_dimensions_total_ft"] = explicit_dimensions["total_ft"]
@@ -181,6 +182,11 @@ def compute_quantity_takeoff(
                     by_trade[trade]["linear"]["classified_visual_takeoff_by_item_pdf_units"] = (
                         trade_values.get("by_item_pdf_units", {})
                     )
+        classified_line_items = classified_visual.get("line_items", [])
+        if isinstance(classified_line_items, list):
+            line_items.extend(
+                row for row in classified_line_items if isinstance(row, dict)
+            )
 
     if not linear:
         issues.append("Linear quantities are empty; no reliable lengths were extracted.")
@@ -189,16 +195,16 @@ def compute_quantity_takeoff(
     if not volume:
         issues.append("Volume quantities are empty; no reliable volumetric geometry was extracted.")
 
-    return (
-        {
-            "by_trade": dict(by_trade),
-            "linear": linear,
-            "area": area,
-            "volume": volume,
-            "counts": dict(counts),
-        },
-        issues,
-    )
+    payload: dict[str, object] = {
+        "by_trade": dict(by_trade),
+        "linear": linear,
+        "area": area,
+        "volume": volume,
+        "counts": dict(counts),
+    }
+    if line_items:
+        payload["line_items"] = line_items
+    return (payload, issues)
 
 
 def _compute_explicit_dimension_takeoff(geometry: dict[str, object]) -> dict[str, object]:
@@ -410,6 +416,7 @@ def _compute_classified_visual_takeoff(geometry: dict[str, object]) -> dict[str,
     by_item_ft: dict[str, float] = defaultdict(float)
     by_item_pdf_units: dict[str, float] = defaultdict(float)
     by_cost_code_ft: dict[str, float] = defaultdict(float)
+    line_items: list[dict[str, object]] = []
     by_trade: dict[str, dict[str, object]] = defaultdict(
         lambda: {
             "total_ft": 0.0,
@@ -435,8 +442,25 @@ def _compute_classified_visual_takeoff(geometry: dict[str, object]) -> dict[str,
         if item_type == "visual_length":
             item_type = "linear_item"
         known = _numeric(row.get("known_length_ft"))
+        description = str(row.get("description", "")).strip()
+        assembly = str(row.get("assembly", "")).strip()
+        cost_code = str(row.get("cost_code") or assembly or "").strip()
 
         by_trade[trade]["count"] = int(by_trade[trade]["count"]) + 1
+        line_item: dict[str, object] = {
+            "source": "manual_visual_measurement",
+            "source_id": str(row.get("id", "")).strip(),
+            "label": str(row.get("label", "")).strip(),
+            "sheet_id": sheet_id,
+            "source_page_index": row.get("source_page_index"),
+            "trade": trade,
+            "quantity_bucket": "linear",
+            "quantity_name": item_type,
+            "description": description,
+            "assembly": assembly,
+            "cost_code": cost_code,
+            "measured_pdf_units": round(measured, 6),
+        }
         if known > 0:
             total_ft += known
             by_sheet_ft[sheet_id] += known
@@ -446,9 +470,12 @@ def _compute_classified_visual_takeoff(geometry: dict[str, object]) -> dict[str,
             trade_by_item_ft = by_trade[trade]["by_item_ft"]
             if isinstance(trade_by_item_ft, defaultdict):
                 trade_by_item_ft[item_type] += known
-            cost_code = str(row.get("cost_code") or row.get("assembly") or "").strip()
             if cost_code:
                 by_cost_code_ft[cost_code] += known
+            line_item["quantity"] = round(known, 4)
+            line_item["unit"] = "ft"
+            line_item["known_length_ft"] = round(known, 6)
+            line_items.append(line_item)
             continue
 
         unscaled_pdf_units += measured
@@ -459,6 +486,9 @@ def _compute_classified_visual_takeoff(geometry: dict[str, object]) -> dict[str,
         trade_by_item_pdf = by_trade[trade]["by_item_pdf_units"]
         if isinstance(trade_by_item_pdf, defaultdict):
             trade_by_item_pdf[item_type] += measured
+        line_item["quantity"] = round(measured, 4)
+        line_item["unit"] = "pdf_units"
+        line_items.append(line_item)
 
     return {
         "count": count,
@@ -493,6 +523,7 @@ def _compute_classified_visual_takeoff(geometry: dict[str, object]) -> dict[str,
             }
             for key, value in sorted(by_trade.items())
         },
+        "line_items": line_items,
     }
 
 
@@ -518,6 +549,7 @@ def _empty_classified_visual_takeoff() -> dict[str, object]:
         "by_item_pdf_units": {},
         "by_cost_code_ft": {},
         "by_trade": {},
+        "line_items": [],
     }
 
 

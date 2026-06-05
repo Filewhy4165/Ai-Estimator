@@ -221,6 +221,25 @@ def test_classified_visual_measurements_update_takeoff_lines():
     assert updated["quantity_takeoff"]["by_trade"]["plumbing"]["linear"][
         "classified_visual_takeoff_total_ft"
     ] == 35.0
+    assert updated["quantity_takeoff"]["line_items"] == [
+        {
+            "source": "manual_visual_measurement",
+            "source_id": "m-pipe",
+            "label": "M3",
+            "sheet_id": "A101",
+            "source_page_index": 1,
+            "trade": "plumbing",
+            "quantity_bucket": "linear",
+            "quantity_name": "pipe",
+            "description": "2 inch copper pipe",
+            "assembly": "Domestic water pipe",
+            "cost_code": "22 11 16",
+            "measured_pdf_units": 70.0,
+            "quantity": 35.0,
+            "unit": "ft",
+            "known_length_ft": 35.0,
+        }
+    ]
 
 
 def test_scale_calibration_preview_converts_vector_units_to_feet():
