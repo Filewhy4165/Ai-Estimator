@@ -223,6 +223,20 @@ def reviewed_takeoff_line_item_values(raw_item: dict[str, Any]) -> tuple[str, st
     return trade, quantity_name, quantity_text, unit, description, cost_code, source
 
 
+def reviewed_takeoff_line_item_source(raw_item: dict[str, Any]) -> tuple[str, int | None, str]:
+    sheet_id = str(raw_item.get("sheet_id", "")).strip()
+    raw_page = raw_item.get("source_page_index")
+    page_index: int | None = None
+    if isinstance(raw_page, int) and raw_page > 0:
+        page_index = raw_page
+    elif isinstance(raw_page, str) and raw_page.strip().isdigit():
+        parsed_page = int(raw_page.strip())
+        if parsed_page > 0:
+            page_index = parsed_page
+    source_id = str(raw_item.get("source_id", "")).strip()
+    return sheet_id, page_index, source_id
+
+
 class HoverTooltip:
     def __init__(
         self,
@@ -498,6 +512,7 @@ class DesktopEstimatorApp:
         self.results_notebook: ttk.Notebook | None = None
         self.summary_result_tree: ttk.Treeview | None = None
         self.reviewed_line_items_tree: ttk.Treeview | None = None
+        self.reviewed_line_items_by_tree_id: dict[str, dict[str, Any]] = {}
         self.sheet_navigator_tree: ttk.Treeview | None = None
         self.latest_payload: dict[str, object] = {}
         self.last_result_payload: dict[str, object] = {}
@@ -2056,6 +2071,11 @@ class DesktopEstimatorApp:
         ttk.Button(summary_actions, text="Show Reviewed Takeoff Lines", command=self._show_reviewed_takeoff_lines).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
+        ttk.Button(
+            summary_actions,
+            text="Open Selected Line Source",
+            command=self._open_selected_reviewed_line_source,
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Button(summary_actions, text="Spec Compliance", command=self._show_spec_compliance_report).grid(
             row=0, column=3, sticky="w", padx=(8, 0)
         )
@@ -2114,6 +2134,8 @@ class DesktopEstimatorApp:
             height=8,
         )
         self.reviewed_line_items_tree.grid(row=0, column=0, sticky="nsew")
+        self.reviewed_line_items_tree.bind("<<TreeviewSelect>>", self._on_reviewed_line_item_select)
+        self.reviewed_line_items_tree.bind("<Double-1>", self._open_selected_reviewed_line_source)
         for key, title, width, anchor in [
             ("trade", "Work Type", 130, "w"),
             ("item", "Measured Item", 150, "w"),
@@ -6904,6 +6926,7 @@ class DesktopEstimatorApp:
 
     def _populate_reviewed_line_items_tree(self, items: object) -> None:
         tree = self.reviewed_line_items_tree
+        self.reviewed_line_items_by_tree_id = {}
         self._clear_tree_rows(tree)
         if tree is None:
             return
@@ -6918,7 +6941,8 @@ class DesktopEstimatorApp:
         for raw_item in items[:500]:
             if not isinstance(raw_item, dict):
                 continue
-            tree.insert("", END, values=reviewed_takeoff_line_item_values(raw_item))
+            tree_item_id = tree.insert("", END, values=reviewed_takeoff_line_item_values(raw_item))
+            self.reviewed_line_items_by_tree_id[tree_item_id] = raw_item
             inserted += 1
 
         overflow_count = len(items) - 500
@@ -6926,6 +6950,65 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_banner_text.set(
             f"Reviewed takeoff line items: {inserted} shown{overflow_text}. These are measurements saved for takeoff."
         )
+
+    def _selected_reviewed_line_item(self) -> dict[str, Any] | None:
+        tree = self.reviewed_line_items_tree
+        if tree is None:
+            return None
+        selection = tree.selection()
+        if not selection:
+            return None
+        raw_item = self.reviewed_line_items_by_tree_id.get(selection[0])
+        return raw_item if isinstance(raw_item, dict) else None
+
+    def _on_reviewed_line_item_select(self, _event: object = None) -> None:
+        raw_item = self._selected_reviewed_line_item()
+        if not raw_item:
+            return
+        sheet_id, page_index, source_id = reviewed_takeoff_line_item_source(raw_item)
+        if sheet_id:
+            self.visual_review_sheet_id.set(sheet_id)
+        if page_index is not None:
+            self.visual_review_page_index.set(str(page_index))
+        source_text = f"{sheet_id or 'sheet unknown'}"
+        if page_index is not None:
+            source_text += f" page {page_index}"
+        if source_id:
+            source_text += f" measurement {source_id}"
+        self.status_text.set(f"Selected reviewed takeoff source: {source_text}.")
+
+    def _open_selected_reviewed_line_source(self, _event: object = None) -> str:
+        raw_item = self._selected_reviewed_line_item()
+        if not raw_item:
+            self._set_output_text("Select a reviewed takeoff line item first, then click Open Selected Line Source.")
+            return "break"
+
+        try:
+            job_id = self._resolve_completed_job_id()
+            sheet_id, page_index, source_id = reviewed_takeoff_line_item_source(raw_item)
+            if not sheet_id:
+                raise RuntimeError("The selected line item does not include a source sheet.")
+            base = self.api_url.get().strip().rstrip("/")
+            if not base:
+                raise RuntimeError("API URL is required.")
+
+            self.visual_review_sheet_id.set(sheet_id)
+            self.visual_review_page_index.set(str(page_index) if page_index else "")
+            params: dict[str, object] = {
+                "sheet_id": sheet_id,
+                "tenant_id": self.tenant_id.get().strip() or "default",
+                "limit": 1000,
+            }
+            if page_index is not None:
+                params["source_page_index"] = page_index
+            url = f"{base}/v1/jobs/{job_id}/visual-review?{urlencode(params)}"
+            webbrowser.open(url, new=2)
+            source_suffix = f" measurement {source_id}" if source_id else ""
+            self.status_text.set(f"Opened source review for {sheet_id}{source_suffix}.")
+            self._save_settings()
+        except Exception as exc:
+            self._set_output_text(f"Could not open selected line source:\n{exc}")
+        return "break"
 
     def _populate_sheet_navigator(self, payload: dict, result: dict) -> None:
         tree = self.sheet_navigator_tree
