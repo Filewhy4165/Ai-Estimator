@@ -1,4 +1,8 @@
-from desktop.app import format_reviewed_takeoff_lines_payload, reviewed_takeoff_line_item_values
+from desktop.app import (
+    format_reviewed_takeoff_lines_payload,
+    reviewed_takeoff_line_item_source,
+    reviewed_takeoff_line_item_values,
+)
 
 
 def test_format_reviewed_takeoff_lines_payload_renders_estimator_rows() -> None:
@@ -78,3 +82,27 @@ def test_reviewed_takeoff_line_item_values_fill_missing_fields() -> None:
         "-",
         "sheet unknown",
     )
+
+
+def test_reviewed_takeoff_line_item_source_parses_sheet_page_and_source_id() -> None:
+    source = reviewed_takeoff_line_item_source(
+        {
+            "sheet_id": "M201",
+            "source_page_index": "14",
+            "source_id": "measurement-7",
+        }
+    )
+
+    assert source == ("M201", 14, "measurement-7")
+
+
+def test_reviewed_takeoff_line_item_source_ignores_invalid_page() -> None:
+    source = reviewed_takeoff_line_item_source(
+        {
+            "sheet_id": "M201",
+            "source_page_index": "page 14",
+            "source_id": "",
+        }
+    )
+
+    assert source == ("M201", None, "")
