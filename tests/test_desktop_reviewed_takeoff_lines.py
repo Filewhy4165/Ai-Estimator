@@ -6,6 +6,8 @@ from desktop.app import (
     reviewed_takeoff_line_item_csv_rows,
     reviewed_takeoff_line_item_rollup_values,
     reviewed_takeoff_line_item_rollups,
+    reviewed_takeoff_line_item_rollup_csv_row,
+    reviewed_takeoff_line_item_rollup_csv_rows,
     reviewed_takeoff_line_item_source,
     reviewed_takeoff_line_item_totals_by_unit,
     reviewed_takeoff_item_filter_options,
@@ -308,3 +310,62 @@ def test_reviewed_takeoff_line_item_rollup_values_are_table_ready() -> None:
     )
 
     assert values == ("mechanical", "pipe", "12.5", "ft", "2", "23 21 13", "M201, M202")
+
+
+def test_reviewed_takeoff_line_item_rollup_csv_row_matches_export_fields() -> None:
+    row = reviewed_takeoff_line_item_rollup_csv_row(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "quantity": 12.5,
+            "unit": "ft",
+            "line_count": 2,
+            "cost_code": "23 21 13",
+            "source_sheets": "M201, M202",
+        }
+    )
+
+    assert row == {
+        "trade": "mechanical",
+        "quantity_name": "pipe",
+        "quantity": "12.5",
+        "unit": "ft",
+        "line_count": "2",
+        "cost_code": "23 21 13",
+        "source_sheets": "M201, M202",
+    }
+
+
+def test_reviewed_takeoff_line_item_rollup_csv_rows_group_source_items() -> None:
+    rows = reviewed_takeoff_line_item_rollup_csv_rows(
+        [
+            {
+                "trade": "mechanical",
+                "quantity_name": "pipe",
+                "quantity": 10,
+                "unit": "ft",
+                "cost_code": "23 21 13",
+                "sheet_id": "M201",
+            },
+            {
+                "trade": "mechanical",
+                "quantity_name": "pipe",
+                "quantity": 2,
+                "unit": "ft",
+                "cost_code": "23 21 13",
+                "sheet_id": "M202",
+            },
+        ]
+    )
+
+    assert rows == [
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "quantity": "12",
+            "unit": "ft",
+            "line_count": "2",
+            "cost_code": "23 21 13",
+            "source_sheets": "M201, M202",
+        }
+    ]
