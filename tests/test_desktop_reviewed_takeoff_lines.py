@@ -2,6 +2,8 @@ from desktop.app import (
     filter_reviewed_takeoff_line_items,
     format_reviewed_takeoff_line_item_totals,
     format_reviewed_takeoff_lines_payload,
+    reviewed_takeoff_line_item_csv_row,
+    reviewed_takeoff_line_item_csv_rows,
     reviewed_takeoff_line_item_source,
     reviewed_takeoff_line_item_totals_by_unit,
     reviewed_takeoff_trade_filter_options,
@@ -158,3 +160,48 @@ def test_reviewed_takeoff_line_item_totals_sum_numeric_quantities_by_unit() -> N
 
 def test_format_reviewed_takeoff_line_item_totals_handles_empty_totals() -> None:
     assert format_reviewed_takeoff_line_item_totals({}) == "none"
+
+
+def test_reviewed_takeoff_line_item_csv_row_normalizes_export_fields() -> None:
+    row = reviewed_takeoff_line_item_csv_row(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "quantity": 12.5,
+            "unit": "ft",
+            "description": "CHWS route",
+            "assembly": "Hydronic pipe",
+            "cost_code": "23 21 13",
+            "sheet_id": "M201",
+            "source_page_index": 14,
+            "source_id": "m-1",
+            "label": "M1",
+        }
+    )
+
+    assert row == {
+        "trade": "mechanical",
+        "quantity_name": "pipe",
+        "quantity": "12.5",
+        "unit": "ft",
+        "description": "CHWS route",
+        "assembly": "Hydronic pipe",
+        "cost_code": "23 21 13",
+        "sheet_id": "M201",
+        "source_page_index": "14",
+        "source_id": "m-1",
+        "label": "M1",
+    }
+
+
+def test_reviewed_takeoff_line_item_csv_rows_skip_invalid_rows() -> None:
+    rows = reviewed_takeoff_line_item_csv_rows(
+        [
+            {"trade": "mechanical", "quantity_name": "pipe"},
+            "bad row",
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["trade"] == "mechanical"
+    assert rows[0]["quantity_name"] == "pipe"

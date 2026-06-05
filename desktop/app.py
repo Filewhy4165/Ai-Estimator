@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime
 import math
 import json
@@ -33,6 +34,19 @@ from desktop.runtime_logging import DesktopRuntimeLogger
 
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled"}
 _REVIEWED_LINE_ITEMS_ALL_FILTER = "All work types"
+_REVIEWED_LINE_ITEM_CSV_FIELDS = [
+    "trade",
+    "quantity_name",
+    "quantity",
+    "unit",
+    "description",
+    "assembly",
+    "cost_code",
+    "sheet_id",
+    "source_page_index",
+    "source_id",
+    "label",
+]
 _THEME = {
     "app_bg": "#05070D",
     "surface": "#10151D",
@@ -293,6 +307,29 @@ def format_reviewed_takeoff_line_item_totals(totals: dict[str, float]) -> str:
         f"{quantity:g} {unit}"
         for unit, quantity in sorted(totals.items(), key=lambda item: item[0].casefold())
     )
+
+
+def reviewed_takeoff_line_item_csv_row(raw_item: dict[str, Any]) -> dict[str, str]:
+    row: dict[str, str] = {}
+    for field in _REVIEWED_LINE_ITEM_CSV_FIELDS:
+        value = raw_item.get(field, "")
+        if isinstance(value, float):
+            row[field] = f"{value:g}"
+        elif isinstance(value, int):
+            row[field] = str(value)
+        else:
+            row[field] = str(value or "").strip()
+    return row
+
+
+def reviewed_takeoff_line_item_csv_rows(items: object) -> list[dict[str, str]]:
+    if not isinstance(items, list):
+        return []
+    return [
+        reviewed_takeoff_line_item_csv_row(raw_item)
+        for raw_item in items
+        if isinstance(raw_item, dict)
+    ]
 
 
 class HoverTooltip:
@@ -2209,6 +2246,11 @@ class DesktopEstimatorApp:
             text="Show All",
             command=self._clear_reviewed_line_item_filter,
         ).grid(row=0, column=3, sticky="e", padx=(6, 0))
+        ttk.Button(
+            line_items_filter_frame,
+            text="Save Filtered CSV",
+            command=self._save_filtered_reviewed_line_items_csv,
+        ).grid(row=0, column=4, sticky="e", padx=(6, 0))
         line_items_table_frame = ttk.Frame(summary_tab)
         line_items_table_frame.grid(row=4, column=0, sticky="nsew")
         line_items_table_frame.columnconfigure(0, weight=1)
@@ -7076,6 +7118,53 @@ class DesktopEstimatorApp:
     def _clear_reviewed_line_item_filter(self) -> None:
         self.reviewed_line_items_filter_trade.set(_REVIEWED_LINE_ITEMS_ALL_FILTER)
         self._render_reviewed_line_items_tree()
+
+    def _filtered_reviewed_line_items(self) -> list[dict[str, Any]]:
+        return filter_reviewed_takeoff_line_items(
+            self.reviewed_line_items_all,
+            self.reviewed_line_items_filter_trade.get(),
+        )
+
+    def _save_filtered_reviewed_line_items_csv(self) -> None:
+        items = self._filtered_reviewed_line_items()
+        if not items:
+            self._set_output_text(
+                "No reviewed takeoff line items match the current filter. Load a completed job or choose a different Work Type."
+            )
+            return
+
+        selected_trade = self.reviewed_line_items_filter_trade.get().strip() or _REVIEWED_LINE_ITEMS_ALL_FILTER
+        safe_trade = re.sub(r"[^A-Za-z0-9_.-]+", "_", selected_trade).strip("_") or "all"
+        job_id = self.current_job_id.get().strip() or "job"
+        initial_name = f"reviewed-takeoff-lines-{job_id[:8]}-{safe_trade}.csv"
+        path = filedialog.asksaveasfilename(
+            title="Save reviewed takeoff line items",
+            defaultextension=".csv",
+            initialdir=str(self._results_dir()),
+            initialfile=initial_name,
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            self.status_text.set("Reviewed takeoff CSV export canceled.")
+            return
+
+        csv_rows = reviewed_takeoff_line_item_csv_rows(items)
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=_REVIEWED_LINE_ITEM_CSV_FIELDS)
+                writer.writeheader()
+                writer.writerows(csv_rows)
+        except Exception as exc:
+            self._set_output_text(f"Failed to save reviewed takeoff line CSV:\n{exc}")
+            return
+
+        totals_text = format_reviewed_takeoff_line_item_totals(
+            reviewed_takeoff_line_item_totals_by_unit(items)
+        )
+        self.status_text.set(f"Saved {len(csv_rows)} reviewed takeoff line(s): {path}")
+        self._set_output_text(
+            f"Saved reviewed takeoff CSV:\n{path}\n\nRows: {len(csv_rows)}\nTotals: {totals_text}"
+        )
 
     def _selected_reviewed_line_item(self) -> dict[str, Any] | None:
         tree = self.reviewed_line_items_tree
