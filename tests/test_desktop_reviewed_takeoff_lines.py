@@ -1,7 +1,9 @@
 from desktop.app import (
     filter_reviewed_takeoff_line_items,
+    format_reviewed_takeoff_line_item_totals,
     format_reviewed_takeoff_lines_payload,
     reviewed_takeoff_line_item_source,
+    reviewed_takeoff_line_item_totals_by_unit,
     reviewed_takeoff_trade_filter_options,
     reviewed_takeoff_line_item_values,
 )
@@ -137,3 +139,22 @@ def test_filter_reviewed_takeoff_line_items_matches_trade_without_typing() -> No
 
     assert [row["quantity_name"] for row in filtered] == ["pipe", "duct"]
     assert len(all_rows) == 3
+
+
+def test_reviewed_takeoff_line_item_totals_sum_numeric_quantities_by_unit() -> None:
+    totals = reviewed_takeoff_line_item_totals_by_unit(
+        [
+            {"quantity": 10, "unit": "ft"},
+            {"quantity": "2.5", "unit": "ft"},
+            {"quantity": 3, "unit": "ea"},
+            {"quantity": "not numeric", "unit": "ft"},
+            "bad row",
+        ]
+    )
+
+    assert totals == {"ft": 12.5, "ea": 3.0}
+    assert format_reviewed_takeoff_line_item_totals(totals) == "3 ea, 12.5 ft"
+
+
+def test_format_reviewed_takeoff_line_item_totals_handles_empty_totals() -> None:
+    assert format_reviewed_takeoff_line_item_totals({}) == "none"
