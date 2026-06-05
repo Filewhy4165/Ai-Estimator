@@ -3954,6 +3954,24 @@ class DesktopEstimatorApp:
                 "pro_tip": "Fetch estimator-reviewed takeoff line items with trade, item type, quantity, unit, cost code, and source sheet.",
                 "beginner_tip": "Show the takeoff items you manually checked and marked to include.",
             },
+            "open_selected_line_source": {
+                "pro_label": "Open Selected Line Source",
+                "beginner_label": "Open Checked Item on Drawing",
+                "pro_tip": "Open the visual review page for the selected reviewed takeoff line item's source sheet and measurement.",
+                "beginner_tip": "Open the drawing page where the selected checked item came from.",
+            },
+            "save_filtered_reviewed_csv": {
+                "pro_label": "Save Filtered CSV",
+                "beginner_label": "Save These Checked Items",
+                "pro_tip": "Save only the currently filtered reviewed takeoff line items as a CSV spreadsheet.",
+                "beginner_tip": "Save the checked items currently shown in the table to an Excel-friendly file.",
+            },
+            "save_rollup_csv": {
+                "pro_label": "Save Rollup CSV",
+                "beginner_label": "Save Grouped Totals",
+                "pro_tip": "Save the grouped reviewed takeoff totals from the Takeoff Rollup tab as a CSV spreadsheet.",
+                "beginner_tip": "Save the grouped totals table to an Excel-friendly file.",
+            },
             "open_estimator_report": {
                 "pro_label": "Open Estimator Report",
                 "beginner_label": "Open Easy Report",
