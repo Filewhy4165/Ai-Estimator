@@ -6,6 +6,7 @@ from desktop.app import (
     reviewed_takeoff_line_item_csv_rows,
     reviewed_takeoff_line_item_source,
     reviewed_takeoff_line_item_totals_by_unit,
+    reviewed_takeoff_item_filter_options,
     reviewed_takeoff_trade_filter_options,
     reviewed_takeoff_line_item_values,
 )
@@ -141,6 +142,37 @@ def test_filter_reviewed_takeoff_line_items_matches_trade_without_typing() -> No
 
     assert [row["quantity_name"] for row in filtered] == ["pipe", "duct"]
     assert len(all_rows) == 3
+
+
+def test_reviewed_takeoff_item_filter_options_follow_selected_trade() -> None:
+    items = [
+        {"trade": "mechanical", "quantity_name": "pipe"},
+        {"trade": "mechanical", "quantity_name": "duct"},
+        {"trade": "plumbing", "quantity_name": "pipe"},
+        {"trade": "mechanical", "quantity_name": ""},
+    ]
+
+    assert reviewed_takeoff_item_filter_options(items, "mechanical") == [
+        "All measured items",
+        "duct",
+        "pipe",
+    ]
+    assert reviewed_takeoff_item_filter_options(items, "plumbing") == [
+        "All measured items",
+        "pipe",
+    ]
+
+
+def test_filter_reviewed_takeoff_line_items_matches_trade_and_item() -> None:
+    items = [
+        {"trade": "mechanical", "quantity_name": "pipe", "quantity": 10},
+        {"trade": "mechanical", "quantity_name": "duct", "quantity": 20},
+        {"trade": "plumbing", "quantity_name": "pipe", "quantity": 30},
+    ]
+
+    filtered = filter_reviewed_takeoff_line_items(items, "mechanical", "pipe")
+
+    assert filtered == [{"trade": "mechanical", "quantity_name": "pipe", "quantity": 10}]
 
 
 def test_reviewed_takeoff_line_item_totals_sum_numeric_quantities_by_unit() -> None:
