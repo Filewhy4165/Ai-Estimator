@@ -175,6 +175,16 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert measurement_payload["measurements"][0]["is_takeoff_item"] is True
     assert measurement_payload["measurements"][0]["trade"] == "electrical"
 
+    line_items_payload = service_app.get_job_takeoff_line_items(
+        "job-a",
+        trade="electrical",
+        quantity_name="conduit",
+        request=_request_for_tenant("tenant-a"),
+    )
+    assert line_items_payload["item_count"] == 1
+    assert line_items_payload["summary"]["total_by_unit"] == {"ft": 10.0}
+    assert line_items_payload["line_items"][0]["description"] == "EMT conduit route"
+
     page_after_save = service_app.get_job_visual_review_page(
         "job-a",
         sheet_id="A101",
