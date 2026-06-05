@@ -4,6 +4,8 @@ from desktop.app import (
     format_reviewed_takeoff_lines_payload,
     reviewed_takeoff_line_item_csv_row,
     reviewed_takeoff_line_item_csv_rows,
+    reviewed_takeoff_line_item_rollup_values,
+    reviewed_takeoff_line_item_rollups,
     reviewed_takeoff_line_item_source,
     reviewed_takeoff_line_item_totals_by_unit,
     reviewed_takeoff_item_filter_options,
@@ -237,3 +239,72 @@ def test_reviewed_takeoff_line_item_csv_rows_skip_invalid_rows() -> None:
     assert len(rows) == 1
     assert rows[0]["trade"] == "mechanical"
     assert rows[0]["quantity_name"] == "pipe"
+
+
+def test_reviewed_takeoff_line_item_rollups_group_by_trade_item_unit_and_cost_code() -> None:
+    rollups = reviewed_takeoff_line_item_rollups(
+        [
+            {
+                "trade": "mechanical",
+                "quantity_name": "pipe",
+                "quantity": 10,
+                "unit": "ft",
+                "cost_code": "23 21 13",
+                "sheet_id": "M201",
+            },
+            {
+                "trade": "mechanical",
+                "quantity_name": "pipe",
+                "quantity": "2.5",
+                "unit": "ft",
+                "cost_code": "23 21 13",
+                "sheet_id": "M202",
+            },
+            {
+                "trade": "mechanical",
+                "quantity_name": "duct",
+                "quantity": 3,
+                "unit": "ea",
+                "cost_code": "23 31 13",
+                "sheet_id": "M201",
+            },
+            "bad row",
+        ]
+    )
+
+    assert rollups == [
+        {
+            "trade": "mechanical",
+            "quantity_name": "duct",
+            "unit": "ea",
+            "cost_code": "23 31 13",
+            "quantity": 3.0,
+            "line_count": 1,
+            "source_sheets": "M201",
+        },
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "unit": "ft",
+            "cost_code": "23 21 13",
+            "quantity": 12.5,
+            "line_count": 2,
+            "source_sheets": "M201, M202",
+        },
+    ]
+
+
+def test_reviewed_takeoff_line_item_rollup_values_are_table_ready() -> None:
+    values = reviewed_takeoff_line_item_rollup_values(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "quantity": 12.5,
+            "unit": "ft",
+            "line_count": 2,
+            "cost_code": "23 21 13",
+            "source_sheets": "M201, M202",
+        }
+    )
+
+    assert values == ("mechanical", "pipe", "12.5", "ft", "2", "23 21 13", "M201, M202")
