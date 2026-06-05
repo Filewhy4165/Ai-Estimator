@@ -48,6 +48,15 @@ _REVIEWED_LINE_ITEM_CSV_FIELDS = [
     "source_id",
     "label",
 ]
+_REVIEWED_LINE_ITEM_ROLLUP_CSV_FIELDS = [
+    "trade",
+    "quantity_name",
+    "quantity",
+    "unit",
+    "line_count",
+    "cost_code",
+    "source_sheets",
+]
 _THEME = {
     "app_bg": "#05070D",
     "surface": "#10151D",
@@ -435,6 +444,18 @@ def reviewed_takeoff_line_item_rollup_values(row: dict[str, Any]) -> tuple[str, 
         str(row.get("cost_code", "")).strip() or "-",
         str(row.get("source_sheets", "")).strip() or "-",
     )
+
+
+def reviewed_takeoff_line_item_rollup_csv_row(row: dict[str, Any]) -> dict[str, str]:
+    values = reviewed_takeoff_line_item_rollup_values(row)
+    return dict(zip(_REVIEWED_LINE_ITEM_ROLLUP_CSV_FIELDS, values))
+
+
+def reviewed_takeoff_line_item_rollup_csv_rows(items: object) -> list[dict[str, str]]:
+    return [
+        reviewed_takeoff_line_item_rollup_csv_row(row)
+        for row in reviewed_takeoff_line_item_rollups(items)
+    ]
 
 
 class HoverTooltip:
@@ -2421,12 +2442,19 @@ class DesktopEstimatorApp:
         )
 
         rollup_tab.columnconfigure(0, weight=1)
-        rollup_tab.rowconfigure(1, weight=1)
+        rollup_tab.rowconfigure(2, weight=1)
         ttk.Label(rollup_tab, textvariable=self.reviewed_rollup_banner_text, style="FormLabel.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 6)
         )
+        rollup_actions = ttk.Frame(rollup_tab)
+        rollup_actions.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(
+            rollup_actions,
+            text="Save Rollup CSV",
+            command=self._save_reviewed_line_items_rollup_csv,
+        ).grid(row=0, column=0, sticky="w")
         rollup_table_frame = ttk.Frame(rollup_tab)
-        rollup_table_frame.grid(row=1, column=0, sticky="nsew")
+        rollup_table_frame.grid(row=2, column=0, sticky="nsew")
         rollup_table_frame.columnconfigure(0, weight=1)
         rollup_table_frame.rowconfigure(0, weight=1)
         self.reviewed_line_items_rollup_tree = ttk.Treeview(
@@ -7395,6 +7423,49 @@ class DesktopEstimatorApp:
         self.status_text.set(f"Saved {len(csv_rows)} reviewed takeoff line(s): {path}")
         self._set_output_text(
             f"Saved reviewed takeoff CSV:\n{path}\n\nRows: {len(csv_rows)}\nTotals: {totals_text}"
+        )
+
+    def _save_reviewed_line_items_rollup_csv(self) -> None:
+        items = self._filtered_reviewed_line_items()
+        csv_rows = reviewed_takeoff_line_item_rollup_csv_rows(items)
+        if not csv_rows:
+            self._set_output_text(
+                "No grouped reviewed takeoff totals match the current filters. Load a completed job or choose a different Work Type/Item."
+            )
+            return
+
+        selected_trade = self.reviewed_line_items_filter_trade.get().strip() or _REVIEWED_LINE_ITEMS_ALL_FILTER
+        selected_item = self.reviewed_line_items_filter_item.get().strip() or _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER
+        safe_trade = re.sub(r"[^A-Za-z0-9_.-]+", "_", selected_trade).strip("_") or "all"
+        safe_item = re.sub(r"[^A-Za-z0-9_.-]+", "_", selected_item).strip("_") or "all"
+        job_id = self.current_job_id.get().strip() or "job"
+        initial_name = f"reviewed-takeoff-rollup-{job_id[:8]}-{safe_trade}-{safe_item}.csv"
+        path = filedialog.asksaveasfilename(
+            title="Save reviewed takeoff rollup",
+            defaultextension=".csv",
+            initialdir=str(self._results_dir()),
+            initialfile=initial_name,
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            self.status_text.set("Reviewed takeoff rollup CSV export canceled.")
+            return
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=_REVIEWED_LINE_ITEM_ROLLUP_CSV_FIELDS)
+                writer.writeheader()
+                writer.writerows(csv_rows)
+        except Exception as exc:
+            self._set_output_text(f"Failed to save reviewed takeoff rollup CSV:\n{exc}")
+            return
+
+        totals_text = format_reviewed_takeoff_line_item_totals(
+            reviewed_takeoff_line_item_totals_by_unit(items)
+        )
+        self.status_text.set(f"Saved {len(csv_rows)} reviewed takeoff rollup row(s): {path}")
+        self._set_output_text(
+            f"Saved reviewed takeoff rollup CSV:\n{path}\n\nRows: {len(csv_rows)}\nTotals: {totals_text}"
         )
 
     def _selected_reviewed_line_item(self) -> dict[str, Any] | None:
