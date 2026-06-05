@@ -160,6 +160,9 @@ def test_visual_evidence_endpoint_is_tenant_scoped(monkeypatch, tmp_path):
     assert save_payload["quantity_takeoff"]["linear"]["classified_visual_takeoff_by_item_ft"] == {
         "conduit": 10.0
     }
+    assert save_payload["quantity_takeoff"]["line_items"][0]["trade"] == "electrical"
+    assert save_payload["quantity_takeoff"]["line_items"][0]["quantity_name"] == "conduit"
+    assert save_payload["quantity_takeoff"]["line_items"][0]["quantity"] == 10.0
 
     measurement_payload = service_app.get_job_visual_measurements(
         "job-a",
