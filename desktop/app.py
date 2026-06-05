@@ -264,6 +264,37 @@ def filter_reviewed_takeoff_line_items(items: object, selected_trade: str) -> li
     ]
 
 
+def reviewed_takeoff_line_item_totals_by_unit(items: object) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    if not isinstance(items, list):
+        return totals
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            continue
+        raw_quantity = raw_item.get("quantity")
+        if isinstance(raw_quantity, (int, float)):
+            quantity = float(raw_quantity)
+        elif isinstance(raw_quantity, str):
+            try:
+                quantity = float(raw_quantity.strip())
+            except ValueError:
+                continue
+        else:
+            continue
+        unit = str(raw_item.get("unit", "")).strip() or "unit"
+        totals[unit] = round(totals.get(unit, 0.0) + quantity, 6)
+    return totals
+
+
+def format_reviewed_takeoff_line_item_totals(totals: dict[str, float]) -> str:
+    if not totals:
+        return "none"
+    return ", ".join(
+        f"{quantity:g} {unit}"
+        for unit, quantity in sorted(totals.items(), key=lambda item: item[0].casefold())
+    )
+
+
 class HoverTooltip:
     def __init__(
         self,
@@ -7032,8 +7063,11 @@ class DesktopEstimatorApp:
         filter_text = ""
         if selected_trade and selected_trade != _REVIEWED_LINE_ITEMS_ALL_FILTER:
             filter_text = f" | filtered to {selected_trade}"
+        totals_text = format_reviewed_takeoff_line_item_totals(
+            reviewed_takeoff_line_item_totals_by_unit(filtered_items)
+        )
         self.reviewed_line_items_banner_text.set(
-            f"Reviewed takeoff line items: {inserted} shown of {len(self.reviewed_line_items_all)} total{filter_text}{overflow_text}."
+            f"Reviewed takeoff line items: {inserted} shown of {len(self.reviewed_line_items_all)} total{filter_text} | totals: {totals_text}{overflow_text}."
         )
 
     def _on_reviewed_line_item_filter_change(self, _event: object = None) -> None:
