@@ -141,6 +141,69 @@ def validate_selected_trade_scope(
     return selected_tokens
 
 
+def format_reviewed_takeoff_lines_payload(
+    payload: dict[str, Any],
+    *,
+    current_job_id: str = "",
+) -> str:
+    job_id = str(payload.get("job_id", "")).strip() or current_job_id.strip()
+    items = payload.get("line_items", [])
+    summary = payload.get("summary", {})
+    lines = [
+        "Reviewed Takeoff Lines",
+        f"Job: {job_id or 'unknown'}",
+        f"Items: {payload.get('item_count', 0)}",
+    ]
+    if isinstance(summary, dict):
+        total_by_unit = summary.get("total_by_unit", {})
+        if isinstance(total_by_unit, dict) and total_by_unit:
+            totals = ", ".join(
+                f"{value} {unit}" for unit, value in sorted(total_by_unit.items())
+            )
+            lines.append(f"Total: {totals}")
+    lines.append("")
+
+    if not isinstance(items, list) or not items:
+        lines.extend(
+            [
+                "No reviewed takeoff line items found yet.",
+                "",
+                "To create these:",
+                "1. Open a completed job.",
+                "2. Select a sheet in Sheet Navigator.",
+                "3. Click Measure Scale Visually.",
+                "4. Draw a measurement, check Include this measurement in the takeoff, choose work type/item, and save.",
+            ]
+        )
+        return "\n".join(lines)
+
+    for index, raw_item in enumerate(items[:500], start=1):
+        if not isinstance(raw_item, dict):
+            continue
+        trade = str(raw_item.get("trade", "")).strip() or "unknown work type"
+        name = str(raw_item.get("quantity_name", "")).strip() or "line item"
+        quantity = raw_item.get("quantity", "")
+        unit = str(raw_item.get("unit", "")).strip()
+        description = str(raw_item.get("description", "")).strip()
+        cost_code = str(raw_item.get("cost_code", "")).strip()
+        sheet = str(raw_item.get("sheet_id", "")).strip()
+        page = str(raw_item.get("source_page_index", "") or "").strip()
+        source = f"{sheet}" if sheet else "sheet unknown"
+        if page:
+            source += f" page {page}"
+        detail_parts = [f"{index}. {trade} - {name}: {quantity} {unit}".strip()]
+        if description:
+            detail_parts.append(f"description: {description}")
+        if cost_code:
+            detail_parts.append(f"cost code: {cost_code}")
+        detail_parts.append(f"source: {source}")
+        lines.append(" | ".join(detail_parts))
+
+    if isinstance(items, list) and len(items) > 500:
+        lines.append(f"... {len(items) - 500} more line item(s) not shown.")
+    return "\n".join(lines)
+
+
 class HoverTooltip:
     def __init__(
         self,
@@ -1966,11 +2029,14 @@ class DesktopEstimatorApp:
         ttk.Button(summary_actions, text="Open Estimator Report", command=self._open_estimator_report).grid(
             row=0, column=1, sticky="w", padx=(8, 0)
         )
-        ttk.Button(summary_actions, text="Spec Compliance", command=self._show_spec_compliance_report).grid(
+        ttk.Button(summary_actions, text="Show Reviewed Takeoff Lines", command=self._show_reviewed_takeoff_lines).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
-        ttk.Button(summary_actions, text="Export Handoff Package", command=self._export_handoff_package).grid(
+        ttk.Button(summary_actions, text="Spec Compliance", command=self._show_spec_compliance_report).grid(
             row=0, column=3, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(summary_actions, text="Export Handoff Package", command=self._export_handoff_package).grid(
+            row=0, column=4, sticky="w", padx=(8, 0)
         )
         summary_table_frame = ttk.Frame(summary_tab)
         summary_table_frame.grid(row=2, column=0, sticky="nsew")
@@ -3465,6 +3531,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Export Takeoff Spreadsheet",
                 "pro_tip": "Save current job quantities as CSV rows for Excel or pricing handoff.",
                 "beginner_tip": "Save the takeoff as a spreadsheet file you can open in Excel.",
+            },
+            "show_reviewed_takeoff_lines": {
+                "pro_label": "Show Reviewed Takeoff Lines",
+                "beginner_label": "Show Checked Takeoff Items",
+                "pro_tip": "Fetch estimator-reviewed takeoff line items with trade, item type, quantity, unit, cost code, and source sheet.",
+                "beginner_tip": "Show the takeoff items you manually checked and marked to include.",
             },
             "open_estimator_report": {
                 "pro_label": "Open Estimator Report",
@@ -7833,6 +7905,40 @@ class DesktopEstimatorApp:
             on_success=on_success,
             failure_heading="Failed to export takeoff CSV",
             failure_status="Takeoff CSV export failed.",
+        )
+
+    def _show_reviewed_takeoff_lines(self) -> None:
+        try:
+            job_id = self._resolve_completed_job_id()
+        except Exception as exc:
+            self._set_output_text(f"Failed to resolve completed job:\n{exc}")
+            return
+
+        def worker() -> dict:
+            return self._request_json(
+                "GET",
+                f"/v1/jobs/{job_id}/takeoff-line-items",
+                timeout=60,
+            )
+
+        def on_success(payload: dict) -> None:
+            self._set_output_text(
+                format_reviewed_takeoff_lines_payload(
+                    payload,
+                    current_job_id=self.current_job_id.get().strip(),
+                )
+            )
+            item_count = int(payload.get("item_count", 0) or 0)
+            self.status_text.set(
+                f"Reviewed takeoff lines loaded for job {job_id}: {item_count} item(s)."
+            )
+
+        self._start_background_action(
+            message=f"Loading reviewed takeoff line items for job {job_id}...",
+            worker=worker,
+            on_success=on_success,
+            failure_heading="Failed to load reviewed takeoff lines",
+            failure_status="Reviewed takeoff line load failed.",
         )
 
     def _open_estimator_report(self) -> None:
