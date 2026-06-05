@@ -117,6 +117,11 @@ def test_visual_measurement_page_embeds_svg_and_calibration_controls():
     assert 'data-sheet-id="A101"' in page
     assert 'id="measuredPdfUnits"' in page
     assert 'id="knownLengthFt"' in page
+    assert 'id="takeoffToggle"' in page
+    assert 'id="tradeSelect"' in page
+    assert 'id="measurementTypeSelect"' in page
+    assert 'id="descriptionInput"' in page
+    assert "Plumbing / pipe" in page
     assert 'id="measurementList"' in page
     assert "Add Measurement" in page
     assert "Delete Selected" in page
@@ -160,6 +165,7 @@ def test_save_visual_measurements_persists_annotations_and_updates_takeoff():
             "source_page_index": 1,
             "trade": "manual_review",
             "measurement_type": "visual_length",
+            "is_takeoff_item": False,
             "a": {"x": 0.0, "y": 0.0},
             "b": {"x": 30.0, "y": 40.0},
             "measured_pdf_units": 50.0,
@@ -170,7 +176,51 @@ def test_save_visual_measurements_persists_annotations_and_updates_takeoff():
     assert linear["manual_visual_measurements_count"] == 1
     assert linear["manual_visual_measurements_total_pdf_units"] == 50.0
     assert linear["manual_visual_measurements_known_total_ft"] == 10.0
+    assert "classified_visual_takeoff_total_ft" not in linear
     assert updated is not result
+
+
+def test_classified_visual_measurements_update_takeoff_lines():
+    result = _result_with_vector_data()
+    updated, payload = save_visual_measurements_to_result(
+        result=result,
+        sheet_id="A101",
+        source_page_index=1,
+        measurements=[
+            {
+                "id": "m-pipe",
+                "label": "M3",
+                "a": {"x": 0, "y": 0},
+                "b": {"x": 0, "y": 70},
+                "known_length_ft": 35,
+                "trade": "plumbing",
+                "measurement_type": "pipe",
+                "description": "2 inch copper pipe",
+                "assembly": "Domestic water pipe",
+                "cost_code": "22 11 16",
+                "is_takeoff_item": True,
+            }
+        ],
+    )
+
+    assert payload["measurement_count"] == 1
+    saved = payload["measurements"][0]
+    assert saved["trade"] == "plumbing"
+    assert saved["measurement_type"] == "pipe"
+    assert saved["is_takeoff_item"] is True
+    assert saved["description"] == "2 inch copper pipe"
+    assert saved["cost_code"] == "22 11 16"
+
+    linear = updated["quantity_takeoff"]["linear"]
+    assert linear["manual_visual_measurements_count"] == 1
+    assert linear["classified_visual_takeoff_count"] == 1
+    assert linear["classified_visual_takeoff_total_ft"] == 35.0
+    assert linear["classified_visual_takeoff_by_trade_ft"] == {"plumbing": 35.0}
+    assert linear["classified_visual_takeoff_by_item_ft"] == {"pipe": 35.0}
+    assert linear["classified_visual_takeoff_by_cost_code_ft"] == {"22 11 16": 35.0}
+    assert updated["quantity_takeoff"]["by_trade"]["plumbing"]["linear"][
+        "classified_visual_takeoff_total_ft"
+    ] == 35.0
 
 
 def test_scale_calibration_preview_converts_vector_units_to_feet():

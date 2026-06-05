@@ -235,7 +235,7 @@ def build_visual_measurement_page(
       font-size: 13px;
       font-weight: 700;
     }}
-    input {{
+    input, select {{
       width: 100%;
       padding: 10px 11px;
       border: 1px solid #334155;
@@ -243,6 +243,22 @@ def build_visual_measurement_page(
       background: #071018;
       color: var(--text);
       font-size: 14px;
+    }}
+    .check-row {{
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid #2e4056;
+      border-radius: 10px;
+      background: rgba(7, 16, 24, 0.74);
+      color: var(--text);
+      cursor: pointer;
+    }}
+    .check-row input {{
+      width: auto;
+      accent-color: var(--cyan);
     }}
     button {{
       width: 100%;
@@ -376,6 +392,39 @@ def build_visual_measurement_page(
         <input id="measuredPdfUnits" />
         <label for="knownLengthFt">Known Real Length (feet)</label>
         <input id="knownLengthFt" placeholder="Example: 24" />
+        <label class="check-row" for="takeoffToggle">
+          <input id="takeoffToggle" type="checkbox" />
+          Include this measurement in the takeoff
+        </label>
+        <label for="tradeSelect">Work Type</label>
+        <select id="tradeSelect">
+          <option value="manual_review">Review only / not priced</option>
+          <option value="plumbing">Plumbing / pipe</option>
+          <option value="mechanical">Mechanical / HVAC</option>
+          <option value="electrical">Electrical / conduit</option>
+          <option value="architectural">Architectural</option>
+          <option value="structural">Structural</option>
+          <option value="civil_site">Civil / site</option>
+          <option value="concrete">Concrete</option>
+          <option value="interiors_finishes">Finishes</option>
+        </select>
+        <label for="measurementTypeSelect">Takeoff Item</label>
+        <select id="measurementTypeSelect">
+          <option value="visual_length">Review measurement only</option>
+          <option value="linear_item">Other linear item</option>
+          <option value="pipe">Pipe</option>
+          <option value="duct">Duct</option>
+          <option value="conduit">Conduit</option>
+          <option value="wall">Wall</option>
+          <option value="curb">Curb</option>
+          <option value="sawcut">Sawcut</option>
+          <option value="trench">Trench</option>
+          <option value="formwork">Formwork</option>
+        </select>
+        <label for="descriptionInput">Description</label>
+        <input id="descriptionInput" placeholder="Example: 2 inch copper pipe above ceiling" />
+        <label for="assemblyInput">Assembly or Cost Code</label>
+        <input id="assemblyInput" placeholder="Example: 22 11 16 / P-001" />
         <div class="button-row">
           <button type="button" id="resetBtn">Reset Selected</button>
           <button type="button" class="danger" id="deleteMeasurementBtn">Delete Selected</button>
@@ -398,6 +447,11 @@ def build_visual_measurement_page(
     const pointBInput = document.getElementById("pointB");
     const measuredInput = document.getElementById("measuredPdfUnits");
     const knownInput = document.getElementById("knownLengthFt");
+    const takeoffToggle = document.getElementById("takeoffToggle");
+    const tradeSelect = document.getElementById("tradeSelect");
+    const measurementTypeSelect = document.getElementById("measurementTypeSelect");
+    const descriptionInput = document.getElementById("descriptionInput");
+    const assemblyInput = document.getElementById("assemblyInput");
     const tenantInput = document.getElementById("tenantId");
     const apiKeyInput = document.getElementById("apiKey");
     const measurementList = document.getElementById("measurementList");
@@ -414,6 +468,29 @@ def build_visual_measurement_page(
     let saveReady = false;
     let saveTimer = null;
     svg.style.touchAction = "none";
+    const tradeLabels = {{
+      manual_review: "Review only",
+      plumbing: "Plumbing",
+      mechanical: "Mechanical / HVAC",
+      electrical: "Electrical",
+      architectural: "Architectural",
+      structural: "Structural",
+      civil_site: "Civil / site",
+      concrete: "Concrete",
+      interiors_finishes: "Finishes",
+    }};
+    const itemLabels = {{
+      visual_length: "Review measurement",
+      linear_item: "Linear item",
+      pipe: "Pipe",
+      duct: "Duct",
+      conduit: "Conduit",
+      wall: "Wall",
+      curb: "Curb",
+      sawcut: "Sawcut",
+      trench: "Trench",
+      formwork: "Formwork",
+    }};
 
     function setStatus(value) {{
       statusBox.textContent = value;
@@ -467,6 +544,12 @@ def build_visual_measurement_page(
         b: null,
         manualPdfUnits: "",
         knownLengthFt: "",
+        trade: "manual_review",
+        measurementType: "visual_length",
+        description: "",
+        assembly: "",
+        costCode: "",
+        isTakeoffItem: false,
       }};
       nextMeasurementNumber += 1;
       measurements.push(measurement);
@@ -486,6 +569,12 @@ def build_visual_measurement_page(
           b: pointFromStored(raw.b),
           manualPdfUnits: raw.measured_pdf_units ? String(raw.measured_pdf_units) : "",
           knownLengthFt: raw.known_length_ft ? String(raw.known_length_ft) : "",
+          trade: String(raw.trade || "manual_review"),
+          measurementType: String(raw.measurement_type || "visual_length"),
+          description: String(raw.description || ""),
+          assembly: String(raw.assembly || ""),
+          costCode: String(raw.cost_code || ""),
+          isTakeoffItem: Boolean(raw.is_takeoff_item),
         }};
         const numberMatch = measurement.label.match(/^M(\d+)$/i);
         if (numberMatch) maxNumber = Math.max(maxNumber, Number(numberMatch[1]));
@@ -518,6 +607,12 @@ def build_visual_measurement_page(
       const manual = measuredInput.value.trim();
       const geometric = active.a && active.b ? distance(active.a, active.b).toFixed(6) : "";
       active.manualPdfUnits = manual && manual !== geometric ? manual : "";
+      active.isTakeoffItem = Boolean(takeoffToggle.checked);
+      active.trade = tradeSelect.value || "manual_review";
+      active.measurementType = measurementTypeSelect.value || "visual_length";
+      active.description = descriptionInput.value.trim();
+      active.assembly = assemblyInput.value.trim();
+      active.costCode = assemblyInput.value.trim();
     }}
 
     function selectMeasurement(id) {{
@@ -542,6 +637,11 @@ def build_visual_measurement_page(
         measuredInput.value = "";
       }}
       knownInput.value = active ? active.knownLengthFt : "";
+      takeoffToggle.checked = Boolean(active && active.isTakeoffItem);
+      tradeSelect.value = active ? active.trade || "manual_review" : "manual_review";
+      measurementTypeSelect.value = active ? active.measurementType || "visual_length" : "visual_length";
+      descriptionInput.value = active ? active.description || "" : "";
+      assemblyInput.value = active ? active.assembly || active.costCode || "" : "";
     }}
 
     function renderMeasurementList() {{
@@ -572,7 +672,11 @@ def build_visual_measurement_page(
         meta.className = "measurement-meta";
         const pdfUnits = measurementPdfUnits(measurement);
         const known = measurement.knownLengthFt ? ` | known ${{measurement.knownLengthFt}} ft` : "";
-        meta.textContent = pdfUnits > 0 ? `${{pdfUnits.toFixed(4)}} PDF units${{known}}` : "Click two endpoints on the drawing.";
+        const tradeLabel = tradeLabels[measurement.trade] || measurement.trade || "Review only";
+        const itemLabel = itemLabels[measurement.measurementType] || measurement.measurementType || "Review measurement";
+        const takeoffText = measurement.isTakeoffItem ? `${{tradeLabel}} / ${{itemLabel}}` : "Review only";
+        const baseText = pdfUnits > 0 ? `${{pdfUnits.toFixed(4)}} PDF units${{known}}` : "Click two endpoints on the drawing.";
+        meta.textContent = `${{baseText}} | ${{takeoffText}}`;
 
         button.append(title, meta);
         measurementList.appendChild(button);
@@ -743,6 +847,19 @@ def build_visual_measurement_page(
       renderMeasurementList();
       scheduleSave();
     }});
+    function metadataInputChanged(options = {{}}) {{
+      if (options.promoteTakeoffItem && takeoffToggle.checked && measurementTypeSelect.value === "visual_length") {{
+        measurementTypeSelect.value = "linear_item";
+      }}
+      syncActiveFromInputs();
+      renderMeasurementList();
+      scheduleSave();
+    }}
+    takeoffToggle.addEventListener("change", () => metadataInputChanged({{ promoteTakeoffItem: true }}));
+    tradeSelect.addEventListener("change", metadataInputChanged);
+    measurementTypeSelect.addEventListener("change", metadataInputChanged);
+    descriptionInput.addEventListener("input", metadataInputChanged);
+    assemblyInput.addEventListener("input", metadataInputChanged);
 
     function measurementForStorage(measurement) {{
       const measured = measurementPdfUnits(measurement);
@@ -754,6 +871,12 @@ def build_visual_measurement_page(
         source_page_index: sourcePageIndex,
         a: measurement.a,
         b: measurement.b,
+        trade: measurement.trade || "manual_review",
+        measurement_type: measurement.measurementType || "visual_length",
+        description: measurement.description || "",
+        assembly: measurement.assembly || "",
+        cost_code: measurement.costCode || measurement.assembly || "",
+        is_takeoff_item: Boolean(measurement.isTakeoffItem),
       }};
       if (Number.isFinite(measured) && measured > 0) row.measured_pdf_units = Number(measured.toFixed(6));
       if (Number.isFinite(known) && known > 0) row.known_length_ft = Number(known.toFixed(6));
@@ -1237,8 +1360,16 @@ def _normalize_visual_measurement(
     if measured is None and point_a and point_b:
         measured = _distance_points(point_a, point_b)
     known = _positive_float(row.get("known_length_ft", row.get("knownLengthFt")))
-    trade = str(row.get("trade", "manual_review")).strip() or "manual_review"
-    measurement_type = str(row.get("measurement_type", "visual_length")).strip() or "visual_length"
+    trade = _safe_short_text(row.get("trade"), fallback="manual_review", max_chars=60)
+    measurement_type = _safe_short_text(
+        row.get("measurement_type", row.get("measurementType")),
+        fallback="visual_length",
+        max_chars=60,
+    )
+    description = _safe_optional_text(row.get("description"), max_chars=180)
+    assembly = _safe_optional_text(row.get("assembly"), max_chars=100)
+    cost_code = _safe_optional_text(row.get("cost_code", row.get("costCode")), max_chars=100)
+    is_takeoff_item = _to_bool(row.get("is_takeoff_item", row.get("isTakeoffItem")))
 
     normalized: dict[str, Any] = {
         "id": measurement_id,
@@ -1247,6 +1378,7 @@ def _normalize_visual_measurement(
         "source_page_index": source_page_index,
         "trade": trade,
         "measurement_type": measurement_type,
+        "is_takeoff_item": is_takeoff_item,
     }
     if point_a is not None:
         normalized["a"] = point_a
@@ -1256,6 +1388,12 @@ def _normalize_visual_measurement(
         normalized["measured_pdf_units"] = round(measured, 6)
     if known is not None:
         normalized["known_length_ft"] = round(known, 6)
+    if description:
+        normalized["description"] = description
+    if assembly:
+        normalized["assembly"] = assembly
+    if cost_code:
+        normalized["cost_code"] = cost_code
     return normalized
 
 
@@ -1293,6 +1431,21 @@ def _safe_short_text(value: Any, *, fallback: str, max_chars: int = 80) -> str:
     if not token:
         token = fallback
     return token[:max_chars]
+
+
+def _safe_optional_text(value: Any, *, max_chars: int = 120) -> str:
+    token = str(value or "").strip()
+    return token[:max_chars]
+
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
 
 
 def _merge_result_issues(updated_result: dict[str, Any], new_issues: list[str]) -> None:
