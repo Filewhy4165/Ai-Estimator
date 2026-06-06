@@ -75,6 +75,7 @@ _THEME = {
     "magenta": "#FF3DD7",
     "danger": "#FF3B4F",
 }
+_BASE_THEME = dict(_THEME)
 _THEME_PRESETS: dict[str, dict[str, str]] = {
     "construction_orange": {
         "cyan": "#19E6FF",
@@ -100,6 +101,42 @@ _THEME_PRESETS: dict[str, dict[str, str]] = {
         "lime": "#B5FF5E",
         "magenta": "#F973C1",
     },
+    "clearpath_teal": {
+        "cyan": "#38E8FF",
+        "cyan_dim": "#1B7986",
+        "amber": "#FFC857",
+        "orange": "#FF8A3D",
+        "lime": "#A8FF5A",
+        "magenta": "#FF6B8A",
+        "danger": "#FF4F61",
+    },
+}
+_THEME_PRESET_OPTIONS = tuple(_THEME_PRESETS.keys())
+_THEME_SURFACE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
+    "clearpath_teal": {
+        "dark": {
+            "app_bg": "#071012",
+            "surface": "#0F1D21",
+            "surface_2": "#13252A",
+            "surface_3": "#183038",
+            "field": "#071012",
+            "field_focus": "#0A1518",
+            "text": "#EFFDFA",
+            "muted": "#8DA6A5",
+            "line": "#274247",
+        },
+        "light": {
+            "app_bg": "#EDF8F6",
+            "surface": "#F7FFFD",
+            "surface_2": "#E4F5F2",
+            "surface_3": "#D2EAE6",
+            "field": "#FFFFFF",
+            "field_focus": "#EAFBFA",
+            "text": "#061214",
+            "muted": "#416161",
+            "line": "#B1CFCC",
+        },
+    },
 }
 _DARK_SURFACES = {
     "app_bg": "#05070D",
@@ -123,6 +160,22 @@ _LIGHT_SURFACES = {
     "muted": "#334155",
     "line": "#9FB2CC",
 }
+
+
+def resolve_theme_palette(preset: str, dark_mode: bool) -> dict[str, str]:
+    normalized_preset = preset.strip() or "construction_orange"
+    if normalized_preset not in _THEME_PRESETS:
+        normalized_preset = "construction_orange"
+
+    surfaces = _DARK_SURFACES if dark_mode else _LIGHT_SURFACES
+    mode_key = "dark" if dark_mode else "light"
+    surface_overrides = _THEME_SURFACE_OVERRIDES.get(normalized_preset, {}).get(mode_key, {})
+    return {
+        **_BASE_THEME,
+        **surfaces,
+        **surface_overrides,
+        **_THEME_PRESETS[normalized_preset],
+    }
 _OUTPUT_JSON_PREVIEW_MAX_CHARS = 240_000
 _OUTPUT_JSON_FULL_RENDER_MAX_CHARS = 1_500_000
 _OUTPUT_LOG_MAX_CHARS = 180_000
@@ -829,17 +882,10 @@ class DesktopEstimatorApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _resolve_theme_palette(self) -> dict[str, str]:
-        preset = self.theme_preset.get().strip() or "construction_orange"
-        if preset not in _THEME_PRESETS:
-            preset = "construction_orange"
-        surfaces = _DARK_SURFACES if bool(self.dark_mode_enabled.get()) else _LIGHT_SURFACES
-        palette = {
-            **_THEME,
-            **surfaces,
-            **_THEME_PRESETS[preset],
-        }
-        palette["danger"] = "#FF3B4F"
-        return palette
+        return resolve_theme_palette(
+            self.theme_preset.get(),
+            bool(self.dark_mode_enabled.get()),
+        )
 
     def _apply_visual_theme(self, *, update_status: bool) -> None:
         palette = self._resolve_theme_palette()
@@ -1587,11 +1633,7 @@ class DesktopEstimatorApp:
             textvariable=self.theme_preset,
             state="readonly",
             width=18,
-            values=[
-                "construction_orange",
-                "electric_blue",
-                "lime_steel",
-            ],
+            values=_THEME_PRESET_OPTIONS,
         )
         self.theme_combo.grid(row=0, column=9, sticky="w")
         ttk.Checkbutton(
