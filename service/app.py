@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from importlib import metadata
 import os
 import re
 import shutil
@@ -51,6 +52,18 @@ from service.visual_review import (
     list_visual_measurements,
     save_visual_measurements_to_result,
 )
+
+
+def _resolve_app_version() -> str:
+    try:
+        return metadata.version("ai-estimator")
+    except metadata.PackageNotFoundError:
+        return "0.1.0"
+
+
+APP_VERSION = _resolve_app_version()
+SERVICE_STARTED_AT = datetime.now(timezone.utc).isoformat()
+SERVICE_PROCESS_ID = os.getpid()
 
 
 def _resolve_cors_origins() -> list[str]:
@@ -315,7 +328,7 @@ class BenchmarkDashboardResponse(BaseModel):
     warnings: list[str]
 
 
-app = FastAPI(title="AI Estimator Service", version="0.1.0")
+app = FastAPI(title="AI Estimator Service", version=APP_VERSION)
 _cors_origins = _resolve_cors_origins()
 app.add_middleware(
     CORSMiddleware,
@@ -350,8 +363,14 @@ async def require_api_key_when_configured(request: Request, call_next):  # type:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "db_path": _get_job_store().db_path}
+def health() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "app_version": APP_VERSION,
+        "started_at": SERVICE_STARTED_AT,
+        "process_id": SERVICE_PROCESS_ID,
+        "db_path": _get_job_store().db_path,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)

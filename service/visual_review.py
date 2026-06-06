@@ -710,7 +710,7 @@ def build_visual_measurement_page(
           costCode: String(raw.cost_code || ""),
           isTakeoffItem: Boolean(raw.is_takeoff_item),
         }};
-        const numberMatch = measurement.label.match(/^M(\d+)$/i);
+        const numberMatch = measurement.label.match(/^M(\\d+)$/i);
         if (numberMatch) maxNumber = Math.max(maxNumber, Number(numberMatch[1]));
         measurements.push(measurement);
       }}
