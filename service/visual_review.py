@@ -549,6 +549,28 @@ def build_visual_measurement_page(
       trench: "Trench",
       formwork: "Formwork",
     }};
+    const tradeItemValues = {{
+      manual_review: ["visual_length"],
+      plumbing: ["pipe", "trench", "linear_item"],
+      mechanical: ["duct", "pipe", "linear_item"],
+      electrical: ["conduit", "trench", "linear_item"],
+      architectural: ["wall", "linear_item"],
+      structural: ["wall", "formwork", "linear_item"],
+      civil_site: ["curb", "sawcut", "trench", "linear_item"],
+      concrete: ["formwork", "sawcut", "curb", "linear_item"],
+      interiors_finishes: ["wall", "linear_item"],
+    }};
+    const defaultItemByTrade = {{
+      manual_review: "visual_length",
+      plumbing: "pipe",
+      mechanical: "duct",
+      electrical: "conduit",
+      architectural: "wall",
+      structural: "wall",
+      civil_site: "curb",
+      concrete: "formwork",
+      interiors_finishes: "wall",
+    }};
 
     function setStatus(value) {{
       statusBox.textContent = value;
@@ -583,6 +605,29 @@ def build_visual_measurement_page(
 
     function zoomBy(delta) {{
       applyZoom(zoomPercent + delta);
+    }}
+
+    function itemValuesForTrade(trade) {{
+      const values = tradeItemValues[trade] || ["visual_length", "linear_item"];
+      return Array.from(new Set(["visual_length", ...values]));
+    }}
+
+    function rebuildMeasurementTypeOptions(selectedValue = "visual_length", options = {{}}) {{
+      const preserveUnknown = Boolean(options.preserveUnknown);
+      const trade = tradeSelect.value || "manual_review";
+      const values = itemValuesForTrade(trade);
+      if (preserveUnknown && selectedValue && !values.includes(selectedValue)) {{
+        values.push(selectedValue);
+      }}
+      measurementTypeSelect.replaceChildren();
+      for (const value of values) {{
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = itemLabels[value] || value;
+        measurementTypeSelect.appendChild(option);
+      }}
+      const fallback = defaultItemByTrade[trade] || "visual_length";
+      measurementTypeSelect.value = values.includes(selectedValue) ? selectedValue : fallback;
     }}
 
     function headers() {{
@@ -728,7 +773,8 @@ def build_visual_measurement_page(
       knownInput.value = active ? active.knownLengthFt : "";
       takeoffToggle.checked = Boolean(active && active.isTakeoffItem);
       tradeSelect.value = active ? active.trade || "manual_review" : "manual_review";
-      measurementTypeSelect.value = active ? active.measurementType || "visual_length" : "visual_length";
+      const activeItemType = active ? active.measurementType || "visual_length" : "visual_length";
+      rebuildMeasurementTypeOptions(activeItemType, {{ preserveUnknown: true }});
       descriptionInput.value = active ? active.description || "" : "";
       assemblyInput.value = active ? active.assembly || active.costCode || "" : "";
     }}
@@ -970,7 +1016,13 @@ def build_visual_measurement_page(
       scheduleSave();
     }}
     takeoffToggle.addEventListener("change", () => metadataInputChanged({{ promoteTakeoffItem: true }}));
-    tradeSelect.addEventListener("change", metadataInputChanged);
+    tradeSelect.addEventListener("change", () => {{
+      const currentItem = measurementTypeSelect.value || "visual_length";
+      const defaultItem = defaultItemByTrade[tradeSelect.value] || currentItem;
+      const nextItem = takeoffToggle.checked && currentItem === "visual_length" ? defaultItem : currentItem;
+      rebuildMeasurementTypeOptions(nextItem);
+      metadataInputChanged({{ promoteTakeoffItem: true }});
+    }});
     measurementTypeSelect.addEventListener("change", metadataInputChanged);
     descriptionInput.addEventListener("input", metadataInputChanged);
     assemblyInput.addEventListener("input", metadataInputChanged);

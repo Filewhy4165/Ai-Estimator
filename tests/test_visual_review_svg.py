@@ -130,6 +130,11 @@ def test_visual_measurement_page_embeds_svg_and_calibration_controls():
     assert "function applyZoom(percent)" in page
     assert "fitPageBtn.addEventListener" in page
     assert 'event.key === "0"' in page
+    assert "const tradeItemValues" in page
+    assert "plumbing: [\"pipe\", \"trench\", \"linear_item\"]" in page
+    assert "electrical: [\"conduit\", \"trench\", \"linear_item\"]" in page
+    assert "function rebuildMeasurementTypeOptions" in page
+    assert "preserveUnknown: true" in page
     assert 'id="measurementList"' in page
     assert 'aria-label="Measurement totals"' in page
     assert 'id="completeMeasurementCount"' in page
