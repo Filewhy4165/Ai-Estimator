@@ -76,6 +76,8 @@ _THEME = {
     "danger": "#FF3B4F",
 }
 _BASE_THEME = dict(_THEME)
+_DEFAULT_THEME_PRESET = "clearpath_teal"
+_LEGACY_DEFAULT_THEME_PRESETS = {"construction_orange"}
 _THEME_PRESETS: dict[str, dict[str, str]] = {
     "construction_orange": {
         "cyan": "#19E6FF",
@@ -162,10 +164,17 @@ _LIGHT_SURFACES = {
 }
 
 
-def resolve_theme_palette(preset: str, dark_mode: bool) -> dict[str, str]:
-    normalized_preset = preset.strip() or "construction_orange"
+def resolve_theme_preset(preset: str, *, migrate_legacy_default: bool = False) -> str:
+    normalized_preset = preset.strip() or _DEFAULT_THEME_PRESET
+    if migrate_legacy_default and normalized_preset in _LEGACY_DEFAULT_THEME_PRESETS:
+        return _DEFAULT_THEME_PRESET
     if normalized_preset not in _THEME_PRESETS:
-        normalized_preset = "construction_orange"
+        return _DEFAULT_THEME_PRESET
+    return normalized_preset
+
+
+def resolve_theme_palette(preset: str, dark_mode: bool) -> dict[str, str]:
+    normalized_preset = resolve_theme_preset(preset)
 
     surfaces = _DARK_SURFACES if dark_mode else _LIGHT_SURFACES
     mode_key = "dark" if dark_mode else "light"
@@ -732,7 +741,7 @@ class DesktopEstimatorApp:
         self.heavy_depth_inches = StringVar(value="6")
         self.heavy_swell_percent = StringVar(value="15")
         self.heavy_calc_result = StringVar(value="Heavy earthwork calculator ready.")
-        self.theme_preset = StringVar(value="construction_orange")
+        self.theme_preset = StringVar(value=_DEFAULT_THEME_PRESET)
         self.dark_mode_enabled = BooleanVar(value=True)
         self.banner_animation_enabled = BooleanVar(value=True)
         self.auto_poll_interval_ms = 2000
@@ -2826,7 +2835,7 @@ class DesktopEstimatorApp:
 
         theme_preset = str(payload.get("theme_preset", self.theme_preset.get())).strip()
         if theme_preset not in _THEME_PRESETS:
-            theme_preset = "construction_orange"
+            theme_preset = _DEFAULT_THEME_PRESET
 
         files_value = payload.get("files", [])
         files: list[str] = []
@@ -2924,7 +2933,7 @@ class DesktopEstimatorApp:
         self.guided_run_objective.set(
             str(normalized.get("guided_run_objective", "takeoff_and_estimation")).strip()
         )
-        self.theme_preset.set(str(normalized.get("theme_preset", "construction_orange")).strip())
+        self.theme_preset.set(str(normalized.get("theme_preset", _DEFAULT_THEME_PRESET)).strip())
         self.dark_mode_enabled.set(bool(normalized.get("dark_mode_enabled", True)))
         self.banner_animation_enabled.set(bool(normalized.get("banner_animation_enabled", True)))
 
@@ -8382,7 +8391,9 @@ class DesktopEstimatorApp:
 
         theme_preset = loaded.get("theme_preset")
         if isinstance(theme_preset, str) and theme_preset in _THEME_PRESETS:
-            self.theme_preset.set(theme_preset)
+            self.theme_preset.set(
+                resolve_theme_preset(theme_preset, migrate_legacy_default=True)
+            )
 
         dark_mode_enabled = loaded.get("dark_mode_enabled")
         if isinstance(dark_mode_enabled, bool):
