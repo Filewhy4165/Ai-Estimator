@@ -326,6 +326,13 @@ def build_visual_measurement_page(
       overflow: auto;
       padding-right: 2px;
     }}
+    .measurement-summary {{
+      margin-top: 10px;
+      padding: 8px 10px;
+      border: 1px solid #263244;
+      border-radius: 10px;
+      background: rgba(7, 16, 24, 0.58);
+    }}
     .measurement-card {{
       width: 100%;
       margin: 0;
@@ -419,6 +426,12 @@ def build_visual_measurement_page(
         </div>
         <label>Saved Measurements</label>
         <div class="measurement-list" id="measurementList"></div>
+        <div class="measurement-summary" aria-label="Measurement totals">
+          <div class="metric"><span>Complete Measurements</span><strong id="completeMeasurementCount">0</strong></div>
+          <div class="metric"><span>Included in Takeoff</span><strong id="takeoffMeasurementCount">0</strong></div>
+          <div class="metric"><span>Total PDF Units</span><strong id="totalPdfUnits">0</strong></div>
+          <div class="metric"><span>Total Known Feet</span><strong id="totalKnownFeet">0</strong></div>
+        </div>
         <label for="pointA">Point A</label>
         <input id="pointA" readonly />
         <label for="pointB">Point B</label>
@@ -495,6 +508,10 @@ def build_visual_measurement_page(
     const tenantInput = document.getElementById("tenantId");
     const apiKeyInput = document.getElementById("apiKey");
     const measurementList = document.getElementById("measurementList");
+    const completeMeasurementCount = document.getElementById("completeMeasurementCount");
+    const takeoffMeasurementCount = document.getElementById("takeoffMeasurementCount");
+    const totalPdfUnits = document.getElementById("totalPdfUnits");
+    const totalKnownFeet = document.getElementById("totalKnownFeet");
     const sheetId = document.getElementById("sheetId").textContent.trim();
     const sourcePageIndex = Number(document.getElementById("pageIndex").textContent.trim()) || null;
     const jobId = document.getElementById("jobId").textContent.trim();
@@ -755,6 +772,30 @@ def build_visual_measurement_page(
       }}
     }}
 
+    function formatTotal(value, digits = 4) {{
+      if (!Number.isFinite(value) || value <= 0) return "0";
+      return Number(value.toFixed(digits)).toLocaleString();
+    }}
+
+    function updateMeasurementTotals() {{
+      let completeCount = 0;
+      let takeoffCount = 0;
+      let pdfTotal = 0;
+      let knownTotal = 0;
+      for (const measurement of measurements) {{
+        if (measurement.a && measurement.b) completeCount += 1;
+        if (measurement.isTakeoffItem) takeoffCount += 1;
+        const measured = measurementPdfUnits(measurement);
+        if (Number.isFinite(measured) && measured > 0) pdfTotal += measured;
+        const known = Number(measurement.knownLengthFt);
+        if (Number.isFinite(known) && known > 0) knownTotal += known;
+      }}
+      completeMeasurementCount.textContent = String(completeCount);
+      takeoffMeasurementCount.textContent = String(takeoffCount);
+      totalPdfUnits.textContent = formatTotal(pdfTotal);
+      totalKnownFeet.textContent = `${{formatTotal(knownTotal, 2)}} ft`;
+    }}
+
     function resetOverlay() {{
       if (overlayGroup) overlayGroup.remove();
       overlayGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -802,6 +843,7 @@ def build_visual_measurement_page(
     function renderAll() {{
       if (!activeMeasurementId && measurements.length) activeMeasurementId = measurements[0].id;
       renderMeasurementList();
+      updateMeasurementTotals();
       drawMeasurements();
       updateInputsFromActive();
     }}

@@ -131,6 +131,12 @@ def test_visual_measurement_page_embeds_svg_and_calibration_controls():
     assert "fitPageBtn.addEventListener" in page
     assert 'event.key === "0"' in page
     assert 'id="measurementList"' in page
+    assert 'aria-label="Measurement totals"' in page
+    assert 'id="completeMeasurementCount"' in page
+    assert 'id="takeoffMeasurementCount"' in page
+    assert 'id="totalPdfUnits"' in page
+    assert 'id="totalKnownFeet"' in page
+    assert "function updateMeasurementTotals()" in page
     assert "Add Measurement" in page
     assert "Delete Selected" in page
     assert "window.addEventListener(\"pointermove\", updateDraggedEndpoint)" in page
