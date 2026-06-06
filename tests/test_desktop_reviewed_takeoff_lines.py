@@ -1,6 +1,7 @@
 from desktop.app import (
     DesktopEstimatorApp,
     filter_reviewed_takeoff_line_items,
+    format_api_health_payload,
     format_reviewed_takeoff_line_item_totals,
     format_reviewed_takeoff_lines_payload,
     reviewed_takeoff_line_item_csv_row,
@@ -58,6 +59,31 @@ def test_format_reviewed_takeoff_lines_payload_explains_empty_state() -> None:
     assert "Job: job-empty" in text
     assert "No reviewed takeoff line items found yet." in text
     assert "Measure Scale Visually" in text
+
+
+def test_format_api_health_payload_shows_build_process_and_database_details() -> None:
+    text = format_api_health_payload(
+        {
+            "status": "ok",
+            "app_version": "0.1.0",
+            "process_id": 1234,
+            "started_at": "2026-06-06T16:00:00+00:00",
+            "db_path": "C:/tmp/jobs.db",
+        }
+    )
+
+    assert "Status: ok" in text
+    assert "Version: 0.1.0" in text
+    assert "Process ID: 1234" in text
+    assert "Started: 2026-06-06T16:00:00+00:00" in text
+    assert "Database: C:/tmp/jobs.db" in text
+
+
+def test_format_api_health_payload_warns_when_metadata_is_missing() -> None:
+    text = format_api_health_payload({"status": "ok"})
+
+    assert "Version: not reported" in text
+    assert "restart the local server" in text
 
 
 def test_reviewed_takeoff_line_item_values_are_table_ready() -> None:
@@ -456,6 +482,7 @@ def test_reviewed_takeoff_controls_have_beginner_help_specs() -> None:
         "save_filtered_reviewed_csv",
         "save_rollup_csv",
         "show_selected_rollup_detail",
+        "check_api_health",
     ]:
         spec = specs[key]
         assert spec["pro_label"]

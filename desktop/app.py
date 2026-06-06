@@ -229,6 +229,35 @@ def format_reviewed_takeoff_lines_payload(
     return "\n".join(lines)
 
 
+def format_api_health_payload(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return "API Health\nStatus: unknown\n\nThe server did not return a JSON object."
+
+    status = str(payload.get("status", "unknown")).strip() or "unknown"
+    app_version = str(payload.get("app_version", "")).strip()
+    process_id = str(payload.get("process_id", "")).strip()
+    started_at = str(payload.get("started_at", "")).strip()
+    db_path = str(payload.get("db_path", "")).strip()
+
+    lines = [
+        "API Health",
+        f"Status: {status}",
+        f"Version: {app_version or 'not reported'}",
+        f"Process ID: {process_id or 'not reported'}",
+        f"Started: {started_at or 'not reported'}",
+        f"Database: {db_path or 'not reported'}",
+    ]
+    if status != "ok":
+        lines.append("")
+        lines.append("Warning: API status is not ok.")
+    if not app_version or not process_id or not started_at:
+        lines.append("")
+        lines.append(
+            "Note: This server did not report full build metadata. If the app was just updated, restart the local server."
+        )
+    return "\n".join(lines)
+
+
 def reviewed_takeoff_line_item_values(raw_item: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
     trade = str(raw_item.get("trade", "")).strip() or "unknown work type"
     quantity_name = str(raw_item.get("quantity_name", "")).strip() or "line item"
@@ -1531,6 +1560,9 @@ class DesktopEstimatorApp:
         )
         ttk.Button(api_row, text="Shutdown API", command=self._shutdown_local_api_clicked).grid(
             row=0, column=3, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(api_row, text="Check API Health", command=self._check_api_health_clicked).grid(
+            row=0, column=4, sticky="w", padx=(8, 0)
         )
         ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
             row=0, column=5, sticky="w", padx=(8, 0)
@@ -3643,6 +3675,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Stop Server",
                 "pro_tip": "Stop the local backend process started by this desktop app.",
                 "beginner_tip": "Turn off the local server this app started.",
+            },
+            "check_api_health": {
+                "pro_label": "Check API Health",
+                "beginner_label": "Check Server Details",
+                "pro_tip": "Call the API health endpoint and show status, version, process ID, start time, and database path.",
+                "beginner_tip": "Show which local server is running and whether it may need a restart.",
             },
             "load_saved_project": {
                 "pro_label": "Load Saved Project",
@@ -8436,6 +8474,25 @@ class DesktopEstimatorApp:
                 self.status_text.set("No local API process was tracked by this app.")
         except Exception as exc:
             self._set_output_text(f"Failed to shut down local API:\n{exc}")
+
+    def _check_api_health_clicked(self) -> None:
+        try:
+            payload = self._request_json("GET", "/health", timeout=10)
+            self._set_output_text(format_api_health_payload(payload))
+            if isinstance(payload, dict) and payload.get("status") == "ok":
+                version = str(payload.get("app_version", "")).strip()
+                process_id = str(payload.get("process_id", "")).strip()
+                detail = []
+                if version:
+                    detail.append(f"version {version}")
+                if process_id:
+                    detail.append(f"pid {process_id}")
+                suffix = f" ({', '.join(detail)})" if detail else ""
+                self.status_text.set(f"API health ok{suffix}.")
+            else:
+                self.status_text.set("API health check returned a non-ok status.")
+        except Exception as exc:
+            self._set_output_text(f"Failed to check API health:\n{exc}")
 
     def _restart_local_api_clicked(self) -> None:
         if not self._is_local_api_base(self.api_url.get()):
