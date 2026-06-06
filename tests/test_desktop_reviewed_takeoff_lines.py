@@ -6,6 +6,7 @@ from desktop.app import (
     reviewed_takeoff_line_item_csv_row,
     reviewed_takeoff_line_item_csv_rows,
     reviewed_takeoff_line_item_rollup_values,
+    reviewed_takeoff_line_item_rollup_filter_values,
     reviewed_takeoff_line_item_rollups,
     reviewed_takeoff_line_item_rollup_csv_row,
     reviewed_takeoff_line_item_rollup_csv_rows,
@@ -313,6 +314,26 @@ def test_reviewed_takeoff_line_item_rollup_values_are_table_ready() -> None:
     assert values == ("mechanical", "pipe", "12.5", "ft", "2", "23 21 13", "M201, M202")
 
 
+def test_reviewed_takeoff_line_item_rollup_filter_values_match_detail_filters() -> None:
+    filters = reviewed_takeoff_line_item_rollup_filter_values(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "quantity": 12.5,
+            "unit": "ft",
+        }
+    )
+
+    assert filters == ("mechanical", "pipe")
+
+
+def test_reviewed_takeoff_line_item_rollup_filter_values_fill_missing_fields() -> None:
+    assert reviewed_takeoff_line_item_rollup_filter_values({}) == (
+        "unknown work type",
+        "line item",
+    )
+
+
 def test_reviewed_takeoff_line_item_rollup_csv_row_matches_export_fields() -> None:
     row = reviewed_takeoff_line_item_rollup_csv_row(
         {
@@ -381,6 +402,7 @@ def test_reviewed_takeoff_controls_have_beginner_help_specs() -> None:
         "open_selected_line_source",
         "save_filtered_reviewed_csv",
         "save_rollup_csv",
+        "show_selected_rollup_detail",
     ]:
         spec = specs[key]
         assert spec["pro_label"]

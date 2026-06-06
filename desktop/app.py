@@ -446,6 +446,13 @@ def reviewed_takeoff_line_item_rollup_values(row: dict[str, Any]) -> tuple[str, 
     )
 
 
+def reviewed_takeoff_line_item_rollup_filter_values(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row.get("trade", "")).strip() or "unknown work type",
+        str(row.get("quantity_name", "")).strip() or "line item",
+    )
+
+
 def reviewed_takeoff_line_item_rollup_csv_row(row: dict[str, Any]) -> dict[str, str]:
     values = reviewed_takeoff_line_item_rollup_values(row)
     return dict(zip(_REVIEWED_LINE_ITEM_ROLLUP_CSV_FIELDS, values))
@@ -740,6 +747,7 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_tree: ttk.Treeview | None = None
         self.reviewed_line_items_rollup_tree: ttk.Treeview | None = None
         self.reviewed_line_items_by_tree_id: dict[str, dict[str, Any]] = {}
+        self.reviewed_line_items_rollup_by_tree_id: dict[str, dict[str, Any]] = {}
         self.reviewed_line_items_all: list[dict[str, Any]] = []
         self.reviewed_line_items_filter_combo: ttk.Combobox | None = None
         self.reviewed_line_items_item_filter_combo: ttk.Combobox | None = None
@@ -2453,6 +2461,11 @@ class DesktopEstimatorApp:
             text="Save Rollup CSV",
             command=self._save_reviewed_line_items_rollup_csv,
         ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            rollup_actions,
+            text="Show Selected Detail",
+            command=self._show_selected_reviewed_rollup_detail,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
         rollup_table_frame = ttk.Frame(rollup_tab)
         rollup_table_frame.grid(row=2, column=0, sticky="nsew")
         rollup_table_frame.columnconfigure(0, weight=1)
@@ -2464,6 +2477,8 @@ class DesktopEstimatorApp:
             height=14,
         )
         self.reviewed_line_items_rollup_tree.grid(row=0, column=0, sticky="nsew")
+        self.reviewed_line_items_rollup_tree.bind("<<TreeviewSelect>>", self._on_reviewed_rollup_select)
+        self.reviewed_line_items_rollup_tree.bind("<Double-1>", self._show_selected_reviewed_rollup_detail)
         for key, title, width, anchor in [
             ("trade", "Work Type", 150, "w"),
             ("item", "Measured Item", 180, "w"),
@@ -3971,6 +3986,12 @@ class DesktopEstimatorApp:
                 "beginner_label": "Save Grouped Totals",
                 "pro_tip": "Save the grouped reviewed takeoff totals from the Takeoff Rollup tab as a CSV spreadsheet.",
                 "beginner_tip": "Save the grouped totals table to an Excel-friendly file.",
+            },
+            "show_selected_rollup_detail": {
+                "pro_label": "Show Selected Detail",
+                "beginner_label": "Show These Measurements",
+                "pro_tip": "Filter the reviewed takeoff line table to the selected grouped rollup's work type and measured item.",
+                "beginner_tip": "Show the individual checked measurements that make up the selected grouped total.",
             },
             "open_estimator_report": {
                 "pro_label": "Open Estimator Report",
@@ -7356,6 +7377,7 @@ class DesktopEstimatorApp:
         selected_item: str,
     ) -> None:
         tree = self.reviewed_line_items_rollup_tree
+        self.reviewed_line_items_rollup_by_tree_id = {}
         self._clear_tree_rows(tree)
         if tree is None:
             return
@@ -7368,7 +7390,8 @@ class DesktopEstimatorApp:
             return
 
         for row in rollups:
-            tree.insert("", END, values=reviewed_takeoff_line_item_rollup_values(row))
+            tree_item_id = tree.insert("", END, values=reviewed_takeoff_line_item_rollup_values(row))
+            self.reviewed_line_items_rollup_by_tree_id[tree_item_id] = row
 
         totals_text = format_reviewed_takeoff_line_item_totals(
             reviewed_takeoff_line_item_totals_by_unit(items)
@@ -7382,6 +7405,48 @@ class DesktopEstimatorApp:
         self.reviewed_rollup_banner_text.set(
             f"Grouped reviewed takeoff totals: {len(rollups)} row(s), {len(items)} measurement(s), totals: {totals_text}.{filter_text}"
         )
+
+    def _selected_reviewed_rollup_row(self) -> dict[str, Any] | None:
+        tree = self.reviewed_line_items_rollup_tree
+        if tree is None:
+            return None
+        selection = tree.selection()
+        if not selection:
+            return None
+        row = self.reviewed_line_items_rollup_by_tree_id.get(selection[0])
+        return row if isinstance(row, dict) else None
+
+    def _on_reviewed_rollup_select(self, _event: object = None) -> None:
+        row = self._selected_reviewed_rollup_row()
+        if not row:
+            return
+        trade, item = reviewed_takeoff_line_item_rollup_filter_values(row)
+        unit = str(row.get("unit", "")).strip() or "unit"
+        quantity = reviewed_takeoff_line_item_rollup_values(row)[2]
+        self.status_text.set(
+            f"Selected grouped total: {quantity} {unit} for {trade} / {item}. Double-click or use Show Selected Detail."
+        )
+
+    def _show_selected_reviewed_rollup_detail(self, _event: object = None) -> None:
+        row = self._selected_reviewed_rollup_row()
+        if not row:
+            self._set_output_text(
+                "Select a grouped total in the Takeoff Rollup tab first, then click Show Selected Detail."
+            )
+            return
+
+        trade, item = reviewed_takeoff_line_item_rollup_filter_values(row)
+        self.reviewed_line_items_filter_trade.set(trade)
+        item_options = reviewed_takeoff_item_filter_options(self.reviewed_line_items_all, trade)
+        self.reviewed_line_items_filter_item.set(
+            item if item in item_options else _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER
+        )
+        self._refresh_reviewed_line_item_filter_options()
+        self._render_reviewed_line_items_tree()
+        if self.results_notebook is not None:
+            self.results_notebook.select(0)
+        shown_count = len(self._filtered_reviewed_line_items())
+        self.status_text.set(f"Showing {shown_count} detail line(s) for grouped total: {trade} / {item}.")
 
     def _on_reviewed_line_item_filter_change(self, _event: object = None) -> None:
         self._refresh_reviewed_line_item_filter_options()
