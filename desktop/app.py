@@ -453,6 +453,28 @@ def reviewed_takeoff_line_item_rollup_filter_values(row: dict[str, Any]) -> tupl
     )
 
 
+def reviewed_takeoff_line_item_rollup_match_values(row: dict[str, Any]) -> tuple[str, str, str, str]:
+    trade, quantity_name = reviewed_takeoff_line_item_rollup_filter_values(row)
+    return (
+        trade,
+        quantity_name,
+        str(row.get("unit", "")).strip() or "unit",
+        str(row.get("cost_code", "")).strip() or "-",
+    )
+
+
+def reviewed_takeoff_line_item_matches_rollup(raw_item: object, row: dict[str, Any]) -> bool:
+    if not isinstance(raw_item, dict):
+        return False
+    raw_values = (
+        str(raw_item.get("trade", "")).strip() or "unknown work type",
+        str(raw_item.get("quantity_name", "")).strip() or "line item",
+        str(raw_item.get("unit", "")).strip() or "unit",
+        str(raw_item.get("cost_code", "")).strip() or "-",
+    )
+    return raw_values == reviewed_takeoff_line_item_rollup_match_values(row)
+
+
 def reviewed_takeoff_line_item_rollup_csv_row(row: dict[str, Any]) -> dict[str, str]:
     values = reviewed_takeoff_line_item_rollup_values(row)
     return dict(zip(_REVIEWED_LINE_ITEM_ROLLUP_CSV_FIELDS, values))
@@ -749,6 +771,7 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_by_tree_id: dict[str, dict[str, Any]] = {}
         self.reviewed_line_items_rollup_by_tree_id: dict[str, dict[str, Any]] = {}
         self.reviewed_line_items_all: list[dict[str, Any]] = []
+        self.reviewed_line_items_active_rollup_filter: dict[str, Any] | None = None
         self.reviewed_line_items_filter_combo: ttk.Combobox | None = None
         self.reviewed_line_items_item_filter_combo: ttk.Combobox | None = None
         self.sheet_navigator_tree: ttk.Treeview | None = None
@@ -7295,6 +7318,7 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_all = [
             raw_item for raw_item in items if isinstance(raw_item, dict)
         ] if isinstance(items, list) else []
+        self.reviewed_line_items_active_rollup_filter = None
         self._refresh_reviewed_line_item_filter_options()
         self._render_reviewed_line_items_tree()
 
@@ -7332,11 +7356,7 @@ class DesktopEstimatorApp:
 
         selected_trade = self.reviewed_line_items_filter_trade.get().strip()
         selected_item = self.reviewed_line_items_filter_item.get().strip()
-        filtered_items = filter_reviewed_takeoff_line_items(
-            self.reviewed_line_items_all,
-            selected_trade,
-            selected_item,
-        )
+        filtered_items = self._filtered_reviewed_line_items()
         if not filtered_items:
             item_suffix = ""
             if selected_item and selected_item != _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER:
@@ -7362,6 +7382,11 @@ class DesktopEstimatorApp:
             filter_text = f" | filtered to {selected_trade}"
         if selected_item and selected_item != _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER:
             filter_text += f" / {selected_item}"
+        exact_rollup = self.reviewed_line_items_active_rollup_filter
+        if isinstance(exact_rollup, dict):
+            unit = str(exact_rollup.get("unit", "")).strip() or "unit"
+            cost_code = str(exact_rollup.get("cost_code", "")).strip() or "-"
+            filter_text += f" | exact rollup {unit}, cost code {cost_code}"
         totals_text = format_reviewed_takeoff_line_item_totals(
             reviewed_takeoff_line_item_totals_by_unit(filtered_items)
         )
@@ -7441,6 +7466,7 @@ class DesktopEstimatorApp:
         self.reviewed_line_items_filter_item.set(
             item if item in item_options else _REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER
         )
+        self.reviewed_line_items_active_rollup_filter = row
         self._refresh_reviewed_line_item_filter_options()
         self._render_reviewed_line_items_tree()
         if self.results_notebook is not None:
@@ -7449,21 +7475,31 @@ class DesktopEstimatorApp:
         self.status_text.set(f"Showing {shown_count} detail line(s) for grouped total: {trade} / {item}.")
 
     def _on_reviewed_line_item_filter_change(self, _event: object = None) -> None:
+        self.reviewed_line_items_active_rollup_filter = None
         self._refresh_reviewed_line_item_filter_options()
         self._render_reviewed_line_items_tree()
 
     def _clear_reviewed_line_item_filter(self) -> None:
+        self.reviewed_line_items_active_rollup_filter = None
         self.reviewed_line_items_filter_trade.set(_REVIEWED_LINE_ITEMS_ALL_FILTER)
         self.reviewed_line_items_filter_item.set(_REVIEWED_LINE_ITEMS_ALL_ITEM_FILTER)
         self._refresh_reviewed_line_item_filter_options()
         self._render_reviewed_line_items_tree()
 
     def _filtered_reviewed_line_items(self) -> list[dict[str, Any]]:
-        return filter_reviewed_takeoff_line_items(
+        items = filter_reviewed_takeoff_line_items(
             self.reviewed_line_items_all,
             self.reviewed_line_items_filter_trade.get(),
             self.reviewed_line_items_filter_item.get(),
         )
+        exact_rollup = self.reviewed_line_items_active_rollup_filter
+        if not isinstance(exact_rollup, dict):
+            return items
+        return [
+            raw_item
+            for raw_item in items
+            if reviewed_takeoff_line_item_matches_rollup(raw_item, exact_rollup)
+        ]
 
     def _save_filtered_reviewed_line_items_csv(self) -> None:
         items = self._filtered_reviewed_line_items()
