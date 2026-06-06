@@ -7,9 +7,11 @@ from desktop.app import (
     reviewed_takeoff_line_item_csv_rows,
     reviewed_takeoff_line_item_rollup_values,
     reviewed_takeoff_line_item_rollup_filter_values,
+    reviewed_takeoff_line_item_rollup_match_values,
     reviewed_takeoff_line_item_rollups,
     reviewed_takeoff_line_item_rollup_csv_row,
     reviewed_takeoff_line_item_rollup_csv_rows,
+    reviewed_takeoff_line_item_matches_rollup,
     reviewed_takeoff_line_item_source,
     reviewed_takeoff_line_item_totals_by_unit,
     reviewed_takeoff_item_filter_options,
@@ -332,6 +334,57 @@ def test_reviewed_takeoff_line_item_rollup_filter_values_fill_missing_fields() -
         "unknown work type",
         "line item",
     )
+
+
+def test_reviewed_takeoff_line_item_rollup_match_values_include_unit_and_cost_code() -> None:
+    values = reviewed_takeoff_line_item_rollup_match_values(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "unit": "ft",
+            "cost_code": "23 21 13",
+        }
+    )
+
+    assert values == ("mechanical", "pipe", "ft", "23 21 13")
+
+
+def test_reviewed_takeoff_line_item_matches_rollup_requires_exact_grouping() -> None:
+    row = {
+        "trade": "mechanical",
+        "quantity_name": "pipe",
+        "unit": "ft",
+        "cost_code": "23 21 13",
+    }
+
+    assert reviewed_takeoff_line_item_matches_rollup(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "unit": "ft",
+            "cost_code": "23 21 13",
+        },
+        row,
+    )
+    assert not reviewed_takeoff_line_item_matches_rollup(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "unit": "lf",
+            "cost_code": "23 21 13",
+        },
+        row,
+    )
+    assert not reviewed_takeoff_line_item_matches_rollup(
+        {
+            "trade": "mechanical",
+            "quantity_name": "pipe",
+            "unit": "ft",
+            "cost_code": "22 11 16",
+        },
+        row,
+    )
+    assert not reviewed_takeoff_line_item_matches_rollup("bad row", row)
 
 
 def test_reviewed_takeoff_line_item_rollup_csv_row_matches_export_fields() -> None:
