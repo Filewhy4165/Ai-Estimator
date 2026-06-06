@@ -122,6 +122,14 @@ def test_visual_measurement_page_embeds_svg_and_calibration_controls():
     assert 'id="measurementTypeSelect"' in page
     assert 'id="descriptionInput"' in page
     assert "Plumbing / pipe" in page
+    assert 'id="fitPageBtn"' in page
+    assert 'id="actualSizeBtn"' in page
+    assert 'id="zoomOutBtn"' in page
+    assert 'id="zoomInBtn"' in page
+    assert 'id="zoomLabel"' in page
+    assert "function applyZoom(percent)" in page
+    assert "fitPageBtn.addEventListener" in page
+    assert 'event.key === "0"' in page
     assert 'id="measurementList"' in page
     assert "Add Measurement" in page
     assert "Delete Selected" in page

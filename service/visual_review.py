@@ -199,11 +199,39 @@ def build_visual_measurement_page(
       position: relative;
       min-width: 0;
     }}
+    .viewer-toolbar {{
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 10px;
+      padding: 8px;
+      border: 1px solid #29384c;
+      border-radius: 10px;
+      background: rgba(7, 16, 24, 0.94);
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+    }}
+    .viewer-toolbar button {{
+      width: auto;
+      min-width: 86px;
+      margin: 0;
+      padding: 8px 10px;
+      font-size: 12px;
+    }}
+    .viewer-toolbar span {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      margin-left: auto;
+    }}
     .viewer svg {{
       display: block;
       width: auto;
       max-width: 100%;
-      max-height: 100%;
+      max-height: none;
       height: auto;
       cursor: crosshair;
       border-radius: 10px;
@@ -362,6 +390,13 @@ def build_visual_measurement_page(
   </header>
   <main>
     <section class="viewer" id="viewer">
+      <div class="viewer-toolbar" aria-label="Drawing zoom controls">
+        <button type="button" id="fitPageBtn">Fit Page</button>
+        <button type="button" id="actualSizeBtn">100%</button>
+        <button type="button" id="zoomOutBtn">Zoom Out</button>
+        <button type="button" id="zoomInBtn">Zoom In</button>
+        <span id="zoomLabel">Fit Page</span>
+      </div>
       {svg}
     </section>
     <aside class="tools">
@@ -442,6 +477,11 @@ def build_visual_measurement_page(
   <script>
     const svg = document.querySelector(".viewer svg");
     const viewer = document.getElementById("viewer");
+    const fitPageBtn = document.getElementById("fitPageBtn");
+    const actualSizeBtn = document.getElementById("actualSizeBtn");
+    const zoomOutBtn = document.getElementById("zoomOutBtn");
+    const zoomInBtn = document.getElementById("zoomInBtn");
+    const zoomLabel = document.getElementById("zoomLabel");
     const statusBox = document.getElementById("status");
     const pointAInput = document.getElementById("pointA");
     const pointBInput = document.getElementById("pointB");
@@ -465,6 +505,7 @@ def build_visual_measurement_page(
     let overlayGroup = null;
     let draggingEndpoint = null;
     let suppressNextClick = false;
+    let zoomPercent = 100;
     let saveReady = false;
     let saveTimer = null;
     svg.style.touchAction = "none";
@@ -494,6 +535,37 @@ def build_visual_measurement_page(
 
     function setStatus(value) {{
       statusBox.textContent = value;
+    }}
+
+    function svgNaturalWidth() {{
+      const viewBox = svg.viewBox && svg.viewBox.baseVal;
+      if (viewBox && Number.isFinite(viewBox.width) && viewBox.width > 0) return viewBox.width;
+      const width = Number(svg.getAttribute("width"));
+      return Number.isFinite(width) && width > 0 ? width : 1000;
+    }}
+
+    function updateZoomLabel(value) {{
+      zoomLabel.textContent = value;
+    }}
+
+    function fitPage() {{
+      zoomPercent = 100;
+      svg.style.maxWidth = "100%";
+      svg.style.width = "100%";
+      svg.style.height = "auto";
+      updateZoomLabel("Fit Page");
+    }}
+
+    function applyZoom(percent) {{
+      zoomPercent = Math.max(25, Math.min(500, Number(percent) || 100));
+      svg.style.maxWidth = "none";
+      svg.style.width = `${{svgNaturalWidth() * zoomPercent / 100}}px`;
+      svg.style.height = "auto";
+      updateZoomLabel(`${{zoomPercent}}%`);
+    }}
+
+    function zoomBy(delta) {{
+      applyZoom(zoomPercent + delta);
     }}
 
     function headers() {{
@@ -977,6 +1049,23 @@ def build_visual_measurement_page(
       const measurement = createMeasurement();
       setStatus(`${{measurement.label}} added. Click point A and point B on the drawing.`);
     }});
+    fitPageBtn.addEventListener("click", fitPage);
+    actualSizeBtn.addEventListener("click", () => applyZoom(100));
+    zoomOutBtn.addEventListener("click", () => zoomBy(-25));
+    zoomInBtn.addEventListener("click", () => zoomBy(25));
+    window.addEventListener("keydown", (event) => {{
+      if (!event.ctrlKey && !event.metaKey) return;
+      if (event.key === "+" || event.key === "=") {{
+        event.preventDefault();
+        zoomBy(25);
+      }} else if (event.key === "-") {{
+        event.preventDefault();
+        zoomBy(-25);
+      }} else if (event.key === "0") {{
+        event.preventDefault();
+        fitPage();
+      }}
+    }});
     document.getElementById("clearAllBtn").addEventListener("click", clearAllMeasurements);
     document.getElementById("resetBtn").addEventListener("click", resetSelected);
     document.getElementById("deleteMeasurementBtn").addEventListener("click", deleteSelected);
@@ -1020,6 +1109,7 @@ def build_visual_measurement_page(
         setStatus(`Apply failed:\n${{err.message}}`);
       }}
     }});
+    fitPage();
     hydrateSavedMeasurements();
     viewer.scrollTo({{ left: 0, top: 0, behavior: "instant" }});
   </script>
