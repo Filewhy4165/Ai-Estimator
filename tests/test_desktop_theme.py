@@ -1,5 +1,6 @@
 from desktop.app import (
     _DEFAULT_THEME_PRESET,
+    _THEME_PRESET_LABELS,
     _THEME_PRESET_OPTIONS,
     resolve_theme_palette,
     resolve_theme_preset,
@@ -9,6 +10,7 @@ from desktop.app import (
 def test_clearpath_theme_is_available_in_desktop_theme_options():
     assert _DEFAULT_THEME_PRESET == "clearpath_teal"
     assert "clearpath_teal" in _THEME_PRESET_OPTIONS
+    assert _THEME_PRESET_LABELS["clearpath_teal"] == "ClearPath Teal"
 
 
 def test_clearpath_theme_uses_clearpath_style_dark_palette():
@@ -38,3 +40,7 @@ def test_legacy_default_theme_migrates_to_clearpath_default():
         resolve_theme_preset("construction_orange", migrate_legacy_default=True)
         == "clearpath_teal"
     )
+
+
+def test_theme_menu_labels_cover_all_theme_options():
+    assert set(_THEME_PRESET_LABELS) == set(_THEME_PRESET_OPTIONS)
