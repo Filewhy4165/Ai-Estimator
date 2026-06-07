@@ -1028,6 +1028,36 @@ class DesktopEstimatorApp:
 
         style.configure("App.TFrame", background=p["app_bg"])
         style.configure("Hero.TFrame", background=p["app_bg"])
+        style.configure("Shell.TFrame", background=p["app_bg"])
+        style.configure("Workspace.TFrame", background=p["app_bg"])
+        style.configure(
+            "Sidebar.TFrame",
+            background=p["app_bg"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "TopBar.TFrame",
+            background=p["surface_2"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "Advisor.TFrame",
+            background=p["surface"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "Metric.TFrame",
+            background=p["surface"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="solid",
+        )
         style.configure("TFrame", background=p["surface"])
         style.configure(
             "Panel.TFrame",
@@ -1081,19 +1111,19 @@ class DesktopEstimatorApp:
             "Primary.TButton",
             padding=(14, 8),
             font=("Segoe UI Semibold", 9),
-            background=p["amber"],
-            foreground="#140E00",
-            bordercolor=p["orange"],
-            lightcolor=p["amber"],
-            darkcolor=p["amber"],
+            background=p["lime"],
+            foreground="#061113",
+            bordercolor=p["cyan"],
+            lightcolor=p["lime"],
+            darkcolor=p["lime"],
             borderwidth=1,
             relief="flat",
         )
         style.map(
             "Primary.TButton",
-            background=[("disabled", "#3B2D11"), ("pressed", p["orange"]), ("active", "#FFD166")],
-            foreground=[("disabled", "#8B7355"), ("active", "#05070D")],
-            bordercolor=[("active", p["lime"]), ("pressed", p["orange"])],
+            background=[("disabled", "#1B332A"), ("pressed", p["cyan_dim"]), ("active", p["cyan"])],
+            foreground=[("disabled", "#607879"), ("active", "#061113")],
+            bordercolor=[("active", p["lime"]), ("pressed", p["cyan"])],
             relief=[("pressed", "sunken"), ("!pressed", "flat")],
         )
         style.configure(
@@ -1110,6 +1140,38 @@ class DesktopEstimatorApp:
             "Accent.TButton",
             background=[("pressed", p["cyan_dim"]), ("active", p["lime"])],
             foreground=[("active", "#041016")],
+        )
+        style.configure(
+            "Nav.TButton",
+            padding=(12, 10),
+            font=("Segoe UI Semibold", 9),
+            background=p["app_bg"],
+            foreground=p["muted"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="flat",
+        )
+        style.map(
+            "Nav.TButton",
+            background=[("pressed", p["surface_3"]), ("active", p["surface_2"])],
+            foreground=[("active", p["text"]), ("pressed", p["cyan"])],
+            bordercolor=[("active", p["cyan"]), ("pressed", p["lime"])],
+        )
+        style.configure(
+            "Ghost.TButton",
+            padding=(12, 8),
+            font=("Segoe UI Semibold", 9),
+            background=p["surface_2"],
+            foreground=p["text"],
+            bordercolor=p["line"],
+            borderwidth=1,
+            relief="flat",
+        )
+        style.map(
+            "Ghost.TButton",
+            background=[("pressed", p["surface_3"]), ("active", p["surface_3"])],
+            foreground=[("active", p["cyan"])],
+            bordercolor=[("active", p["cyan"])],
         )
         style.configure(
             "TCheckbutton",
@@ -1245,6 +1307,18 @@ class DesktopEstimatorApp:
             background=p["app_bg"],
         )
         style.configure(
+            "TopBarTitle.TLabel",
+            font=("Segoe UI Semibold", 24),
+            foreground=p["text"],
+            background=p["surface_2"],
+        )
+        style.configure(
+            "TopBarSub.TLabel",
+            font=("Segoe UI", 10),
+            foreground=p["muted"],
+            background=p["surface_2"],
+        )
+        style.configure(
             "HeaderSub.TLabel",
             font=("Segoe UI", 10),
             foreground=p["muted"],
@@ -1254,8 +1328,59 @@ class DesktopEstimatorApp:
             "Signal.TLabel",
             font=("Segoe UI Semibold", 9),
             foreground=p["lime"],
-            background=p["app_bg"],
+            background=p["surface_2"],
             padding=(10, 5),
+        )
+        style.configure(
+            "RailBrand.TLabel",
+            font=("Segoe UI Semibold", 15),
+            foreground=p["text"],
+            background=p["app_bg"],
+        )
+        style.configure(
+            "RailSub.TLabel",
+            font=("Segoe UI", 8),
+            foreground=p["muted"],
+            background=p["app_bg"],
+        )
+        style.configure(
+            "RailGroup.TLabel",
+            font=("Segoe UI Semibold", 8),
+            foreground=p["muted"],
+            background=p["app_bg"],
+        )
+        style.configure(
+            "BrandMark.TLabel",
+            font=("Segoe UI Semibold", 16),
+            foreground=p["cyan"],
+            background=p["surface_2"],
+            padding=(9, 8),
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "MetricLabel.TLabel",
+            font=("Segoe UI Semibold", 8),
+            foreground=p["muted"],
+            background=p["surface"],
+        )
+        style.configure(
+            "MetricValue.TLabel",
+            font=("Segoe UI Semibold", 12),
+            foreground=p["text"],
+            background=p["surface"],
+        )
+        style.configure(
+            "AdvisorTitle.TLabel",
+            font=("Segoe UI Semibold", 13),
+            foreground=p["cyan"],
+            background=p["surface"],
+        )
+        style.configure(
+            "AdvisorText.TLabel",
+            font=("Segoe UI", 9),
+            foreground=p["muted"],
+            background=p["surface"],
         )
         style.configure(
             "StatusLabel.TLabel",
@@ -1513,6 +1638,140 @@ class DesktopEstimatorApp:
         self._bind_mousewheel_scrollable_canvas(canvas)
         return canvas, container
 
+    def _build_clearpath_sidebar(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        brand_row = ttk.Frame(parent, style="Sidebar.TFrame")
+        brand_row.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+        brand_row.columnconfigure(1, weight=1)
+        ttk.Label(brand_row, text="EF", style="BrandMark.TLabel").grid(
+            row=0, column=0, sticky="nw", padx=(0, 10)
+        )
+        ttk.Label(brand_row, text="EstimateForge", style="RailBrand.TLabel").grid(
+            row=0, column=1, sticky="sw"
+        )
+        ttk.Label(brand_row, text="AI construction command center", style="RailSub.TLabel").grid(
+            row=1, column=1, sticky="nw"
+        )
+
+        ttk.Label(parent, text="WORKFLOW", style="RailGroup.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(0, 6)
+        )
+        sidebar_actions = [
+            ("Load Drawing PDFs", self._choose_pdfs),
+            ("Run Takeoff", self._quick_start_run),
+            ("Open Latest Job", self._load_latest_job),
+            ("Open Results Folder", self._open_results_folder),
+        ]
+        for index, (label, command) in enumerate(sidebar_actions, start=2):
+            ttk.Button(parent, text=label, command=command, style="Nav.TButton").grid(
+                row=index, column=0, sticky="ew", pady=(0, 8)
+            )
+
+        ttk.Label(parent, text="REVIEW TOOLS", style="RailGroup.TLabel").grid(
+            row=7, column=0, sticky="w", pady=(12, 6)
+        )
+        review_actions = [
+            ("Sheet Review Queue", self._get_review_queue),
+            ("Visual Measure", self._open_visual_measurement_page),
+            ("Estimator Report", self._open_estimator_report),
+        ]
+        for index, (label, command) in enumerate(review_actions, start=8):
+            ttk.Button(parent, text=label, command=command, style="Ghost.TButton").grid(
+                row=index, column=0, sticky="ew", pady=(0, 8)
+            )
+
+        seal = ttk.Frame(parent, style="Metric.TFrame", padding=(12, 10))
+        seal.grid(row=12, column=0, sticky="sew", pady=(24, 0))
+        seal.columnconfigure(0, weight=1)
+        ttk.Label(seal, text="LOCAL-FIRST WORKFLOW", style="MetricValue.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            seal,
+            text="Drawings stay in your workspace unless you submit them to a configured API.",
+            style="AdvisorText.TLabel",
+            wraplength=190,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        parent.rowconfigure(11, weight=1)
+
+    def _add_metric_tile(
+        self,
+        parent: ttk.Frame,
+        *,
+        column: int,
+        title: str,
+        textvariable: StringVar,
+        tone: str,
+    ) -> None:
+        tile = ttk.Frame(parent, style="Metric.TFrame", padding=(12, 10))
+        tile.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 10, 0))
+        tile.columnconfigure(0, weight=1)
+        ttk.Label(tile, text=tone.upper(), style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(tile, text=title, style="MetricLabel.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(tile, textvariable=textvariable, style="MetricValue.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(5, 0)
+        )
+
+    def _build_clearpath_advisor(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        ttk.Label(parent, text="ESTIMATOR ADVISOR", style="AdvisorTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            parent,
+            text="Quick status, connection checks, and shortcuts stay visible while the estimate workspace remains centered.",
+            style="AdvisorText.TLabel",
+            wraplength=260,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 14))
+
+        status_card = ttk.Frame(parent, style="Metric.TFrame", padding=(12, 10))
+        status_card.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        status_card.columnconfigure(0, weight=1)
+        ttk.Label(status_card, text="CURRENT STATUS", style="MetricLabel.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            status_card,
+            textvariable=self.status_text,
+            style="MetricValue.TLabel",
+            wraplength=250,
+        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
+
+        ttk.Button(
+            parent,
+            text="Check API Health",
+            command=self._check_api_health_clicked,
+            style="Accent.TButton",
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(
+            parent,
+            text="Restart Local API",
+            command=self._restart_local_api_clicked,
+            style="Ghost.TButton",
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(
+            parent,
+            text="Control Guide",
+            command=self._show_control_guide,
+            style="Ghost.TButton",
+        ).grid(row=5, column=0, sticky="ew", pady=(0, 16))
+
+        ttk.Label(parent, text="ACTIVE THEME", style="MetricLabel.TLabel").grid(
+            row=6, column=0, sticky="w"
+        )
+        ttk.Label(parent, textvariable=self.theme_preset, style="MetricValue.TLabel").grid(
+            row=7, column=0, sticky="w", pady=(4, 14)
+        )
+        ttk.Label(parent, text="SHORTCUTS", style="MetricLabel.TLabel").grid(
+            row=8, column=0, sticky="w"
+        )
+        ttk.Label(
+            parent,
+            text="Ctrl+O loads PDFs\nCtrl+Enter submits a job\nF1 opens the control guide",
+            style="AdvisorText.TLabel",
+            wraplength=260,
+        ).grid(row=9, column=0, sticky="w", pady=(4, 0))
+
     def _build_ui(self) -> None:
         p = _THEME
         self.main_scroll_canvas, container = self._build_scrollable_surface(
@@ -1524,30 +1783,62 @@ class DesktopEstimatorApp:
             min_height=740,
         )
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(5, weight=1)
+        container.rowconfigure(0, weight=1)
 
         self._build_menu()
 
-        header = ttk.Frame(container, style="Hero.TFrame")
+        shell = ttk.Frame(container, style="Shell.TFrame")
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(1, weight=1)
+        shell.rowconfigure(0, weight=1)
+
+        sidebar = ttk.Frame(shell, style="Sidebar.TFrame", padding=(16, 18), width=248)
+        sidebar.grid(row=0, column=0, sticky="nsw", padx=(0, 16))
+        sidebar.grid_propagate(False)
+        self._build_clearpath_sidebar(sidebar)
+
+        workspace = ttk.Frame(shell, style="Workspace.TFrame")
+        workspace.grid(row=0, column=1, sticky="nsew")
+        workspace.columnconfigure(0, weight=1)
+        workspace.rowconfigure(5, weight=1)
+
+        advisor = ttk.Frame(shell, style="Advisor.TFrame", padding=(16, 18), width=320)
+        advisor.grid(row=0, column=2, sticky="nse", padx=(16, 0))
+        advisor.grid_propagate(False)
+        self._build_clearpath_advisor(advisor)
+
+        header = ttk.Frame(workspace, style="TopBar.TFrame", padding=(18, 16))
         header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="EstimateForge Command Center", style="HeaderTitle.TLabel").grid(
+        header.columnconfigure(1, weight=0)
+        ttk.Label(header, text="EstimateForge Command Center", style="TopBarTitle.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
             header,
             text="Construction takeoff, scope intelligence, benchmark gates, and handoff-ready estimating",
-            style="HeaderSub.TLabel",
+            style="TopBarSub.TLabel",
         ).grid(row=1, column=0, sticky="w")
         ttk.Label(header, text="MODEL PIPELINE ONLINE", style="Signal.TLabel").grid(
             row=0, column=1, sticky="e", padx=(16, 0)
         )
-        ttk.Label(header, text="High-contrast field command UI", style="HeaderSub.TLabel").grid(
-            row=1, column=1, sticky="e", padx=(16, 0)
-        )
+        top_actions = ttk.Frame(header, style="TopBar.TFrame")
+        top_actions.grid(row=1, column=1, sticky="e", padx=(16, 0))
+        ttk.Button(
+            top_actions,
+            text="Load PDFs",
+            command=self._choose_pdfs,
+            style="Accent.TButton",
+        ).grid(row=0, column=0, sticky="e", padx=(0, 8))
+        ttk.Button(
+            top_actions,
+            text="Run Takeoff",
+            command=self._quick_start_run,
+            style="Primary.TButton",
+        ).grid(row=0, column=1, sticky="e")
 
         self.construction_banner = Canvas(
-            container,
+            workspace,
             height=78,
             background=p["app_bg"],
             highlightthickness=2,
@@ -1560,20 +1851,40 @@ class DesktopEstimatorApp:
         )
         self._draw_construction_banner(self.construction_banner)
 
-        summary_row = ttk.Frame(container, style="App.TFrame")
+        summary_row = ttk.Frame(workspace, style="Workspace.TFrame")
         summary_row.grid(row=2, column=0, sticky="ew", pady=(0, 10))
-        summary_row.columnconfigure(3, weight=1)
-        ttk.Label(summary_row, textvariable=self.header_mode_text, style="SummaryChip.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, 12)
+        for col in range(4):
+            summary_row.columnconfigure(col, weight=1)
+        self._add_metric_tile(
+            summary_row,
+            column=0,
+            title="Run Mode",
+            textvariable=self.header_mode_text,
+            tone="cyan",
         )
-        ttk.Label(summary_row, textvariable=self.header_job_text, style="SummaryChip.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(0, 12)
+        self._add_metric_tile(
+            summary_row,
+            column=1,
+            title="Current Job",
+            textvariable=self.header_job_text,
+            tone="lime",
         )
-        ttk.Label(summary_row, textvariable=self.header_files_text, style="SummaryChip.TLabel").grid(
-            row=0, column=2, sticky="w"
+        self._add_metric_tile(
+            summary_row,
+            column=2,
+            title="Loaded Drawings",
+            textvariable=self.header_files_text,
+            tone="amber",
+        )
+        self._add_metric_tile(
+            summary_row,
+            column=3,
+            title="Color Theme",
+            textvariable=self.theme_preset,
+            tone="rose",
         )
 
-        project_bar = ttk.Frame(container, style="Panel.TFrame", padding=(10, 8))
+        project_bar = ttk.Frame(workspace, style="TopBar.TFrame", padding=(12, 10))
         project_bar.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         project_bar.columnconfigure(1, weight=1)
         ttk.Label(project_bar, text="Project Library", style="FormLabel.TLabel").grid(
@@ -1617,7 +1928,7 @@ class DesktopEstimatorApp:
             command=self._start_new_project_profile,
         ).grid(row=0, column=6, sticky="w", padx=(8, 0))
 
-        appearance_bar = ttk.Frame(container, style="Panel.TFrame", padding=(10, 8))
+        appearance_bar = ttk.Frame(workspace, style="TopBar.TFrame", padding=(12, 10))
         appearance_bar.grid(row=4, column=0, sticky="ew", pady=(0, 10))
         appearance_bar.columnconfigure(2, weight=0)
         appearance_bar.columnconfigure(6, weight=1)
@@ -1658,7 +1969,7 @@ class DesktopEstimatorApp:
             command=self._toggle_advanced_tools,
         ).grid(row=1, column=2, sticky="w", pady=(6, 0), padx=(0, 12))
 
-        frame = ttk.Frame(container, padding=14, style="Panel.TFrame")
+        frame = ttk.Frame(workspace, padding=14, style="Panel.TFrame")
         frame.grid(row=5, column=0, sticky="nsew")
         frame.columnconfigure(1, weight=1)
 
@@ -2761,7 +3072,7 @@ class DesktopEstimatorApp:
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(12, weight=1)
         self._install_tooltips(
-            frame=container,
+            frame=workspace,
             api_url_entry=api_url_entry,
             api_key_entry=api_key_entry,
             tenant_id_entry=tenant_id_entry,
