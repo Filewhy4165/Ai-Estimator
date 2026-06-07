@@ -114,6 +114,12 @@ _THEME_PRESETS: dict[str, dict[str, str]] = {
     },
 }
 _THEME_PRESET_OPTIONS = tuple(_THEME_PRESETS.keys())
+_THEME_PRESET_LABELS = {
+    "construction_orange": "Construction Orange",
+    "electric_blue": "Electric Blue",
+    "lime_steel": "Lime Steel",
+    "clearpath_teal": "ClearPath Teal",
+}
 _THEME_SURFACE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
     "clearpath_teal": {
         "dark": {
@@ -1319,6 +1325,22 @@ class DesktopEstimatorApp:
             command=self._toggle_advanced_tools,
         )
         view_menu.add_checkbutton(
+            label="Dark Mode",
+            variable=self.dark_mode_enabled,
+        )
+        view_menu.add_checkbutton(
+            label="Animate Banner",
+            variable=self.banner_animation_enabled,
+        )
+        theme_menu = Menu(view_menu, **menu_kwargs)
+        for preset in _THEME_PRESET_OPTIONS:
+            theme_menu.add_radiobutton(
+                label=_THEME_PRESET_LABELS.get(preset, preset),
+                variable=self.theme_preset,
+                value=preset,
+            )
+        view_menu.add_cascade(label="Color Theme", menu=theme_menu)
+        view_menu.add_checkbutton(
             label="Auto Poll Job",
             variable=self.auto_poll_enabled,
             command=self._toggle_auto_poll,
@@ -1502,7 +1524,7 @@ class DesktopEstimatorApp:
             min_height=740,
         )
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(4, weight=1)
+        container.rowconfigure(5, weight=1)
 
         self._build_menu()
 
@@ -1595,8 +1617,49 @@ class DesktopEstimatorApp:
             command=self._start_new_project_profile,
         ).grid(row=0, column=6, sticky="w", padx=(8, 0))
 
+        appearance_bar = ttk.Frame(container, style="Panel.TFrame", padding=(10, 8))
+        appearance_bar.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+        appearance_bar.columnconfigure(2, weight=0)
+        appearance_bar.columnconfigure(6, weight=1)
+        ttk.Label(appearance_bar, text="Appearance", style="FormLabel.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(2, 14), rowspan=2
+        )
+        ttk.Label(appearance_bar, text="Color Theme", style="FormLabel.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(0, 4)
+        )
+        self.theme_combo = ttk.Combobox(
+            appearance_bar,
+            textvariable=self.theme_preset,
+            state="readonly",
+            width=22,
+            values=_THEME_PRESET_OPTIONS,
+        )
+        self.theme_combo.grid(row=0, column=2, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            appearance_bar,
+            text="Dark Mode",
+            variable=self.dark_mode_enabled,
+        ).grid(row=0, column=3, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            appearance_bar,
+            text="Animate Banner",
+            variable=self.banner_animation_enabled,
+        ).grid(row=0, column=4, sticky="w", padx=(0, 12))
+        ttk.Checkbutton(
+            appearance_bar,
+            text="Beginner Mode",
+            variable=self.beginner_mode,
+            command=self._toggle_beginner_mode,
+        ).grid(row=1, column=1, sticky="w", pady=(6, 0), padx=(0, 12))
+        ttk.Checkbutton(
+            appearance_bar,
+            text="Advanced Tools",
+            variable=self.show_advanced_tools,
+            command=self._toggle_advanced_tools,
+        ).grid(row=1, column=2, sticky="w", pady=(6, 0), padx=(0, 12))
+
         frame = ttk.Frame(container, padding=14, style="Panel.TFrame")
-        frame.grid(row=4, column=0, sticky="nsew")
+        frame.grid(row=5, column=0, sticky="nsew")
         frame.columnconfigure(1, weight=1)
 
         self.field_label_api_url = ttk.Label(frame, text="API URL", style="FormLabel.TLabel")
@@ -1622,40 +1685,6 @@ class DesktopEstimatorApp:
         ttk.Button(api_row, text="Control Guide", command=self._show_control_guide).grid(
             row=0, column=5, sticky="w", padx=(8, 0)
         )
-        ttk.Checkbutton(
-            api_row,
-            text="Beginner Mode",
-            variable=self.beginner_mode,
-            command=self._toggle_beginner_mode,
-        ).grid(row=0, column=6, sticky="w", padx=(8, 0))
-        ttk.Checkbutton(
-            api_row,
-            text="Advanced Tools",
-            variable=self.show_advanced_tools,
-            command=self._toggle_advanced_tools,
-        ).grid(row=0, column=7, sticky="w", padx=(8, 0))
-        ttk.Label(api_row, text="Theme", style="FormLabel.TLabel").grid(
-            row=0, column=8, sticky="e", padx=(14, 4)
-        )
-        self.theme_combo = ttk.Combobox(
-            api_row,
-            textvariable=self.theme_preset,
-            state="readonly",
-            width=18,
-            values=_THEME_PRESET_OPTIONS,
-        )
-        self.theme_combo.grid(row=0, column=9, sticky="w")
-        ttk.Checkbutton(
-            api_row,
-            text="Dark Mode",
-            variable=self.dark_mode_enabled,
-        ).grid(row=0, column=10, sticky="w", padx=(8, 0))
-        ttk.Checkbutton(
-            api_row,
-            text="Animate Banner",
-            variable=self.banner_animation_enabled,
-        ).grid(row=0, column=11, sticky="w", padx=(8, 0))
-
         self.field_label_api_key = ttk.Label(frame, text="API Key (optional)", style="FormLabel.TLabel")
         self.field_label_api_key.grid(row=1, column=0, sticky="w")
         self._field_label_widgets["api_key"] = self.field_label_api_key
