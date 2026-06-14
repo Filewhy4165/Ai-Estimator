@@ -338,6 +338,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Production middleware ─────────────────────────────────────────────
+try:
+    from service.middleware import RequestLoggingMiddleware, shutdown_handler
+    app.add_middleware(RequestLoggingMiddleware)
+except ImportError:
+    shutdown_handler = None
+
+# ── Mount auth & billing routers ──────────────────────────────────────
+try:
+    from service.routes_auth import router as auth_router
+    app.include_router(auth_router, prefix="/auth", tags=["auth"])
+except ImportError:
+    pass
+
+try:
+    from service.routes_billing import router as billing_router
+    app.include_router(billing_router, prefix="/billing", tags=["billing"])
+except ImportError:
+    pass
+
+# ── Database lifecycle (PostgreSQL) ───────────────────────────────────
+try:
+    from service.db_pg import init_db, close_db
+
+    @app.on_event("startup")
+    async def _pg_startup():
+        await init_db()
+
+    @app.on_event("shutdown")
+    async def _pg_shutdown():
+        await close_db()
+        if shutdown_handler:
+            await shutdown_handler.drain()
+except ImportError:
+    pass
+
+# ── Structured logging ────────────────────────────────────────────────
+try:
+    from service.logging_config import setup_logging
+    setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
+except ImportError:
+    pass
+
 _job_store: JobStore | None = None
 _spec_store: SpecStore | None = None
 _upload_root: Path | None = None
@@ -364,13 +407,17 @@ async def require_api_key_when_configured(request: Request, call_next):  # type:
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {
+    result = {
         "status": "ok",
         "app_version": APP_VERSION,
         "started_at": SERVICE_STARTED_AT,
         "process_id": SERVICE_PROCESS_ID,
-        "db_path": _get_job_store().db_path,
     }
+    try:
+        result["db_path"] = _get_job_store().db_path
+    except Exception:
+        pass
+    return result
 
 
 @app.get("/", response_class=HTMLResponse)

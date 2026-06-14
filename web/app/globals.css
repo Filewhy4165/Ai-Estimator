@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: #e2e8f0;
+  --background: #0a1428;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  color: var(--foreground);
+  background: var(--background);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+@layer base {
+  ::selection {
+    background-color: #f97316;
+    color: #ffffff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0f203d;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #1a3a6b;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4164af;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-accent-500 hover:bg-accent-600 text-white font-semibold py-2.5 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-accent-500/20 hover:shadow-accent-500/40 active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply bg-navy-700 hover:bg-navy-600 text-slate-200 font-medium py-2.5 px-6 rounded-lg border border-navy-500 transition-all duration-200 hover:border-accent-500/50 active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply text-slate-400 hover:text-white hover:bg-navy-800 font-medium py-2 px-4 rounded-lg transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-navy-800/80 backdrop-blur-sm border border-navy-600/50 rounded-xl p-6 shadow-xl;
+  }
+
+  .input-field {
+    @apply w-full bg-navy-900/80 border border-navy-600/50 rounded-lg px-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500/50 transition-all duration-200;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-queued {
+    @apply badge bg-slate-700 text-slate-300;
+  }
+
+  .badge-running {
+    @apply badge bg-blue-900/60 text-blue-300 ring-1 ring-blue-500/30;
+  }
+
+  .badge-completed {
+    @apply badge bg-emerald-900/60 text-emerald-300 ring-1 ring-emerald-500/30;
+  }
+
+  .badge-failed {
+    @apply badge bg-red-900/60 text-red-300 ring-1 ring-red-500/30;
+  }
+
+  .badge-cancelled {
+    @apply badge bg-amber-900/60 text-amber-300 ring-1 ring-amber-500/30;
+  }
+}
+
+@layer utilities {
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}

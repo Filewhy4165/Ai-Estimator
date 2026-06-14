@@ -1,0 +1,43 @@
+# ── Stage 1: Build ──────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package manifests first for layer caching
+COPY web/package.json web/package-lock.json* ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY web/ .
+
+# Build the Next.js application (standalone output mode expected)
+RUN npm run build
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────────
+FROM node:20-alpine
+
+# Install dumb-init for proper signal handling
+RUN apk add --no-cache dumb-init
+
+# Create non-root user
+RUN addgroup --gid 1000 nodeuser && \
+    adduser --uid 1000 --ingroup nodeuser --shell /bin/sh --disabled-password nodeuser
+
+WORKDIR /app
+
+# Copy standalone build output (requires output: 'standalone' in next.config.js)
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static/
+COPY --from=builder /app/public ./public
+
+USER nodeuser
+
+EXPOSE 3000
+
+ENV NODE_ENV=production
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+CMD ["dumb-init", "node", "server.js"]
