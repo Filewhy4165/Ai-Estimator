@@ -1,0 +1,55 @@
+# Fly.io deployment configuration
+# Install: curl -L https://fly.io/install.sh | sh
+# Deploy: fly deploy
+
+app = "ai-estimator"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  APP_NAME = "AI-Estimator"
+  APP_VERSION = "0.1.0"
+  LOG_LEVEL = "INFO"
+  RATE_LIMIT_PER_MINUTE = "60"
+  UPLOAD_MAX_FILES = "50"
+  UPLOAD_MAX_SIZE_MB = "100"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 100
+    soft_limit = 80
+
+[checks]
+  [checks.health]
+    grace_period = "10s"
+    interval = "30s"
+    method = "get"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[[files]]
+  guest_path = "/data/uploads"
+  name = "uploads"
+
+# ── Secrets (set with: fly secrets set KEY=VALUE) ─────────────────────
+# DATABASE_URL       — auto-set by fly postgres attach
+# REDIS_URL          — auto-set by fly redis attach
+# JWT_SECRET         — generate: openssl rand -hex 32
+# STRIPE_SECRET_KEY  — from Stripe dashboard
+# STRIPE_WEBHOOK_SECRET — from Stripe webhook endpoint
+# STRIPE_PRICE_PRO   — Stripe price ID for Pro plan
+# STRIPE_PRICE_ENTERPRISE — Stripe price ID for Enterprise plan
+# CORS_ORIGINS       — e.g. https://ai-estimator.fly.dev,https://yourdomain.com

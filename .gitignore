@@ -13,3 +13,13 @@ benchmark_manifest_*.json
 benchmarks/results/*.json
 test-drawings/*.pdf
 outputs/
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+
+# Environment
+.env
+
+# Docker volumes
+postgres-data/

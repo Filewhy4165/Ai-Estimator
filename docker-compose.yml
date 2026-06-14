@@ -1,0 +1,122 @@
+# ── AI-Estimator Full Stack ─────────────────────────────────────────────
+
+services:
+  # ── API (FastAPI + Uvicorn) ──────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-estimator-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ai_estimator}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+      - public
+    volumes:
+      - upload_data:/app/.ai_estimator
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── Web (Next.js Frontend) ───────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: ai-estimator-web
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost/api}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - public
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-estimator-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_estimator}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ai_estimator}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  # ── Redis ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ai-estimator-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+
+  # ── Caddy (Reverse Proxy + Auto HTTPS) ──────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: ai-estimator-caddy
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - public
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+# ── Volumes ────────────────────────────────────────────────────────────
+volumes:
+  pgdata:
+    driver: local
+  redis_data:
+    driver: local
+  upload_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+
+# ── Networks ───────────────────────────────────────────────────────────
+networks:
+  internal:
+    driver: bridge
+  public:
+    driver: bridge

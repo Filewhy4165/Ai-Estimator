@@ -1,0 +1,56 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+dist/
+build/
+*.egg
+
+# Node / Frontend
+web/node_modules/
+web/.next/
+web/.cache/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker (avoid recursive builds)
+Dockerfile
+Dockerfile.frontend
+docker-compose.yml
+docker-compose*.yml
+.dockerignore
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Test & CI
+tests/
+benchmarks/
+scripts/
+docs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Application runtime data
+.ai_estimator/
+outputs/
+sample_output*.json
+baseline_*.json
+benchmark_manifest_*.json
+benchmarks/results/*.json
+tmp_uvicorn_*.log
